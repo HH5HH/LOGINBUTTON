@@ -1,0 +1,44 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--spectrum-background-pasteboard-color);
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.helper-shell {
+  min-height: 100vh;
+  padding: var(--spectrum-spacing-400);
+  display: grid;
+  place-items: center;
+}
+
+.helper-surface {
+  inline-size: min(100%, 32rem);
+  padding: var(--spectrum-spacing-600);
+  background: var(--spectrum-background-elevated-color);
+  border: 1px solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-200);
+}
+
+.helper-surface > .spectrum-Detail,
+.helper-surface > .spectrum-Heading,
+.helper-surface > .spectrum-Body {
+  margin: 0;
+}
+
+.helper-surface > .spectrum-Heading {
+  margin-top: var(--spectrum-spacing-200);
+}
+
+.helper-surface > .spectrum-Body {
+  margin-top: var(--spectrum-spacing-300);
+  word-break: break-word;
+}

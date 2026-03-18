@@ -1,0 +1,21 @@
+{
+  "name": "loginbutton-spectrum",
+  "private": true,
+  "version": "1.2.1",
+  "description": "Login Button Chrome extension with Spectrum 2 class-based styling.",
+  "scripts": {
+    "check:spectrum": "bash /Users/minnick/.codex/skills/spectrum-css-core/scripts/check_spectrum_subset.sh app.html app.css ims-helper.html ims-helper.css spectrum.css package.json",
+    "bump:manifest": "bash scripts/auto_bump_manifest_version.sh",
+    "check:manifest-version": "bash scripts/check_manifest_version_bump.sh"
+  },
+  "dependencies": {
+    "@spectrum-css/avatar": "latest",
+    "@spectrum-css/button": "latest",
+    "@spectrum-css/fieldlabel": "latest",
+    "@spectrum-css/helptext": "latest",
+    "@spectrum-css/page": "latest",
+    "@spectrum-css/textfield": "latest",
+    "@spectrum-css/tokens": "latest",
+    "@spectrum-css/typography": "latest"
+  }
+}

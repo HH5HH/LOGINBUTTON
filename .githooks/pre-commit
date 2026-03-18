@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+BUMP_SCRIPT="$ROOT/scripts/auto_bump_manifest_version.sh"
+if [[ ! -x "$BUMP_SCRIPT" ]]; then
+  exit 0
+fi
+
+new_version="$($BUMP_SCRIPT --if-staged-loginbutton-changes)"
+if [[ -n "$new_version" ]]; then
+  git add manifest.json
+  echo "pre-commit: auto-bumped LoginButton manifest version to $new_version"
+fi
