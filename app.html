@@ -12,23 +12,11 @@
       <section class="app-stage" aria-label="Login Button side panel">
         <section id="setupView" class="view view--setup" hidden aria-label="ZIP.KEY setup view">
           <div class="surface surface--setup">
-            <div class="setup-copy">
-              <p class="spectrum-Detail spectrum-Detail--sizeL">Login Button</p>
-              <h1 class="spectrum-Heading spectrum-Heading--sizeXXL">Drop ZIP.KEY first</h1>
-              <p class="spectrum-Body spectrum-Body--sizeL">
-                Load the Adobe IMS client from a ZIP.KEY file before sign-in. Once imported, Login Button stores that
-                client locally and uses it for every Adobe login until you replace it.
-              </p>
-            </div>
-
             <input id="zipKeyFileInput" class="zip-key-file-input" type="file" accept=".key,.json,.txt,.inc" hidden>
 
             <div id="zipKeyDropSurface" class="zip-key-dropSurface" aria-describedby="zipKeyStatus">
               <div class="zip-key-dropSurfaceCopy">
-                <p class="spectrum-Heading spectrum-Heading--sizeXL">Drop ZIP.KEY here</p>
-                <p class="spectrum-Body spectrum-Body--sizeM">
-                  Supports `ZIPKEY1:` payloads, raw JSON, or `KEY=VALUE` lines.
-                </p>
+                <p class="spectrum-Heading spectrum-Heading--sizeXL">LOAD KEY</p>
               </div>
 
               <button
@@ -36,30 +24,24 @@
                 class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeL"
                 type="button"
               >
-                <span class="spectrum-Button-label">Choose ZIP.KEY</span>
+                <span class="spectrum-Button-label">CHOOSE KEY</span>
               </button>
             </div>
 
             <p id="zipKeyStatus" class="spectrum-Body spectrum-Body--sizeM zip-key-status">
-              Waiting for ZIP.KEY.
+              Drop key.
             </p>
           </div>
         </section>
 
         <section id="loggedOutView" class="view view--logged-out" hidden aria-label="Unauthenticated view">
           <div class="surface surface--cta">
-            <p class="spectrum-Detail spectrum-Detail--sizeL">Login Button</p>
-            <h1 class="spectrum-Heading spectrum-Heading--sizeXL">Adobe sign-in ready</h1>
-            <p class="spectrum-Body spectrum-Body--sizeM">
-              ZIP.KEY is loaded. Run the Chrome identity flow and keep this side panel open for diagnostics.
-            </p>
-
             <button
               id="loginButton"
               class="spectrum-Button spectrum-Button--fill spectrum-Button--accent spectrum-Button--sizeXL login-button"
               type="button"
             >
-              <span id="loginButtonLabel" class="spectrum-Button-label">Sign In With Adobe</span>
+              <span id="loginButtonLabel" class="spectrum-Button-label">SIGN IN</span>
             </button>
           </div>
         </section>
@@ -72,320 +54,131 @@
         >
           <header class="surface surface--hero">
             <div class="hero-header">
-              <div class="hero-copy">
-                <p class="spectrum-Detail spectrum-Detail--sizeL">Login Button</p>
-                <h1 class="spectrum-Heading spectrum-Heading--sizeXXL">Logged-in Adobe profile</h1>
-                <p class="spectrum-Body spectrum-Body--sizeL">
-                  This extension now uses Chrome's native Manifest V3 identity flow with Adobe authorization-code PKCE.
-                  The form below mirrors the active user profile, token metadata, endpoint configuration, and stored payloads.
-                </p>
-              </div>
-
-              <div class="hero-actions">
+              <div class="identity-row">
                 <button
-                  id="loadZipKeyButton"
-                  class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeL"
+                  id="avatarMenuButton"
+                  class="avatar-menuButton"
                   type="button"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="avatarMenu"
                 >
-                  <span class="spectrum-Button-label">LOAD ZIP.KEY</span>
+                  <div id="avatarContainer" class="spectrum-Avatar spectrum-Avatar--size700 profile-avatar">
+                    <img id="avatarImage" class="spectrum-Avatar-image" alt="Adobe avatar" hidden>
+                    <div id="avatarFallback" class="profile-avatarFallback" aria-hidden="true">?</div>
+                  </div>
                 </button>
 
-                <button
-                  id="logoutButton"
-                  class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeL"
-                  type="button"
-                >
-                  <span class="spectrum-Button-label">LOGOUT</span>
-                </button>
-              </div>
-            </div>
-
-            <div class="hero-summary">
-              <div class="profile-summary">
-                <div id="avatarContainer" class="spectrum-Avatar spectrum-Avatar--size700 profile-avatar">
-                  <img id="avatarImage" class="spectrum-Avatar-image" alt="Adobe avatar" hidden>
-                  <div id="avatarFallback" class="profile-avatarFallback" aria-hidden="true">?</div>
+                <div class="identity-copy">
+                  <a
+                    id="displayNameLink"
+                    class="spectrum-Heading spectrum-Heading--sizeXL profile-name profile-nameLink"
+                    href="http://experience.adobe.com"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Not signed in
+                  </a>
+                  <p id="displayEmail" class="profile-email profile-email--hidden">Not signed in</p>
                 </div>
+              </div>
 
-                <div class="profile-copy">
-                  <p id="displayName" class="spectrum-Heading spectrum-Heading--sizeXL profile-name">Not signed in</p>
-                  <p id="displayEmail" class="spectrum-Body spectrum-Body--sizeL profile-email">
-                    Run the Adobe sign-in flow to inspect the returned account.
+              <div id="themeControl" class="theme-control">
+                <button
+                  id="themePickerButton"
+                  class="theme-pickerButton"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-controls="themePickerPopover"
+                  aria-label="Open theme picker"
+                >
+                  <span id="themePickerButtonSwatch" class="theme-pickerButtonSwatch" aria-hidden="true"></span>
+                </button>
+
+                <div id="themePickerPopover" class="surface theme-pickerPopover" role="dialog" aria-label="Theme picker" hidden>
+                  <div id="themeSwatchGrid" class="theme-pickerGrid" role="listbox" aria-label="Spectrum color palette"></div>
+                </div>
+              </div>
+
+              <div id="avatarMenu" class="surface avatar-menu" hidden>
+                <div class="avatar-menuCopy">
+                  <p class="spectrum-Detail spectrum-Detail--sizeM">Org</p>
+                  <p id="selectedOrganizationName" class="spectrum-Heading spectrum-Heading--sizeL hero-orgName">
+                    Awaiting session
+                  </p>
+                  <p id="selectedOrganizationMeta" class="spectrum-Body spectrum-Body--sizeS hero-orgMeta">
+                    Not signed in.
                   </p>
                 </div>
-              </div>
 
-              <div class="hero-meta">
-                <div class="meta-item">
-                  <p class="spectrum-Detail spectrum-Detail--sizeM">Build</p>
-                  <p id="buildBadge" class="spectrum-Body spectrum-Body--sizeM">0.0.0</p>
+                <div class="avatar-menuMeta">
+                  <div class="meta-item">
+                    <p class="spectrum-Detail spectrum-Detail--sizeM">Build</p>
+                    <p id="buildBadge" class="spectrum-Body spectrum-Body--sizeM">0.0.0</p>
+                  </div>
+
+                  <div class="meta-item meta-item--wide">
+                    <p class="spectrum-Detail spectrum-Detail--sizeM">Status</p>
+                    <p id="statusBanner" class="spectrum-Body spectrum-Body--sizeM">Loading extension state…</p>
+                  </div>
                 </div>
 
-                <div class="meta-item meta-item--wide">
-                  <p class="spectrum-Detail spectrum-Detail--sizeM">Session status</p>
-                  <p id="statusBanner" class="spectrum-Body spectrum-Body--sizeM">Loading extension state…</p>
+                <div class="avatar-menuActions">
+                  <button
+                    id="loadZipKeyButton"
+                    class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM"
+                    type="button"
+                  >
+                    <span class="spectrum-Button-label">LOAD KEY</span>
+                  </button>
+
+                  <button
+                    id="logoutButton"
+                    class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM"
+                    type="button"
+                  >
+                    <span class="spectrum-Button-label">LOGOUT</span>
+                  </button>
                 </div>
               </div>
             </div>
           </header>
-
-          <form class="surface surface--form" autocomplete="off">
-            <div class="form-header">
-              <h2 class="spectrum-Heading spectrum-Heading--sizeXL">Adobe profile form</h2>
-              <p class="spectrum-Body spectrum-Body--sizeM">
-                All fields are read-only and reflect the currently stored extension session.
-              </p>
-            </div>
-
-            <div class="form-grid">
-            <div class="field-stack">
-              <label for="buildVersionInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Build Version</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="buildVersionInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="flowNameInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Flow Label</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="flowNameInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="authStrategyInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Auth Strategy</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="authStrategyInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="displayNameInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Display Name</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="displayNameInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="displayEmailInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Email</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="displayEmailInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="accountTypeInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Account Type</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="accountTypeInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="subjectInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Subject</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="subjectInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="countryInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Country</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="countryInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="organizationCountInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Organization Count
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="organizationCountInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="clientIdInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">IMS Client ID</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="clientIdInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="scopeInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Requested Scope</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="scopeInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="tokenTypeInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Token Type</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="tokenTypeInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="expiresInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Token Expires</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="expiresInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="hasRefreshTokenInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Refresh Token
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="hasRefreshTokenInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="authIdInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">IMS Auth ID</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="authIdInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="sessionIdInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">IMS Session ID</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="sessionIdInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="obtainedAtInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Obtained At</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="obtainedAtInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack">
-              <label for="requestStateInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Stored Flow State
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="requestStateInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="authorizeEndpointInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Authorization Endpoint
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="authorizeEndpointInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="tokenEndpointInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Token Endpoint</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="tokenEndpointInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="userInfoEndpointInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                UserInfo Endpoint
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="userInfoEndpointInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="organizationsEndpointInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Organizations Endpoint
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="organizationsEndpointInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="extensionRedirectUriInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Extension Redirect URI
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="extensionRedirectUriInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="appUrlInput" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Extension App Page</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM is-readOnly">
-                <input id="appUrlInput" class="spectrum-Textfield-input" type="text" readonly>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="profileJson" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Raw Adobe Profile</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field">
-                <textarea id="profileJson" class="spectrum-Textfield-input" readonly></textarea>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="organizationsJson" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Raw IMS Organizations
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field">
-                <textarea id="organizationsJson" class="spectrum-Textfield-input" readonly></textarea>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="accessClaimsJson" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">
-                Access Token Claims
-              </label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field">
-                <textarea id="accessClaimsJson" class="spectrum-Textfield-input" readonly></textarea>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="idClaimsJson" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">ID Token Claims</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field">
-                <textarea id="idClaimsJson" class="spectrum-Textfield-input" readonly></textarea>
-              </div>
-            </div>
-
-            <div class="field-stack field-stack--full">
-              <label for="sessionJson" class="spectrum-FieldLabel spectrum-FieldLabel--sizeM">Stored Session</label>
-              <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field">
-                <textarea id="sessionJson" class="spectrum-Textfield-input" readonly></textarea>
-              </div>
-            </div>
-
-            </div>
-          </form>
         </section>
       </section>
 
-      <section class="surface surface--debug" aria-label="Debug console">
+      <section id="debugConsole" class="surface surface--debug" aria-label="Debug info">
         <div class="debug-header">
-          <div class="debug-copy">
-            <p class="spectrum-Detail spectrum-Detail--sizeL">Debug Console</p>
-            <p class="spectrum-Body spectrum-Body--sizeS">
-              Keep this side panel open while testing. Paste this full box back here after any run.
-            </p>
-          </div>
-
-          <div class="debug-actions">
-            <button
-              id="copyDebugButton"
-              class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM"
-              type="button"
+          <button
+            id="debugToggleButton"
+            class="debug-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="debugConsoleBody"
+          >
+            <span class="debug-toggleHeading">
+              <span id="debugToggleButtonLabel" class="spectrum-Detail spectrum-Detail--sizeL debug-toggleTitle">
+                DEBUG INFO
+              </span>
+              <span id="debugToggleButtonMeta" class="spectrum-Body spectrum-Body--sizeS debug-toggleSubtitle">
+                Click copies. Shift+click toggles details.
+              </span>
+            </span>
+            <span
+              id="debugToggleStatus"
+              class="spectrum-Detail spectrum-Detail--sizeS debug-toggleStatus"
+              hidden
             >
-              <span class="spectrum-Button-label">COPY DEBUG</span>
-            </button>
-          </div>
+              Copied to clipboard
+            </span>
+            <span id="debugToggleIcon" class="debug-toggleIcon" aria-hidden="true">▼</span>
+          </button>
         </div>
 
-        <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly payload-field debug-field">
-          <textarea id="logOutput" class="spectrum-Textfield-input" readonly spellcheck="false"></textarea>
+        <div id="debugConsoleBody" class="debug-body">
+          <div class="spectrum-Textfield spectrum-Textfield--sizeM spectrum-Textfield--multiline is-readOnly debug-field">
+            <textarea id="logOutput" class="spectrum-Textfield-input" readonly spellcheck="false"></textarea>
+          </div>
         </div>
       </section>
     </main>

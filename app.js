@@ -12,13 +12,14 @@ import {
   decodeJwtPayload,
   deriveInitials,
   exchangeAuthorizationCode,
+  buildImsProfileHeaders,
+  collectProfileAvatarCandidates,
   fetchImsOpenIdConfiguration,
   fetchImsOrganizations,
   fetchImsProfile,
   fetchImsUserInfo,
   firstNonEmptyString,
   flattenOrganizations,
-  formatDateTime,
   getDefaultImsRuntimeConfig,
   getDefaultImsOpenIdConfiguration,
   importImsRuntimeConfigFromText,
@@ -36,12 +37,28 @@ import {
   scopeIncludes,
   serializeError
 } from "./shared.js";
+import {
+  DEFAULT_THEME,
+  THEME_ACCENTS,
+  THEME_STORAGE_KEY,
+  getThemeAccentMeta,
+  normalizeThemeAccent,
+  normalizeThemePreference
+} from "./theme-palette.js";
 
 const BUILD_VERSION = chrome.runtime.getManifest().version;
-const DEFAULT_CONFIG_STATUS_MESSAGE = "Drop ZIP.KEY to load the Adobe IMS client.";
+const DEFAULT_CONFIG_STATUS_MESSAGE = "Drop key.";
+const DEFAULT_DEBUG_TOGGLE_LABEL = "DEBUG INFO";
+const DEFAULT_DEBUG_TOGGLE_META = "Click copies. Shift+click toggles details.";
+const DEFAULT_DEBUG_COPY_STATUS = "Copied to clipboard";
+const THEME_RAMP_STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600];
 
 const buildBadge = document.getElementById("buildBadge");
-const buildVersionInput = document.getElementById("buildVersionInput");
+const themeControl = document.getElementById("themeControl");
+const themePickerButton = document.getElementById("themePickerButton");
+const themePickerButtonSwatch = document.getElementById("themePickerButtonSwatch");
+const themePickerPopover = document.getElementById("themePickerPopover");
+const themeSwatchGrid = document.getElementById("themeSwatchGrid");
 const setupView = document.getElementById("setupView");
 const zipKeyFileInput = document.getElementById("zipKeyFileInput");
 const zipKeyBrowseButton = document.getElementById("zipKeyBrowseButton");
@@ -49,46 +66,27 @@ const zipKeyDropSurface = document.getElementById("zipKeyDropSurface");
 const zipKeyStatus = document.getElementById("zipKeyStatus");
 const zipKeyDropOverlay = document.getElementById("zipKeyDropOverlay");
 const loginButtonLabel = document.getElementById("loginButtonLabel");
-const flowNameInput = document.getElementById("flowNameInput");
-const authStrategyInput = document.getElementById("authStrategyInput");
-const clientIdInput = document.getElementById("clientIdInput");
-const scopeInput = document.getElementById("scopeInput");
-const authorizeEndpointInput = document.getElementById("authorizeEndpointInput");
-const tokenEndpointInput = document.getElementById("tokenEndpointInput");
-const userInfoEndpointInput = document.getElementById("userInfoEndpointInput");
-const organizationsEndpointInput = document.getElementById("organizationsEndpointInput");
-const extensionRedirectUriInput = document.getElementById("extensionRedirectUriInput");
-const appUrlInput = document.getElementById("appUrlInput");
 const loggedOutView = document.getElementById("loggedOutView");
 const authenticatedView = document.getElementById("authenticatedView");
 const loginButton = document.getElementById("loginButton");
 const loadZipKeyButton = document.getElementById("loadZipKeyButton");
 const logoutButton = document.getElementById("logoutButton");
+const avatarMenuButton = document.getElementById("avatarMenuButton");
+const avatarMenu = document.getElementById("avatarMenu");
 const statusBanner = document.getElementById("statusBanner");
 const avatarContainer = document.getElementById("avatarContainer");
 const avatarImage = document.getElementById("avatarImage");
 const avatarFallback = document.getElementById("avatarFallback");
-const displayName = document.getElementById("displayName");
+const displayNameLink = document.getElementById("displayNameLink");
 const displayEmail = document.getElementById("displayEmail");
-const displayNameInput = document.getElementById("displayNameInput");
-const displayEmailInput = document.getElementById("displayEmailInput");
-const accountTypeInput = document.getElementById("accountTypeInput");
-const subjectInput = document.getElementById("subjectInput");
-const countryInput = document.getElementById("countryInput");
-const organizationCountInput = document.getElementById("organizationCountInput");
-const tokenTypeInput = document.getElementById("tokenTypeInput");
-const expiresInput = document.getElementById("expiresInput");
-const hasRefreshTokenInput = document.getElementById("hasRefreshTokenInput");
-const authIdInput = document.getElementById("authIdInput");
-const sessionIdInput = document.getElementById("sessionIdInput");
-const obtainedAtInput = document.getElementById("obtainedAtInput");
-const requestStateInput = document.getElementById("requestStateInput");
-const copyDebugButton = document.getElementById("copyDebugButton");
-const profileJson = document.getElementById("profileJson");
-const organizationsJson = document.getElementById("organizationsJson");
-const accessClaimsJson = document.getElementById("accessClaimsJson");
-const idClaimsJson = document.getElementById("idClaimsJson");
-const sessionJson = document.getElementById("sessionJson");
+const selectedOrganizationName = document.getElementById("selectedOrganizationName");
+const selectedOrganizationMeta = document.getElementById("selectedOrganizationMeta");
+const debugConsole = document.getElementById("debugConsole");
+const debugConsoleBody = document.getElementById("debugConsoleBody");
+const debugToggleButton = document.getElementById("debugToggleButton");
+const debugToggleButtonLabel = document.getElementById("debugToggleButtonLabel");
+const debugToggleButtonMeta = document.getElementById("debugToggleButtonMeta");
+const debugToggleStatus = document.getElementById("debugToggleStatus");
 const logOutput = document.getElementById("logOutput");
 
 const DEFAULT_AUTH_CONFIGURATION = getDefaultImsOpenIdConfiguration();
@@ -109,15 +107,31 @@ const state = {
     redirectUri: getExtensionRedirectUri(),
     hasManifestKey: Boolean(chrome.runtime.getManifest().key)
   },
+  theme: DEFAULT_THEME,
   interactivePopupSnapshot: {
     url: "",
     title: "",
     observedAt: ""
   },
+  lastAuthAttempt: null,
+  lastAuthOutcome: null,
+  avatarAsset: {
+    key: "",
+    sourceUrl: "",
+    displayUrl: "",
+    objectUrl: "",
+    mode: "fallback",
+    loading: false,
+    requestId: ""
+  },
   ready: false,
   busy: false,
   silentAuthInFlight: false,
   interactiveAuthInFlight: false,
+  avatarMenuOpen: false,
+  themePickerOpen: false,
+  debugConsoleCollapsed: true,
+  debugCopyStatus: "",
   lastSilentAuthAttemptAt: 0,
   dragActive: false,
   configStatus: {
@@ -129,11 +143,29 @@ const state = {
 let dragDepth = 0;
 let copyDebugResetTimer = 0;
 
+applyThemePreferenceToDocument(state.theme);
+initializeThemeSwatchGrid();
+
 loginButton.addEventListener("click", async () => {
   await login();
 });
 
+themePickerButton.addEventListener("click", async (event) => {
+  if (state.avatarMenuOpen) {
+    state.avatarMenuOpen = false;
+  }
+
+  if (event.shiftKey) {
+    setThemePickerOpen(false);
+    await updateThemePreference({ stop: getNextThemeStop(state.theme?.stop) });
+    return;
+  }
+
+  setThemePickerOpen(!state.themePickerOpen);
+});
+
 loadZipKeyButton.addEventListener("click", () => {
+  setAvatarMenuOpen(false);
   zipKeyFileInput.click();
 });
 
@@ -146,24 +178,47 @@ zipKeyFileInput.addEventListener("change", async (event) => {
 });
 
 logoutButton.addEventListener("click", async () => {
+  setAvatarMenuOpen(false);
   await logout();
 });
 
-copyDebugButton.addEventListener("click", async () => {
+avatarMenuButton.addEventListener("click", () => {
+  if (avatarMenuButton.disabled) {
+    return;
+  }
+
+  if (state.themePickerOpen) {
+    state.themePickerOpen = false;
+  }
+  const nextOpen = !state.avatarMenuOpen;
+  setAvatarMenuOpen(nextOpen);
+});
+
+debugToggleButton.addEventListener("click", async (event) => {
+  if (event.shiftKey) {
+    setDebugConsoleCollapsed(!state.debugConsoleCollapsed);
+    return;
+  }
+
   await copyDebugConsoleToClipboard();
 });
 
 avatarImage.addEventListener("error", () => {
+  if (state.avatarAsset.displayUrl && avatarImage.src === state.avatarAsset.displayUrl) {
+    log(`Resolved Adobe avatar could not be displayed: ${state.avatarAsset.sourceUrl || "unknown source"}`);
+  }
   avatarImage.hidden = true;
   avatarImage.removeAttribute("src");
   avatarFallback.hidden = false;
-  avatarFallback.textContent = deriveInitials(displayName.textContent, displayEmail.textContent);
+  avatarFallback.textContent = deriveInitials(displayNameLink.textContent, displayEmail.textContent);
 });
 
 document.addEventListener("dragenter", handleDocumentDragEnter);
 document.addEventListener("dragover", handleDocumentDragOver);
 document.addEventListener("dragleave", handleDocumentDragLeave);
 document.addEventListener("drop", handleDocumentDrop);
+document.addEventListener("click", handleDocumentClick);
+document.addEventListener("keydown", handleDocumentKeydown);
 window.addEventListener("focus", () => {
   void maybeResumeExistingAdobeSession("window-focus");
 });
@@ -186,6 +241,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     state.runtimeConfig = normalizeImsRuntimeConfig(changes[IMS_RUNTIME_CONFIG_KEY].newValue || DEFAULT_RUNTIME_CONFIG);
   }
 
+  if (changes[THEME_STORAGE_KEY]) {
+    state.theme = normalizeThemePreference(changes[THEME_STORAGE_KEY].newValue || DEFAULT_THEME);
+    applyThemePreferenceToDocument(state.theme);
+  }
+
   state.ready = true;
   render();
 });
@@ -197,8 +257,10 @@ async function initialize() {
   render();
 
   try {
-    const stored = await chrome.storage.local.get(SESSION_KEY);
+    const stored = await chrome.storage.local.get([SESSION_KEY, THEME_STORAGE_KEY]);
     state.session = stored[SESSION_KEY] || null;
+    state.theme = normalizeThemePreference(stored[THEME_STORAGE_KEY] || DEFAULT_THEME);
+    applyThemePreferenceToDocument(state.theme);
     await loadRuntimeConfig();
     await loadAuthConfiguration({ silent: true });
 
@@ -312,7 +374,7 @@ async function login() {
     log("Adobe IMS session captured and stored locally.");
   } catch (error) {
     const message = describeLoginError(error);
-    log(`Adobe IMS login failed: ${message}`);
+    log(`Adobe IMS login failed: ${summarizeErrorHeadline(error)}`);
     window.alert(message);
   } finally {
     setBusy(false);
@@ -325,6 +387,7 @@ async function logout() {
     return;
   }
 
+  setThemePickerOpen(false);
   setBusy(true);
   render();
   log("Revoking Adobe IMS tokens and clearing the local session.");
@@ -445,7 +508,7 @@ async function maybeResumeExistingAdobeSession(reason = "auto") {
 
     return null;
   } catch (error) {
-    log(`Silent Adobe session probe failed: ${serializeError(error)}`);
+    log(`Silent Adobe session probe failed: ${summarizeErrorHeadline(error)}`);
     return null;
   } finally {
     state.silentAuthInFlight = false;
@@ -482,6 +545,7 @@ async function attemptSessionHydration({
   const requestState = randomToken();
   const codeVerifier = buildPkceCodeVerifier();
   const codeChallenge = await buildPkceCodeChallenge(codeVerifier);
+  recordAuthAttempt(authContext);
   log(
     `Adobe auth request: mode=${interactive ? "interactive" : "silent"} reason=${reason || "n/a"} client_id=${authContext.clientId} scope="${authContext.requestedScope}" authorize=${authContext.authorizationEndpoint} redirect=${authContext.redirectUri}${prompt ? ` prompt=${prompt}` : ""}`
   );
@@ -517,9 +581,21 @@ async function attemptSessionHydration({
     }
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
+      recordAuthOutcome({
+        status: "no-session",
+        phase: "launch",
+        elapsedMs: Date.now() - launchStartedAt,
+        error
+      });
       log(`No reusable Adobe Experience Cloud session was found (${reason}).`);
       return null;
     }
+    recordAuthOutcome({
+      status: "failed",
+      phase: "launch",
+      elapsedMs: Date.now() - launchStartedAt,
+      error
+    });
     throw buildDetailedAuthError(error, authContext, Date.now() - launchStartedAt, "launch");
   } finally {
     if (interactive) {
@@ -533,9 +609,21 @@ async function attemptSessionHydration({
     authResponse = parseAuthorizationCodeResponse(callbackUrl, requestState);
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
+      recordAuthOutcome({
+        status: "no-session",
+        phase: "callback",
+        elapsedMs: Date.now() - launchStartedAt,
+        error
+      });
       log(`Silent Adobe auth returned no reusable session (${reason}).`);
       return null;
     }
+    recordAuthOutcome({
+      status: "failed",
+      phase: "callback",
+      elapsedMs: Date.now() - launchStartedAt,
+      error
+    });
     throw buildDetailedAuthError(error, authContext, Date.now() - launchStartedAt, "callback");
   }
 
@@ -548,6 +636,12 @@ async function attemptSessionHydration({
       codeVerifier
     });
   } catch (error) {
+    recordAuthOutcome({
+      status: "failed",
+      phase: "token",
+      elapsedMs: Date.now() - launchStartedAt,
+      error
+    });
     throw buildDetailedAuthError(error, authContext, Date.now() - launchStartedAt, "token");
   }
 
@@ -594,7 +688,7 @@ async function attemptSessionHydration({
     log("Resolved Adobe avatar from merged IMS profile payloads.");
   }
 
-  return buildSessionRecord({
+  const sessionRecord = buildSessionRecord({
     authConfiguration,
     clientId,
     redirectUri,
@@ -605,6 +699,14 @@ async function attemptSessionHydration({
     profile: resolvedProfile,
     organizations: organizationsResult.ok ? organizationsResult.value : null
   });
+
+  recordAuthOutcome({
+    status: "success",
+    phase: "token",
+    elapsedMs: Date.now() - launchStartedAt
+  });
+
+  return sessionRecord;
 }
 
 function requireConfiguredClientId(runtimeConfig) {
@@ -714,6 +816,8 @@ function buildImsSession(accessClaims, idClaims, expiresAtMs, scope, tokenType, 
 function render() {
   const session = state.session;
   const ready = state.ready === true;
+  const activeTheme = normalizeThemePreference(state.theme);
+  const activeAccent = getThemeAccentMeta(activeTheme.accent);
   const hasRuntimeConfig = Boolean(firstNonEmptyString([state.runtimeConfig?.clientId]));
   const hasSession = Boolean(session?.accessToken);
   const profile = session?.profile && typeof session.profile === "object" ? session.profile : null;
@@ -744,33 +848,31 @@ function render() {
       idClaims?.avatar
     ])
   );
+  const activeOrganization = resolveActiveOrganization({
+    profile,
+    accessClaims,
+    idClaims,
+    organizations
+  });
+  const nextThemeStop = getNextThemeStop(activeTheme.stop);
+  const isThemeProcessing = isThemeActivityActive();
   const initials = deriveInitials(name, email);
   const flow = session?.flow && typeof session.flow === "object" ? session.flow : {};
+  const isAvatarMenuVisible = hasSession && state.avatarMenuOpen;
 
   buildBadge.textContent = BUILD_VERSION;
-  buildVersionInput.value = BUILD_VERSION;
-  flowNameInput.value = FLOW_LABEL;
-  authStrategyInput.value = firstNonEmptyString([flow.strategy, "chrome.identity + authorization_code + PKCE"]);
-  clientIdInput.value = firstNonEmptyString([flow.clientId, state.runtimeConfig?.clientId, IMS_CLIENT_ID]) || "Not configured";
-  scopeInput.value = firstNonEmptyString([session?.scope, flow.scope, state.runtimeConfig?.scope, IMS_SCOPE]);
-  authorizeEndpointInput.value = firstNonEmptyString([
-    flow.authorizationEndpoint,
-    state.authConfiguration?.authorization_endpoint,
-    DEFAULT_AUTH_CONFIGURATION.authorization_endpoint
-  ]);
-  tokenEndpointInput.value = firstNonEmptyString([
-    flow.tokenEndpoint,
-    state.authConfiguration?.token_endpoint,
-    DEFAULT_AUTH_CONFIGURATION.token_endpoint
-  ]);
-  userInfoEndpointInput.value = firstNonEmptyString([
-    flow.userInfoEndpoint,
-    state.authConfiguration?.userinfo_endpoint,
-    DEFAULT_AUTH_CONFIGURATION.userinfo_endpoint
-  ]);
-  organizationsEndpointInput.value = firstNonEmptyString([flow.organizationsEndpoint, IMS_ORGS_URL]);
-  extensionRedirectUriInput.value = firstNonEmptyString([flow.redirectUri, state.runtime.redirectUri]);
-  appUrlInput.value = firstNonEmptyString([flow.appUrl, state.runtime.appUrl]);
+  themePickerButton.setAttribute(
+    "aria-label",
+    `Theme picker. Active theme ${activeTheme.stop} x ${activeAccent.label}. Click for colors. Shift-click switches to ${nextThemeStop}.`
+  );
+  themePickerButton.title = `Click for colors. Shift+click switches to ${nextThemeStop}.`;
+  themePickerButton.setAttribute("aria-expanded", state.themePickerOpen ? "true" : "false");
+  themePickerButton.setAttribute("aria-busy", isThemeProcessing ? "true" : "false");
+  themePickerButton.classList.toggle("is-open", state.themePickerOpen);
+  themePickerButton.classList.toggle("is-processing", isThemeProcessing);
+  themePickerButtonSwatch.style.setProperty("--login-button-theme-swatch", `var(--spectrum-${activeAccent.tokenFamily}-visual-color)`);
+  themePickerPopover.hidden = !state.themePickerOpen;
+  syncThemeSwatchSelection(activeTheme);
   setupView.hidden = !ready || hasRuntimeConfig;
   loggedOutView.hidden = !ready || !hasRuntimeConfig || hasSession;
   authenticatedView.hidden = !ready || !hasRuntimeConfig || !hasSession;
@@ -785,44 +887,46 @@ function render() {
   loginButton.disabled = state.busy || !hasRuntimeConfig;
   loginButtonLabel.textContent = state.busy
     ? state.silentAuthInFlight
-      ? "Refreshing Adobe Session…"
-      : "Signing In…"
-    : "Sign In With Adobe";
+      ? "REFRESHING…"
+      : "SIGNING IN…"
+    : "SIGN IN";
+  avatarMenuButton.disabled = !hasSession;
+  avatarMenuButton.setAttribute("aria-expanded", isAvatarMenuVisible ? "true" : "false");
+  avatarMenu.hidden = !isAvatarMenuVisible;
   loadZipKeyButton.disabled = state.busy;
   logoutButton.disabled = state.busy || !hasSession;
+  debugConsole.classList.toggle("is-collapsed", state.debugConsoleCollapsed);
+  debugConsoleBody.hidden = state.debugConsoleCollapsed;
+  debugToggleButton.setAttribute("aria-expanded", state.debugConsoleCollapsed ? "false" : "true");
+  debugToggleButton.setAttribute(
+    "aria-label",
+    state.debugConsoleCollapsed
+      ? "DEBUG INFO. Click to copy debug info. Shift-click to expand."
+      : "DEBUG INFO. Click to copy debug info. Shift-click to collapse."
+  );
+  debugToggleButton.title = state.debugConsoleCollapsed
+    ? "Click to copy debug info. Shift+click to expand."
+    : "Click to copy debug info. Shift+click to collapse.";
+  debugToggleButtonLabel.textContent = DEFAULT_DEBUG_TOGGLE_LABEL;
+  debugToggleButtonMeta.textContent = DEFAULT_DEBUG_TOGGLE_META;
+  debugToggleStatus.hidden = !state.debugCopyStatus;
+  debugToggleStatus.textContent = state.debugCopyStatus || DEFAULT_DEBUG_COPY_STATUS;
 
-  displayName.textContent = name;
+  displayNameLink.textContent = name;
+  displayNameLink.href = buildExperienceOrgUrl(activeOrganization);
+  displayNameLink.title = buildExperienceOrgTitle(activeOrganization);
   displayEmail.textContent = email;
-  displayNameInput.value = name;
-  displayEmailInput.value = email;
-  accountTypeInput.value =
-    firstNonEmptyString([profile?.account_type, profile?.additional_info?.account_type]) || "Not available";
-  subjectInput.value =
-    firstNonEmptyString([profile?.sub, idClaims?.sub, accessClaims?.sub, accessClaims?.user_id]) || "Not available";
-  countryInput.value =
-    firstNonEmptyString([profile?.address?.country, profile?.country, profile?.additional_info?.country]) || "Not available";
-  organizationCountInput.value = String(organizations.length || 0);
-  tokenTypeInput.value = session?.tokenType || "Not available";
-  expiresInput.value = session?.expiresAt
-    ? `${formatDateTime(session.expiresAt)}${expired ? " (expired)" : ""}`
-    : "Not available";
-  hasRefreshTokenInput.value = session?.refreshToken ? "Yes" : "No";
-  authIdInput.value =
-    firstNonEmptyString([
-      session?.imsSession?.authId,
-      accessClaims?.aa_id,
-      accessClaims?.authId,
-      idClaims?.aa_id,
-      profile?.authId,
-      profile?.additional_info?.authId
-    ]) || "Not available";
-  sessionIdInput.value =
-    firstNonEmptyString([session?.imsSession?.sessionId, idClaims?.sid, accessClaims?.sid]) || "Not available";
-  obtainedAtInput.value = session?.obtainedAt ? formatDateTime(session.obtainedAt) : "Not available";
-  requestStateInput.value = session?.requestState || "Not available";
+  selectedOrganizationName.textContent = activeOrganization.name;
+  selectedOrganizationMeta.textContent = activeOrganization.meta;
 
-  if (avatarUrl) {
-    avatarImage.src = avatarUrl;
+  syncResolvedAvatar({ session, profile, idClaims });
+  const displayAvatarUrl = firstNonEmptyString([
+    state.avatarAsset.displayUrl,
+    state.avatarAsset.loading ? "" : avatarUrl
+  ]);
+
+  if (displayAvatarUrl) {
+    avatarImage.src = displayAvatarUrl;
     avatarImage.alt = `Avatar for ${name}`;
     avatarImage.hidden = false;
     avatarFallback.hidden = true;
@@ -836,11 +940,6 @@ function render() {
     avatarContainer.removeAttribute("data-has-avatar");
   }
 
-  setTextOutput(profileJson, safeJson(profile, "No profile loaded."));
-  setTextOutput(organizationsJson, safeJson(session?.organizations, "No organizations loaded."));
-  setTextOutput(accessClaimsJson, safeJson(accessClaims, "No access token claims loaded."));
-  setTextOutput(idClaimsJson, safeJson(idClaims, "No ID token claims loaded."));
-  setTextOutput(sessionJson, safeJson(redactSessionForDisplay(session), "No session stored."));
   setTextOutput(logOutput, composeDebugConsoleOutput({ ready, hasSession, flow, expired }));
 }
 
@@ -873,28 +972,86 @@ function setBusy(busy) {
   state.busy = busy;
 }
 
-function redactSessionForDisplay(session) {
-  if (!session || typeof session !== "object") {
-    return null;
+function setAvatarMenuOpen(open) {
+  const nextValue = open === true;
+  if (state.avatarMenuOpen === nextValue) {
+    return;
   }
 
-  return {
-    ...session,
-    accessToken: session.accessToken ? "<redacted>" : "",
-    idToken: session.idToken ? "<redacted>" : "",
-    refreshToken: session.refreshToken ? "<redacted>" : ""
-  };
+  state.avatarMenuOpen = nextValue;
+  render();
 }
 
-function safeJson(value, fallbackText) {
-  if (value === undefined || value === null) {
-    return fallbackText;
+function setThemePickerOpen(open) {
+  const nextValue = open === true;
+  if (state.themePickerOpen === nextValue) {
+    return;
   }
 
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return fallbackText;
+  state.themePickerOpen = nextValue;
+  render();
+}
+
+function getNextThemeStop(currentStop) {
+  return String(currentStop || "").toLowerCase() === "dark" ? "light" : "dark";
+}
+
+function isThemeActivityActive() {
+  return Boolean(
+    state.busy ||
+      state.silentAuthInFlight ||
+      state.interactiveAuthInFlight ||
+      state.avatarAsset.loading
+  );
+}
+
+function setDebugConsoleCollapsed(collapsed) {
+  const nextValue = collapsed === true;
+  if (state.debugConsoleCollapsed === nextValue) {
+    return;
+  }
+
+  state.debugConsoleCollapsed = nextValue;
+  render();
+}
+
+function setDebugCopyStatus(message = "") {
+  const nextValue = String(message || "").trim();
+  state.debugCopyStatus = nextValue;
+  render();
+
+  window.clearTimeout(copyDebugResetTimer);
+  if (!nextValue) {
+    return;
+  }
+
+  copyDebugResetTimer = window.setTimeout(() => {
+    state.debugCopyStatus = "";
+    render();
+  }, COPY_DEBUG_RESET_DELAY_MS);
+}
+
+function handleDocumentClick(event) {
+  const target = event.target;
+  if (state.avatarMenuOpen && !avatarMenu?.contains(target) && !avatarMenuButton?.contains(target)) {
+    setAvatarMenuOpen(false);
+  }
+
+  if (state.themePickerOpen && !themeControl?.contains(target)) {
+    setThemePickerOpen(false);
+  }
+}
+
+function handleDocumentKeydown(event) {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  if (state.avatarMenuOpen) {
+    setAvatarMenuOpen(false);
+  }
+  if (state.themePickerOpen) {
+    setThemePickerOpen(false);
   }
 }
 
@@ -913,69 +1070,307 @@ function setTextOutput(element, value) {
   element.textContent = nextValue;
 }
 
-function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
-  const lines = [];
-  const currentView = !ready
-    ? "loading"
-    : hasSession
-      ? "authenticated"
-      : state.runtimeConfig?.clientId
-        ? "unauthenticated"
-        : "zip-key-gate";
-
-  lines.push("Login Button Debug Console");
-  lines.push(`generated_at=${new Date().toISOString()}`);
-  lines.push(`build=${BUILD_VERSION}`);
-  lines.push(`view=${currentView}`);
-  lines.push(`busy=${state.busy ? "yes" : "no"}`);
-  lines.push(`silent_auth_in_flight=${state.silentAuthInFlight ? "yes" : "no"}`);
-  lines.push(`last_silent_auth_attempt_at=${state.lastSilentAuthAttemptAt ? new Date(state.lastSilentAuthAttemptAt).toISOString() : "never"}`);
-  lines.push(`extension_id=${firstNonEmptyString([state.runtime.extensionId, "unavailable"])}`);
-  lines.push(`manifest_key_present=${state.runtime.hasManifestKey ? "yes" : "no"}`);
-  lines.push(`app_url=${firstNonEmptyString([state.runtime.appUrl, "unavailable"])}`);
-  lines.push(`redirect_uri=${firstNonEmptyString([state.runtime.redirectUri, "unavailable"])}`);
-  lines.push(`interactive_popup_last_url=${firstNonEmptyString([state.interactivePopupSnapshot?.url, "n/a"])}`);
-  lines.push(`interactive_popup_last_title=${firstNonEmptyString([state.interactivePopupSnapshot?.title, "n/a"])}`);
-  lines.push(`interactive_popup_last_seen_at=${firstNonEmptyString([state.interactivePopupSnapshot?.observedAt, "n/a"])}`);
-  lines.push(`zip_key_client_id=${firstNonEmptyString([state.runtimeConfig?.clientId, "not-loaded"])}`);
-  lines.push(`zip_key_scope=${firstNonEmptyString([state.runtimeConfig?.scope, IMS_SCOPE])}`);
-  lines.push(`zip_key_raw_scope=${firstNonEmptyString([state.runtimeConfig?.rawScope, "n/a"])}`);
-  lines.push(
-    `zip_key_dropped_scopes=${Array.isArray(state.runtimeConfig?.droppedScopes) && state.runtimeConfig.droppedScopes.length > 0
-      ? state.runtimeConfig.droppedScopes.join(" ")
-      : "none"}`
-  );
-  lines.push(`zip_key_source=${firstNonEmptyString([state.runtimeConfig?.source, "defaults"])}`);
-  lines.push(`zip_key_imported_at=${firstNonEmptyString([state.runtimeConfig?.importedAt, "not-imported"])}`);
-  lines.push(`status=${redactSensitiveTokenValues(getStatusLabel(hasSession, expired, flow))}`);
-  lines.push(`config_status=${redactSensitiveTokenValues(state.configStatus.message || DEFAULT_CONFIG_STATUS_MESSAGE)}`);
-  lines.push(`session_present=${hasSession ? "yes" : "no"}`);
-  lines.push(`session_expired=${expired ? "yes" : "no"}`);
-  lines.push(`session_obtained_at=${firstNonEmptyString([state.session?.obtainedAt, "n/a"])}`);
-  lines.push(`session_expires_at=${firstNonEmptyString([state.session?.expiresAt, "n/a"])}`);
-  lines.push(`profile_email=${firstNonEmptyString([
-    state.session?.profile?.email,
-    state.session?.profile?.user_email,
-    state.session?.idTokenClaims?.email,
-    "n/a"
-  ])}`);
-  lines.push(`flow_strategy=${firstNonEmptyString([flow?.strategy, "n/a"])}`);
-  lines.push(`flow_client_id=${firstNonEmptyString([flow?.clientId, "n/a"])}`);
-  lines.push(`flow_scope=${firstNonEmptyString([state.session?.scope, flow?.scope, "n/a"])}`);
-  lines.push(`authorize_endpoint=${firstNonEmptyString([flow?.authorizationEndpoint, state.authConfiguration?.authorization_endpoint, "n/a"])}`);
-  lines.push(`token_endpoint=${firstNonEmptyString([flow?.tokenEndpoint, state.authConfiguration?.token_endpoint, "n/a"])}`);
-  lines.push(`userinfo_endpoint=${firstNonEmptyString([flow?.userInfoEndpoint, state.authConfiguration?.userinfo_endpoint, "n/a"])}`);
-  lines.push(`organizations_endpoint=${firstNonEmptyString([flow?.organizationsEndpoint, IMS_ORGS_URL])}`);
-  lines.push("");
-  lines.push("Recent Activity:");
-
-  if (state.logs.length === 0) {
-    lines.push("Waiting for actions…");
-  } else {
-    lines.push(...state.logs);
+function initializeThemeSwatchGrid() {
+  if (!themeSwatchGrid) {
+    return;
   }
 
+  themeSwatchGrid.innerHTML = "";
+  THEME_ACCENTS.forEach((accent) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "theme-swatchButton";
+    button.dataset.themeAccent = accent.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-label", accent.label);
+    button.title = accent.label;
+
+    const circle = document.createElement("span");
+    circle.className = "theme-swatchCircle";
+    circle.setAttribute("aria-hidden", "true");
+    circle.style.setProperty("--theme-swatch-color", `var(--spectrum-${accent.tokenFamily}-visual-color)`);
+
+    button.appendChild(circle);
+    button.addEventListener("click", async () => {
+      await updateThemePreference({ accent: accent.id });
+      setThemePickerOpen(false);
+    });
+    themeSwatchGrid.appendChild(button);
+  });
+}
+
+function syncThemeSwatchSelection(themePreference) {
+  if (!themeSwatchGrid) {
+    return;
+  }
+
+  const activeTheme = normalizeThemePreference(themePreference);
+  const activeAccent = normalizeThemeAccent(activeTheme.accent);
+  Array.from(themeSwatchGrid.querySelectorAll(".theme-swatchButton")).forEach((button) => {
+    const isSelected = String(button.dataset.themeAccent || "") === activeAccent;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-selected", isSelected ? "true" : "false");
+  });
+}
+
+async function updateThemePreference(nextPartial) {
+  const merged = normalizeThemePreference({
+    ...state.theme,
+    ...(nextPartial && typeof nextPartial === "object" ? nextPartial : {})
+  });
+  state.theme = merged;
+  applyThemePreferenceToDocument(merged);
+  render();
+
+  try {
+    await chrome.storage.local.set({ [THEME_STORAGE_KEY]: merged });
+  } catch (error) {
+    log(`Unable to persist Login Button theme: ${serializeError(error)}`);
+  }
+}
+
+function applyThemePreferenceToDocument(themePreference) {
+  const theme = normalizeThemePreference(themePreference);
+  const accentMeta = getThemeAccentMeta(theme.accent);
+  const tokenFamily = String(accentMeta?.tokenFamily || DEFAULT_THEME.accent).trim().toLowerCase();
+  const body = document.body;
+
+  if (!body || !tokenFamily) {
+    return;
+  }
+
+  body.classList.toggle("spectrum--light", theme.stop === "light");
+  body.classList.toggle("spectrum--dark", theme.stop === "dark");
+  body.dataset.themeStop = theme.stop;
+  body.dataset.themeAccent = accentMeta.id;
+  body.style.colorScheme = theme.stop;
+
+  THEME_RAMP_STEPS.forEach((step) => {
+    body.style.setProperty(`--spectrum-accent-color-${step}`, `var(--spectrum-${tokenFamily}-${step})`);
+  });
+  body.style.setProperty("--spectrum-accent-visual-color", `var(--spectrum-${tokenFamily}-visual-color)`);
+  body.style.setProperty("--spectrum-focus-indicator-color", `var(--spectrum-${tokenFamily}-visual-color)`);
+  body.style.setProperty("--login-button-theme-swatch", `var(--spectrum-${tokenFamily}-visual-color)`);
+  body.style.setProperty(
+    "--login-button-theme-ring",
+    theme.stop === "light"
+      ? "color-mix(in srgb, var(--spectrum-gray-400) 55%, white)"
+      : "color-mix(in srgb, var(--spectrum-gray-700) 70%, black)"
+  );
+  body.style.setProperty(
+    "--login-button-theme-shell",
+    theme.stop === "light" ? "var(--spectrum-white)" : "var(--spectrum-gray-50)"
+  );
+}
+
+function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
+  const lines = [];
+  const session = state.session;
+  const activeTheme = normalizeThemePreference(state.theme);
+  const activeAccent = getThemeAccentMeta(activeTheme.accent);
+  const hasRuntimeConfig = Boolean(firstNonEmptyString([state.runtimeConfig?.clientId]));
+  const currentView = getCurrentView({ ready, hasSession, hasRuntimeConfig });
+  const profile = session?.profile && typeof session.profile === "object" ? session.profile : null;
+  const accessClaims = session?.accessTokenClaims || null;
+  const idClaims = session?.idTokenClaims || null;
+  const organizations = flattenOrganizations(session?.organizations);
+  const activeOrganization = resolveActiveOrganization({
+    profile,
+    accessClaims,
+    idClaims,
+    organizations
+  });
+  const name =
+    firstNonEmptyString([
+      profile?.name,
+      profile?.displayName,
+      profile?.given_name && profile?.family_name ? `${profile.given_name} ${profile.family_name}` : "",
+      idClaims?.name
+    ]) || "n/a";
+  const email =
+    firstNonEmptyString([
+      profile?.email,
+      profile?.user_email,
+      profile?.emailAddress,
+      profile?.additional_info?.email,
+      idClaims?.email,
+      "n/a"
+    ]);
+  const imsSession = session?.imsSession && typeof session.imsSession === "object" ? session.imsSession : {};
+  const lastAuthAttempt = state.lastAuthAttempt && typeof state.lastAuthAttempt === "object" ? state.lastAuthAttempt : null;
+  const lastAuthOutcome = state.lastAuthOutcome && typeof state.lastAuthOutcome === "object" ? state.lastAuthOutcome : null;
+  const currentStatus = redactSensitiveTokenValues(getStatusLabel(hasSession, expired, flow));
+  const currentConfigStatus = redactSensitiveTokenValues(state.configStatus.message || DEFAULT_CONFIG_STATUS_MESSAGE);
+  const zipKeyScope = firstNonEmptyString([state.runtimeConfig?.scope, IMS_SCOPE]);
+  const droppedScopes =
+    Array.isArray(state.runtimeConfig?.droppedScopes) && state.runtimeConfig.droppedScopes.length > 0
+      ? state.runtimeConfig.droppedScopes.join(" ")
+      : "none";
+
+  lines.push("Login Button DEBUG INFO");
+  lines.push(`captured_at=${new Date().toISOString()}`);
+  lines.push(
+    `summary=${buildDebugSummaryLine({
+      currentView,
+      activeTheme,
+      activeAccent,
+      hasRuntimeConfig,
+      hasSession,
+      expired,
+      lastAuthOutcome
+    })}`
+  );
+  lines.push("");
+
+  pushDebugSection(lines, "app", [
+    `build=${BUILD_VERSION}`,
+    `view=${currentView}`,
+    `busy=${state.busy ? "yes" : "no"}`,
+    `status=${currentStatus}`,
+    `config_status=${currentConfigStatus}`,
+    `theme_stop=${activeTheme.stop}`,
+    `theme_accent=${activeAccent.id}`,
+    `theme_label=${activeTheme.stop} x ${activeAccent.label}`,
+    `debug_panel=${state.debugConsoleCollapsed ? "collapsed" : "expanded"}`
+  ]);
+
+  pushDebugSection(lines, "identity", [
+    `display_name=${name}`,
+    `profile_email=${email}`,
+    `resolved_org_name=${firstNonEmptyString([activeOrganization.name, "n/a"])}`,
+    `resolved_org_id=${firstNonEmptyString([activeOrganization.id, "n/a"])}`,
+    `resolved_org_source=${firstNonEmptyString([activeOrganization.source, "n/a"])}`,
+    `experience_cloud_url=${buildExperienceOrgUrl(activeOrganization)}`,
+    `avatar_mode=${firstNonEmptyString([state.avatarAsset?.mode, "fallback"])}`,
+    `avatar_source_url=${firstNonEmptyString([state.avatarAsset?.sourceUrl, session?.avatarUrl, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "session", [
+    `session_present=${hasSession ? "yes" : "no"}`,
+    `session_expired=${expired ? "yes" : "no"}`,
+    `session_obtained_at=${firstNonEmptyString([session?.obtainedAt, "n/a"])}`,
+    `session_expires_at=${firstNonEmptyString([session?.expiresAt, "n/a"])}`,
+    `flow_strategy=${firstNonEmptyString([flow?.strategy, "n/a"])}`,
+    `flow_client_id=${firstNonEmptyString([flow?.clientId, "n/a"])}`,
+    `flow_scope=${firstNonEmptyString([session?.scope, flow?.scope, "n/a"])}`,
+    `ims_user_id=${firstNonEmptyString([imsSession?.userId, "n/a"])}`,
+    `ims_session_id=${firstNonEmptyString([imsSession?.sessionId, "n/a"])}`,
+    `ims_auth_id=${firstNonEmptyString([imsSession?.authId, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "auth", [
+    `last_silent_auth_attempt_at=${state.lastSilentAuthAttemptAt ? new Date(state.lastSilentAuthAttemptAt).toISOString() : "never"}`,
+    `last_auth_started_at=${firstNonEmptyString([lastAuthAttempt?.startedAt, "n/a"])}`,
+    `last_auth_mode=${firstNonEmptyString([lastAuthAttempt?.mode, "n/a"])}`,
+    `last_auth_reason=${firstNonEmptyString([lastAuthAttempt?.reason, "n/a"])}`,
+    `last_auth_transport=${firstNonEmptyString([lastAuthAttempt?.transport, "n/a"])}`,
+    `last_auth_prompt=${firstNonEmptyString([lastAuthAttempt?.prompt, "n/a"])}`,
+    `last_auth_client_id=${firstNonEmptyString([lastAuthAttempt?.clientId, "n/a"])}`,
+    `last_auth_scope=${firstNonEmptyString([lastAuthAttempt?.requestedScope, "n/a"])}`,
+    `last_auth_authorize_endpoint=${firstNonEmptyString([lastAuthAttempt?.authorizationEndpoint, "n/a"])}`,
+    `last_auth_token_endpoint=${firstNonEmptyString([lastAuthAttempt?.tokenEndpoint, "n/a"])}`,
+    `last_auth_redirect_uri=${firstNonEmptyString([lastAuthAttempt?.redirectUri, "n/a"])}`,
+    `last_auth_result=${firstNonEmptyString([lastAuthOutcome?.status, "n/a"])}`,
+    `last_auth_phase=${firstNonEmptyString([lastAuthOutcome?.phase, "n/a"])}`,
+    `last_auth_occurred_at=${firstNonEmptyString([lastAuthOutcome?.occurredAt, "n/a"])}`,
+    `last_auth_popup_lifetime=${firstNonEmptyString([lastAuthOutcome?.popupLifetime, "n/a"])}`,
+    `last_auth_error=${firstNonEmptyString([lastAuthOutcome?.error, "n/a"])}`,
+    `last_auth_hint=${firstNonEmptyString([lastAuthOutcome?.hint, "n/a"])}`,
+    `interactive_popup_last_title=${firstNonEmptyString([state.interactivePopupSnapshot?.title, "n/a"])}`,
+    `interactive_popup_last_url=${firstNonEmptyString([state.interactivePopupSnapshot?.url, "n/a"])}`,
+    `interactive_popup_last_seen_at=${firstNonEmptyString([state.interactivePopupSnapshot?.observedAt, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "runtime", [
+    `extension_id=${firstNonEmptyString([state.runtime.extensionId, "unavailable"])}`,
+    `manifest_key_present=${state.runtime.hasManifestKey ? "yes" : "no"}`,
+    `app_url=${firstNonEmptyString([state.runtime.appUrl, "unavailable"])}`,
+    `redirect_uri=${firstNonEmptyString([state.runtime.redirectUri, "unavailable"])}`,
+    `browser_language=${firstNonEmptyString([navigator.language, "unavailable"])}`,
+    `browser_timezone=${firstNonEmptyString([Intl.DateTimeFormat().resolvedOptions().timeZone, "unavailable"])}`
+  ]);
+
+  pushDebugSection(lines, "credential", [
+    `zip_key_loaded=${hasRuntimeConfig ? "yes" : "no"}`,
+    `zip_key_client_id=${firstNonEmptyString([state.runtimeConfig?.clientId, "not-loaded"])}`,
+    `zip_key_scope=${zipKeyScope}`,
+    `zip_key_raw_scope=${firstNonEmptyString([state.runtimeConfig?.rawScope, "n/a"])}`,
+    `zip_key_dropped_scopes=${droppedScopes}`,
+    `zip_key_source=${firstNonEmptyString([state.runtimeConfig?.source, "defaults"])}`,
+    `zip_key_imported_at=${firstNonEmptyString([state.runtimeConfig?.importedAt, "not-imported"])}`
+  ]);
+
+  pushDebugSection(lines, "endpoints", [
+    `authorize_endpoint=${firstNonEmptyString([flow?.authorizationEndpoint, state.authConfiguration?.authorization_endpoint, "n/a"])}`,
+    `token_endpoint=${firstNonEmptyString([flow?.tokenEndpoint, state.authConfiguration?.token_endpoint, "n/a"])}`,
+    `userinfo_endpoint=${firstNonEmptyString([flow?.userInfoEndpoint, state.authConfiguration?.userinfo_endpoint, "n/a"])}`,
+    `organizations_endpoint=${firstNonEmptyString([flow?.organizationsEndpoint, IMS_ORGS_URL])}`
+  ]);
+
+  const recentActivityEntries = compactRecentActivityEntries(state.logs, 10);
+  pushDebugSection(
+    lines,
+    "recent_activity",
+    recentActivityEntries.length > 0
+      ? recentActivityEntries.map((entry, index) => `event_${String(index + 1).padStart(2, "0")}=${entry}`)
+      : ["event_01=Waiting for activity."]
+  );
+
   return lines.join("\n");
+}
+
+function getCurrentView({ ready, hasSession, hasRuntimeConfig }) {
+  if (!ready) {
+    return "loading";
+  }
+  if (hasSession) {
+    return "authenticated";
+  }
+  if (hasRuntimeConfig) {
+    return "unauthenticated";
+  }
+  return "zip-key-gate";
+}
+
+function buildDebugSummaryLine({ currentView, activeTheme, activeAccent, hasRuntimeConfig, hasSession, expired, lastAuthOutcome }) {
+  const parts = [
+    currentView,
+    state.busy ? "busy" : "idle",
+    `theme ${activeTheme.stop} x ${activeAccent.id}`,
+    hasRuntimeConfig ? "key loaded" : "key missing",
+    hasSession ? (expired ? "session expired" : "session active") : "no session"
+  ];
+
+  if (lastAuthOutcome?.status === "failed") {
+    parts.push("last auth failed");
+  } else if (lastAuthOutcome?.status === "success") {
+    parts.push("last auth succeeded");
+  } else if (lastAuthOutcome?.status === "no-session") {
+    parts.push("no reusable Adobe session");
+  }
+
+  return parts.join(" | ");
+}
+
+function pushDebugSection(lines, label, entries) {
+  lines.push(`[${label}]`);
+  lines.push(...entries);
+  lines.push("");
+}
+
+function compactRecentActivityEntries(entries, limit = 10) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+
+  return entries.slice(0, limit).map((entry) => {
+    const compact = String(entry || "")
+      .split(/\r?\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(" | ");
+    return compact.length > 420 ? `${compact.slice(0, 417)}...` : compact;
+  });
 }
 
 function resolveSessionExpiry(expiresInValue, accessClaims, idClaims) {
@@ -1010,6 +1405,86 @@ function getExtensionRedirectUri() {
   } catch {
     return "";
   }
+}
+
+function summarizeErrorHeadline(error) {
+  const message = redactSensitiveTokenValues(serializeError(error));
+  const headline = message
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return headline || "Unknown error";
+}
+
+function buildAuthHintFromContext(errorMessage) {
+  const message = String(errorMessage || "").toLowerCase();
+  const popupTitle = String(state.interactivePopupSnapshot?.title || "").toLowerCase();
+  const popupUrl = String(state.interactivePopupSnapshot?.url || "").toLowerCase();
+
+  if (
+    /gain access|application developer|not entitled/.test(message) ||
+    /enterprise id/.test(popupTitle) ||
+    /\/ims\/fromsusi/.test(popupUrl)
+  ) {
+    return "Adobe stopped in the Enterprise ID / org-access path before callback. Check org choice, Beta users, or Production status.";
+  }
+  if (/invalid_scope/.test(message)) {
+    return "Adobe rejected the requested scope set. Match the ZIP.KEY scope to the Adobe Console credential.";
+  }
+  if (/authorization page could not be loaded/.test(message)) {
+    return "Chrome never received the final callback. Check Adobe-side validation, project access, or redirect handling.";
+  }
+  if (/popup was closed before login button received the redirect|popup window was closed/.test(message)) {
+    return "The auth popup closed before callback. If Adobe pages were still visible, the block happened on Adobe's side.";
+  }
+  if (/login_required|interaction_required|consent_required/.test(message)) {
+    return "No reusable Adobe session was available. The user still needs a successful interactive sign-in.";
+  }
+  if (/access_denied/.test(message)) {
+    return "Adobe denied the auth request. Check project access, org membership, or consent restrictions.";
+  }
+  if (/unsupported_response_type|code_challenge|pkce/.test(message)) {
+    return "The Adobe credential may not be configured for authorization-code PKCE.";
+  }
+
+  return "";
+}
+
+function recordAuthAttempt(authContext) {
+  state.lastAuthAttempt = {
+    startedAt: new Date().toISOString(),
+    mode: authContext?.interactive ? "interactive" : "silent",
+    reason: firstNonEmptyString([authContext?.reason, "n/a"]),
+    transport: firstNonEmptyString([authContext?.transport, "n/a"]),
+    prompt: firstNonEmptyString([authContext?.prompt, authContext?.interactive ? "default" : "none"]),
+    clientId: firstNonEmptyString([authContext?.clientId, "n/a"]),
+    requestedScope: firstNonEmptyString([authContext?.requestedScope, "n/a"]),
+    authorizationEndpoint: firstNonEmptyString([authContext?.authorizationEndpoint, "n/a"]),
+    tokenEndpoint: firstNonEmptyString([authContext?.tokenEndpoint, "n/a"]),
+    redirectUri: firstNonEmptyString([authContext?.redirectUri, "n/a"])
+  };
+  state.lastAuthOutcome = {
+    status: "pending",
+    phase: "launch",
+    occurredAt: "",
+    popupLifetime: "0.0s",
+    error: "",
+    hint: ""
+  };
+  render();
+}
+
+function recordAuthOutcome({ status, phase, elapsedMs, error, hint }) {
+  const headline = error ? summarizeErrorHeadline(error) : "";
+  state.lastAuthOutcome = {
+    status: firstNonEmptyString([status, "unknown"]),
+    phase: firstNonEmptyString([phase, "unknown"]),
+    occurredAt: new Date().toISOString(),
+    popupLifetime: formatPopupLifetime(elapsedMs),
+    error: firstNonEmptyString([headline, "n/a"]),
+    hint: firstNonEmptyString([hint, buildAuthHintFromContext(headline), "n/a"])
+  };
+  render();
 }
 
 function describeLoginError(error) {
@@ -1130,6 +1605,400 @@ function buildRedirectUriPattern(redirectUri) {
   }
 
   return normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function syncResolvedAvatar({ session, profile, idClaims }) {
+  const candidates = collectResolvedAvatarCandidates({ session, profile, idClaims });
+  const clientId = firstNonEmptyString([session?.flow?.clientId, state.runtimeConfig?.clientId, IMS_CLIENT_ID]);
+  const accessToken = firstNonEmptyString([session?.accessToken]);
+  const key = hasUsableAvatarContext({ accessToken, candidates }) ? `${accessToken.slice(0, 24)}|${candidates.join("|")}` : "";
+
+  if (!key) {
+    resetAvatarAsset();
+    return;
+  }
+
+  if (state.avatarAsset.key === key || state.avatarAsset.loading) {
+    return;
+  }
+
+  const requestId = randomToken();
+  if (state.avatarAsset.objectUrl) {
+    URL.revokeObjectURL(state.avatarAsset.objectUrl);
+  }
+  state.avatarAsset = {
+    key,
+    sourceUrl: candidates[0] || "",
+    displayUrl: "",
+    objectUrl: "",
+    mode: "loading",
+    loading: true,
+    requestId
+  };
+
+  void resolveAvatarAsset({
+    requestId,
+    accessToken,
+    clientId,
+    candidates
+  });
+}
+
+async function resolveAvatarAsset({ requestId, accessToken, clientId, candidates }) {
+  const resolved = await resolveAvatarDisplayUrl({
+    accessToken,
+    clientId,
+    candidates
+  });
+
+  if (state.avatarAsset.requestId !== requestId) {
+    if (resolved.objectUrl) {
+      URL.revokeObjectURL(resolved.objectUrl);
+    }
+    return;
+  }
+
+  state.avatarAsset = {
+    key: state.avatarAsset.key,
+    sourceUrl: resolved.sourceUrl,
+    displayUrl: resolved.displayUrl,
+    objectUrl: resolved.objectUrl,
+    mode: resolved.mode,
+    loading: false,
+    requestId
+  };
+  if (resolved.displayUrl) {
+    log(`Resolved Adobe avatar using ${resolved.mode} source.`);
+  }
+  render();
+}
+
+async function resolveAvatarDisplayUrl({ accessToken, clientId, candidates }) {
+  let directFallbackUrl = "";
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    if (/^(data:image\/|blob:)/i.test(candidate)) {
+      return {
+        sourceUrl: candidate,
+        displayUrl: candidate,
+        objectUrl: "",
+        mode: "direct"
+      };
+    }
+
+    const blobUrl = await fetchProtectedAvatarBlobUrl({
+      url: candidate,
+      accessToken,
+      clientId
+    });
+    if (blobUrl) {
+      return {
+        sourceUrl: candidate,
+        displayUrl: blobUrl,
+        objectUrl: blobUrl,
+        mode: "blob"
+      };
+    }
+
+    if (!directFallbackUrl) {
+      directFallbackUrl = candidate;
+    }
+  }
+
+  if (directFallbackUrl) {
+    return {
+      sourceUrl: directFallbackUrl,
+      displayUrl: directFallbackUrl,
+      objectUrl: "",
+      mode: "direct"
+    };
+  }
+
+  return {
+    sourceUrl: "",
+    displayUrl: "",
+    objectUrl: "",
+    mode: "fallback"
+  };
+}
+
+async function fetchProtectedAvatarBlobUrl({ url, accessToken, clientId }) {
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      mode: "cors",
+      credentials: "omit",
+      headers: {
+        ...buildImsProfileHeaders(accessToken, clientId),
+        Accept: "image/*,*/*;q=0.8"
+      }
+    });
+    if (!response.ok) {
+      return "";
+    }
+
+    const blob = await response.blob();
+    if (!blob || !String(blob.type || "").startsWith("image/")) {
+      return "";
+    }
+
+    return URL.createObjectURL(blob);
+  } catch {
+    return "";
+  }
+}
+
+function collectResolvedAvatarCandidates({ session, profile, idClaims }) {
+  const candidates = [
+    state.avatarAsset.sourceUrl,
+    session?.avatarUrl,
+    pickAvatarUrl(profile, idClaims || {}),
+    ...(profile ? collectProfileAvatarCandidates(profile) : []),
+    idClaims?.picture,
+    idClaims?.avatar,
+    idClaims?.avatarUrl
+  ]
+    .map((value) => normalizeAvatarCandidate(value))
+    .filter(Boolean);
+
+  return [...new Set(candidates)];
+}
+
+function hasUsableAvatarContext({ accessToken, candidates }) {
+  return Boolean(String(accessToken || "").trim()) && Array.isArray(candidates) && candidates.length > 0;
+}
+
+function resetAvatarAsset() {
+  if (state.avatarAsset.objectUrl) {
+    URL.revokeObjectURL(state.avatarAsset.objectUrl);
+  }
+  state.avatarAsset = {
+    key: "",
+    sourceUrl: "",
+    displayUrl: "",
+    objectUrl: "",
+    mode: "fallback",
+    loading: false,
+    requestId: ""
+  };
+}
+
+function resolveActiveOrganization({ profile, accessClaims, idClaims, organizations = [] }) {
+  const candidates = [];
+  const orgIdHints = [];
+
+  const pushCandidate = (value, source) => {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    const id = extractOrganizationId(value);
+    const name = extractOrganizationName(value);
+    if (!id && !name) {
+      return;
+    }
+
+    const signature = JSON.stringify({ id, name, source });
+    if (candidates.some((candidate) => candidate.signature === signature)) {
+      return;
+    }
+
+    candidates.push({
+      value,
+      id,
+      name,
+      source,
+      signature
+    });
+  };
+
+  const pushOrgIdHints = (value) => {
+    collectOrganizationObjects(value).forEach((entry) => {
+      const id = extractOrganizationId(entry.value);
+      if (id) {
+        orgIdHints.push(id);
+      }
+      pushCandidate(entry.value, entry.source);
+    });
+  };
+
+  organizations.forEach((organization, index) => pushCandidate(organization, `organizations[${index}]`));
+  pushOrgIdHints(profile);
+  pushOrgIdHints(profile?.additional_info);
+  pushOrgIdHints(profile?.projectedProductContext);
+  pushOrgIdHints(profile?.additional_info?.projectedProductContext);
+  pushOrgIdHints(accessClaims);
+  pushOrgIdHints(idClaims);
+
+  const uniqueOrgIdHints = [...new Set(orgIdHints.map(normalizeOrganizationIdentifier).filter(Boolean))];
+  const matchedCandidate = uniqueOrgIdHints
+    .map((orgId) => candidates.find((candidate) => normalizeOrganizationIdentifier(candidate.id) === orgId))
+    .find(Boolean) || candidates[0];
+
+  const resolvedId = firstNonEmptyString([
+    matchedCandidate?.id,
+    uniqueOrgIdHints[0]
+  ]);
+  const resolvedName = firstNonEmptyString([
+    matchedCandidate?.name,
+    resolvedId ? `Adobe IMS Org ${resolvedId}` : ""
+  ]) || "Adobe organization unavailable";
+  const resolvedSource = firstNonEmptyString([matchedCandidate?.source, uniqueOrgIdHints[0] ? "token-or-profile" : "not-resolved"]);
+  const metaParts = [];
+  if (resolvedId) {
+    metaParts.push(`Org ID ${resolvedId}`);
+  }
+  metaParts.push(
+    resolvedSource === "not-resolved"
+      ? "Login Button could not resolve the selected Adobe org from the returned payloads."
+      : `Resolved from ${resolvedSource}.`
+  );
+
+  return {
+    name: resolvedName,
+    id: resolvedId,
+    source: resolvedSource,
+    meta: metaParts.join(" | ")
+  };
+}
+
+function buildExperienceOrgUrl(activeOrganization) {
+  const orgSlug = normalizeExperienceOrgSlug(activeOrganization);
+  return orgSlug ? `https://experience.adobe.com/#/@${orgSlug}` : "https://experience.adobe.com";
+}
+
+function buildExperienceOrgTitle(activeOrganization) {
+  const orgSlug = normalizeExperienceOrgSlug(activeOrganization);
+  return orgSlug ? `Open Experience Cloud for ${orgSlug}` : "Open Experience Cloud";
+}
+
+function normalizeExperienceOrgSlug(activeOrganization) {
+  const directId = String(activeOrganization?.id || "").trim();
+  if (directId) {
+    return encodeURIComponent(directId);
+  }
+
+  const normalizedName = String(activeOrganization?.name || "")
+    .replace(/^Adobe\s+IMS\s+Org\s+/i, "")
+    .trim();
+  if (!normalizedName) {
+    return "";
+  }
+
+  return encodeURIComponent(normalizedName.replace(/\s+/g, "-"));
+}
+
+function collectOrganizationObjects(value, path = "payload", results = [], seen = new WeakSet()) {
+  if (!value || typeof value !== "object") {
+    return results;
+  }
+  if (seen.has(value)) {
+    return results;
+  }
+  seen.add(value);
+
+  if (looksLikeOrganizationObject(value, path)) {
+    results.push({ value, source: path });
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      collectOrganizationObjects(entry, `${path}[${index}]`, results, seen);
+    });
+    return results;
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry && typeof entry === "object") {
+      collectOrganizationObjects(entry, `${path}.${key}`, results, seen);
+    }
+  }
+
+  return results;
+}
+
+function looksLikeOrganizationObject(value, path = "") {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  if (/(projectedproductcontext|organization|org|tenant|company)/i.test(path)) {
+    return true;
+  }
+
+  return Boolean(
+    extractStrongOrganizationId(value) ||
+      firstNonEmptyString([
+        value.organizationName,
+        value.organization_name,
+        value.orgName,
+        value.org_name,
+        value.imsOrgName,
+        value.ims_org_name,
+        value.companyName,
+        value.tenantName
+      ])
+  );
+}
+
+function extractOrganizationId(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([
+    extractStrongOrganizationId(value),
+    looksLikeOrganizationObject(value) ? firstNonEmptyString([value.id, value.code]) : ""
+  ]);
+}
+
+function extractStrongOrganizationId(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([
+    value.organizationId,
+    value.organizationID,
+    value.organization_id,
+    value.orgId,
+    value.orgID,
+    value.org_id,
+    value.imsOrgId,
+    value.ims_org_id,
+    value.tenantId,
+    value.tenant_id,
+    value.companyId,
+    value.company_id
+  ]);
+}
+
+function extractOrganizationName(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([
+    value.organizationName,
+    value.organization_name,
+    value.orgName,
+    value.org_name,
+    value.imsOrgName,
+    value.ims_org_name,
+    value.companyName,
+    value.company_name,
+    value.tenantName,
+    value.tenant_name,
+    looksLikeOrganizationObject(value) ? firstNonEmptyString([value.displayName, value.name, value.title]) : ""
+  ]);
+}
+
+function normalizeOrganizationIdentifier(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs = INTERACTIVE_AUTH_TIMEOUT_MS }) {
@@ -1288,23 +2157,15 @@ async function copyDebugConsoleToClipboard() {
 
   try {
     await navigator.clipboard.writeText(snapshot);
-    if (copyDebugButton) {
-      copyDebugButton.disabled = true;
-      copyDebugButton.textContent = "COPIED";
-    }
-    log("Copied Login Button debug console to clipboard.");
+    setDebugCopyStatus(DEFAULT_DEBUG_COPY_STATUS);
   } catch (error) {
     log(`Unable to copy Login Button debug console: ${serializeError(error)}`);
     window.alert("Login Button could not copy the debug console to the clipboard.");
+    setDebugCopyStatus("");
   } finally {
-    window.clearTimeout(copyDebugResetTimer);
-    copyDebugResetTimer = window.setTimeout(() => {
-      if (!copyDebugButton) {
-        return;
-      }
-      copyDebugButton.disabled = false;
-      copyDebugButton.textContent = "COPY DEBUG";
-    }, COPY_DEBUG_RESET_DELAY_MS);
+    if (!state.debugCopyStatus) {
+      window.clearTimeout(copyDebugResetTimer);
+    }
   }
 }
 
