@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Login Button",
-  "version": "1.2.32",
+  "version": "1.2.33",
   "description": "Login Button is an MV3 Chrome extension for Adobe IMS authorization-code PKCE sign-in, profile inspection, and session diagnostics.",
   "minimum_chrome_version": "114",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4ggRrOiQdavkh68HgTSj/bSdfBx2OtHqAKWA9iEeCua5/oEQ9I8to7L+Rx5rzFHEFYP62MtAyUBvIrssFeiWrYN1UPO1tQKScTSbzgm2axbtdPLs9emkRv2QeKDECROnzijV4M/48YV6u1VCXYYUU8cTyV5TwwxvtEV/4BSooFdv2NhMxeRJjUOeOLtB8vGPNM567i6WMYX86iVuuBzTRNfQEoDnKBCzjSCgXE/ncMGT26aqP0PwhjBwbUDjk5JEgYXrbsqlO4MD8mAUXT+DSdHH6F2HMCO9DC7jmuRJetgBbMYh6SBsEmjm73MPf/paG0FJtSPcKejv6hOD79vORQIDAQAB",
   "permissions": [
     "storage",
     "identity",
     "sidePanel",
     "tabs",
-    "downloads"
+    "downloads",
+    "contextMenus"
   ],
   "host_permissions": [
     "https://*.adobelogin.com/*",
@@ -32,5 +34,5 @@
     "48": "icons/icon_48.png",
     "128": "icons/icon_128.png"
   },
-  "version_name": "1.2.32"
+  "version_name": "1.2.33"
 }

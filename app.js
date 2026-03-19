@@ -284,6 +284,8 @@ async function initialize() {
 
     if (!state.runtime.hasManifestKey) {
       log("Manifest has no stable key. The chromiumapp redirect URL may differ across machines until a manifest key is set.");
+    } else {
+      log(`Manifest key is present. Login Button now uses the stable Chrome extension ID ${state.runtime.extensionId}.`);
     }
 
     if (state.runtime.redirectUri) {

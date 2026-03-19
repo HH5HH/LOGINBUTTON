@@ -1,5 +1,6 @@
 const LOGINBUTTON_GET_UPDATE_STATE_REQUEST_TYPE = "loginbutton:getUpdateState";
 const LOGINBUTTON_GET_LATEST_REQUEST_TYPE = "loginbutton:getLatest";
+const LOGINBUTTON_ACTION_MENU_GET_LATEST_ID = "loginbutton:actionGetLatest";
 const LOGINBUTTON_GITHUB_OWNER = "HH5HH";
 const LOGINBUTTON_GITHUB_REPO = "LOGINBUTTON";
 const LOGINBUTTON_LATEST_REF_API_URL =
@@ -33,6 +34,28 @@ async function syncSidePanelBehavior() {
   try {
     await chrome.sidePanel.setPanelBehavior({
       openPanelOnActionClick: true
+    });
+  } catch {
+    // Ignore unsupported environments.
+  }
+}
+
+async function syncActionContextMenu() {
+  if (!chrome.contextMenus?.removeAll || !chrome.contextMenus?.create) {
+    return;
+  }
+
+  await new Promise((resolve) => {
+    chrome.contextMenus.removeAll(() => {
+      resolve();
+    });
+  });
+
+  try {
+    chrome.contextMenus.create({
+      id: LOGINBUTTON_ACTION_MENU_GET_LATEST_ID,
+      title: "GET LATEST",
+      contexts: ["action"]
     });
   } catch {
     // Ignore unsupported environments.
@@ -377,6 +400,7 @@ async function openLoginButtonGetLatestFlow() {
 
 function bootstrapBackground() {
   void syncSidePanelBehavior();
+  void syncActionContextMenu();
   void refreshUpdateState({ force: true }).catch(() => {});
 }
 
@@ -389,6 +413,14 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   bootstrapBackground();
 });
+
+if (chrome.contextMenus?.onClicked) {
+  chrome.contextMenus.onClicked.addListener((info) => {
+    if (info?.menuItemId === LOGINBUTTON_ACTION_MENU_GET_LATEST_ID) {
+      void openLoginButtonGetLatestFlow().catch(() => {});
+    }
+  });
+}
 
 globalThis.setInterval(() => {
   void refreshUpdateState({ force: true }).catch(() => {});
