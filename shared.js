@@ -5,6 +5,7 @@ export const SESSION_KEY = "loginButtonUnderparFlowSession";
 export const IMS_RUNTIME_CONFIG_KEY = "loginButtonImsRuntimeConfig";
 export const IMS_CLIENT_ID = "";
 export const IMS_IDENTITY_SCOPE = "openid profile";
+export const IMS_LEGACY_DEFAULT_SCOPE = "openid profile offline_access additional_info.projectedProductContext";
 export const IMS_CONSOLE_DEFAULT_SCOPE = "openid profile offline_access additional_info.projectedProductContext";
 export const IMS_ANALYTICS_SCOPE =
   "openid AdobeID read_organizations additional_info.projectedProductContext additional_info.job_function";
@@ -39,6 +40,53 @@ export const IMS_ORGS_URL = "https://ims-na1.adobelogin.com/ims/organizations/v5
 export const IMS_LEGACY_REDIRECT_URI = "https://login.aepdebugger.adobe.com";
 export const PPS_PROFILE_BASE_URL = "https://pps.services.adobe.com";
 export const PROFILE_CLIENT_IDS = [IMS_CLIENT_ID, "AdobePass1"].filter(Boolean);
+export const CONSOLE_LEGACY_DEFAULT_ENVIRONMENT = "release-staging";
+export const CONSOLE_DEFAULT_ENVIRONMENT = "release-production";
+export const CONSOLE_ENVIRONMENT_CONFIGS = Object.freeze({
+  "release-production": {
+    label: "Release Production",
+    baseUrl: "https://console.auth.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  "release-staging": {
+    label: "Release Staging",
+    baseUrl: "https://console.auth-staging.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  "prequal-production": {
+    label: "Prequal Production",
+    baseUrl: "https://console-prequal.auth.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  "prequal-production-secondary": {
+    label: "Prequal Production Secondary",
+    baseUrl: "https://console-prequal-secondary.auth.adobe.com/rest/api",
+    imsEnvironment: "stage"
+  },
+  "prequal-staging": {
+    label: "Prequal Staging",
+    baseUrl: "https://console-prequal.auth-staging.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  "prequal-staging-secondary": {
+    label: "Prequal Staging Secondary",
+    baseUrl: "https://console-prequal-secondary.auth-staging.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  preprod: {
+    label: "Preprod",
+    baseUrl: "https://console-preprod.auth.adobe.com/rest/api",
+    imsEnvironment: "prod"
+  },
+  dev: {
+    label: "Dev",
+    baseUrl: "https://console-dev.auth.adobe.com/rest/api",
+    imsEnvironment: "stage"
+  }
+});
+export const CONSOLE_USER_EXTENDED_PROFILE_PATH = "/user/extendedProfile";
+export const CONSOLE_LATEST_CONFIGURATION_VERSION_PATH = "/config/latestActivatedConsoleConfigurationVersion";
+export const CONSOLE_PROGRAMMERS_PATH = "/entity/Programmer";
 
 const HELPER_RESULT_PREFIX = "loginButtonHelperResultV1:";
 const ZIP_KEY_FILE_PREFIX = "ZIPKEY1:";
@@ -101,11 +149,17 @@ export function getResultStorageArea() {
 }
 
 export function getDefaultImsRuntimeConfig() {
+  const consoleEnvironment = normalizeConsoleEnvironment(CONSOLE_DEFAULT_ENVIRONMENT);
   return {
     clientId: String(IMS_CLIENT_ID || "").trim(),
     scope: normalizeScopeList(IMS_SCOPE),
     rawScope: "",
     droppedScopes: [],
+    hasExplicitScope: false,
+    consoleEnvironment,
+    consoleBaseUrl: resolveConsoleBaseUrl({ consoleEnvironment }),
+    hasExplicitConsoleTarget: false,
+    organizations: [],
     source: "defaults",
     importedAt: ""
   };
@@ -176,18 +230,172 @@ export function normalizeImsRuntimeConfig(payload) {
     ]),
     firstNonEmptyString([sourcePayload.rawScope])
   ]);
-  const sanitizedScope = sanitizeImsScopeForCredential(rawScope || IMS_SCOPE);
+  const hasExplicitScope = sourcePayload.hasExplicitScope === true
+    || hasAnyConfiguredValue(sourcePayload, [
+      "services.adobe.ims.scope",
+      "adobe.ims.scope",
+      "ims.scope",
+      "scope",
+      "flow.scope"
+    ]);
+  const shouldUpgradeLegacyDefaultScope =
+    normalizeScopeList(firstNonEmptyString([rawScope, sourcePayload.scope]), IMS_SCOPE) === IMS_LEGACY_DEFAULT_SCOPE;
+  const effectiveRawScope = shouldUpgradeLegacyDefaultScope ? "" : rawScope;
+  const sanitizedScope = sanitizeImsScopeForCredential(effectiveRawScope || IMS_SCOPE);
+  const configuredConsoleEnvironment = normalizeConsoleEnvironment(
+    readZipKeyValue(sourcePayload, [
+      "services.adobe.console.environment",
+      "services.adobe.console.env",
+      "adobepass.console.environment",
+      "adobepass.console.env",
+      "adobe.console.environment",
+      "adobe.console.env",
+      "console.environment",
+      "console.env",
+      "consoleEnvironment",
+      "flow.consoleEnvironment"
+    ]),
+    CONSOLE_DEFAULT_ENVIRONMENT
+  );
+  const hasExplicitConsoleTarget = sourcePayload.hasExplicitConsoleTarget === true
+    || hasAnyConfiguredValue(sourcePayload, [
+      "services.adobe.console.environment",
+      "services.adobe.console.env",
+      "adobepass.console.environment",
+      "adobepass.console.env",
+      "adobe.console.environment",
+      "adobe.console.env",
+      "console.environment",
+      "console.env",
+      "consoleEnvironment",
+      "flow.consoleEnvironment",
+      "services.adobe.console.base_url",
+      "services.adobe.console.baseUrl",
+      "services.adobe.console.url",
+      "adobepass.console.base_url",
+      "adobepass.console.baseUrl",
+      "adobepass.console.url",
+      "adobe.console.base_url",
+      "adobe.console.baseUrl",
+      "adobe.console.url",
+      "console.base_url",
+      "console.baseUrl",
+      "console.url",
+      "consoleUrl",
+      "flow.consoleUrl"
+    ]);
+  const configuredConsoleBaseUrl = readZipKeyValue(sourcePayload, [
+    "services.adobe.console.base_url",
+    "services.adobe.console.baseUrl",
+    "services.adobe.console.url",
+    "adobepass.console.base_url",
+    "adobepass.console.baseUrl",
+    "adobepass.console.url",
+    "adobe.console.base_url",
+    "adobe.console.baseUrl",
+    "adobe.console.url",
+    "console.base_url",
+    "console.baseUrl",
+    "console.url",
+    "consoleUrl",
+    "flow.consoleUrl"
+  ]);
+  const shouldUpgradeLegacyDefaultConsoleTarget =
+    !hasExplicitConsoleTarget &&
+    normalizeConsoleEnvironment(firstNonEmptyString([sourcePayload.consoleEnvironment, configuredConsoleEnvironment]), CONSOLE_DEFAULT_ENVIRONMENT) === CONSOLE_LEGACY_DEFAULT_ENVIRONMENT &&
+    normalizeConsoleBaseUrl(firstNonEmptyString([sourcePayload.consoleBaseUrl, configuredConsoleBaseUrl])) === normalizeConsoleBaseUrl(
+      CONSOLE_ENVIRONMENT_CONFIGS[CONSOLE_LEGACY_DEFAULT_ENVIRONMENT]?.baseUrl
+    );
+  const consoleEnvironment = shouldUpgradeLegacyDefaultConsoleTarget
+    ? CONSOLE_DEFAULT_ENVIRONMENT
+    : configuredConsoleEnvironment;
+  const effectiveConsoleBaseUrl = shouldUpgradeLegacyDefaultConsoleTarget ? "" : configuredConsoleBaseUrl;
+  const organizations = normalizeConfiguredOrganizations(
+    readZipKeyRawValue(sourcePayload, [
+      "services.adobe.ims.organizations",
+      "services.adobe.ims.orgs",
+      "adobe.ims.organizations",
+      "adobe.ims.orgs",
+      "ims.organizations",
+      "ims.orgs",
+      "organizations",
+      "orgs"
+    ]),
+    collectConfiguredOrganizationEntriesByPrefix(sourcePayload)
+  );
   const source = firstNonEmptyString([sourcePayload.source, clientId ? "ZIP.KEY" : "defaults"]);
   const importedAt = firstNonEmptyString([sourcePayload.importedAt]);
 
   return {
     clientId,
     scope: sanitizedScope.scope,
-    rawScope: rawScope || sanitizedScope.scope,
+    rawScope: effectiveRawScope,
     droppedScopes: sanitizedScope.droppedScopes,
+    hasExplicitScope,
+    consoleEnvironment,
+    consoleBaseUrl: resolveConsoleBaseUrl({
+      consoleEnvironment,
+      consoleBaseUrl: effectiveConsoleBaseUrl
+    }),
+    hasExplicitConsoleTarget,
+    organizations,
     source,
     importedAt
   };
+}
+
+export function normalizeConsoleEnvironment(value = "", fallbackEnvironment = CONSOLE_DEFAULT_ENVIRONMENT) {
+  const fallback = String(fallbackEnvironment || CONSOLE_DEFAULT_ENVIRONMENT).trim().toLowerCase();
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized && CONSOLE_ENVIRONMENT_CONFIGS[normalized]) {
+    return normalized;
+  }
+
+  return CONSOLE_ENVIRONMENT_CONFIGS[fallback] ? fallback : CONSOLE_DEFAULT_ENVIRONMENT;
+}
+
+export function normalizeConsoleBaseUrl(value = "") {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return "";
+    }
+    if (parsed.protocol === "http:") {
+      parsed.protocol = "https:";
+    }
+    parsed.hash = "";
+    parsed.search = "";
+
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+export function getConsoleEnvironmentMeta(environment = CONSOLE_DEFAULT_ENVIRONMENT) {
+  const normalizedEnvironment = normalizeConsoleEnvironment(environment, CONSOLE_DEFAULT_ENVIRONMENT);
+  const meta = CONSOLE_ENVIRONMENT_CONFIGS[normalizedEnvironment] || CONSOLE_ENVIRONMENT_CONFIGS[CONSOLE_DEFAULT_ENVIRONMENT];
+
+  return {
+    id: normalizedEnvironment,
+    label: meta?.label || CONSOLE_DEFAULT_ENVIRONMENT,
+    baseUrl: meta?.baseUrl || "",
+    imsEnvironment: meta?.imsEnvironment || "prod"
+  };
+}
+
+export function resolveConsoleBaseUrl({ consoleEnvironment = CONSOLE_DEFAULT_ENVIRONMENT, consoleBaseUrl = "" } = {}) {
+  const normalizedBaseUrl = normalizeConsoleBaseUrl(consoleBaseUrl);
+  if (normalizedBaseUrl) {
+    return normalizedBaseUrl;
+  }
+
+  return getConsoleEnvironmentMeta(consoleEnvironment).baseUrl;
 }
 
 export function randomToken() {
@@ -391,6 +599,28 @@ function readObjectPathValue(source, path) {
   return normalizeConfigValue(current);
 }
 
+function readRawObjectPathValue(source, path) {
+  const normalizedPath = String(path || "").trim();
+  if (!normalizedPath || !source || typeof source !== "object") {
+    return undefined;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, normalizedPath)) {
+    return source[normalizedPath];
+  }
+
+  const parts = normalizedPath.split(".");
+  let current = source;
+  for (const part of parts) {
+    if (!current || typeof current !== "object" || !(part in current)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+
+  return current;
+}
+
 function readZipKeyValue(payload, candidatePaths = []) {
   for (const candidatePath of candidatePaths) {
     const value = readObjectPathValue(payload, candidatePath);
@@ -400,6 +630,36 @@ function readZipKeyValue(payload, candidatePaths = []) {
   }
 
   return "";
+}
+
+function readZipKeyRawValue(payload, candidatePaths = []) {
+  for (const candidatePath of candidatePaths) {
+    const value = readRawObjectPathValue(payload, candidatePath);
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value === "string" && !value.trim()) {
+      continue;
+    }
+    return value;
+  }
+
+  return undefined;
+}
+
+function hasAnyConfiguredValue(payload, candidatePaths = []) {
+  for (const candidatePath of candidatePaths) {
+    const value = readRawObjectPathValue(payload, candidatePath);
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value === "string" && !value.trim()) {
+      continue;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 function decodeBase64Text(value) {
@@ -413,6 +673,173 @@ function decodeBase64Text(value) {
   } catch {
     return "";
   }
+}
+
+function normalizeConfiguredOrganizations(value, additionalEntries = []) {
+  const sourceValue = normalizeConfiguredOrganizationsSource(value);
+  if (!sourceValue) {
+    if (!Array.isArray(additionalEntries) || additionalEntries.length === 0) {
+      return [];
+    }
+  }
+
+  const rawEntries = [
+    ...(Array.isArray(sourceValue)
+      ? sourceValue
+      : sourceValue && typeof sourceValue === "object"
+        ? Object.entries(sourceValue).map(([id, label]) => ({ id, label }))
+        : []),
+    ...(Array.isArray(additionalEntries) ? additionalEntries : [])
+  ];
+  const organizations = [];
+  const seen = new Set();
+
+  rawEntries.forEach((entry, index) => {
+    const normalized = normalizeConfiguredOrganizationEntry(entry, index);
+    if (!normalized || seen.has(normalized.key)) {
+      return;
+    }
+    seen.add(normalized.key);
+    organizations.push(normalized);
+  });
+
+  return organizations;
+}
+
+function normalizeConfiguredOrganizationsSource(value) {
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return value;
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith("[") || raw.startsWith("{")) {
+    const parsed = parseJsonText(raw, null);
+    if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
+      return parsed;
+    }
+  }
+
+  const entries = raw
+    .split(/[;\n]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorMatch = entry.match(/^([^|:=]+)\s*(?:\||:|=)\s*(.+)$/);
+      if (separatorMatch) {
+        return {
+          id: separatorMatch[1],
+          label: separatorMatch[2]
+        };
+      }
+
+      return {
+        id: entry,
+        label: entry
+      };
+    });
+
+  return entries;
+}
+
+function collectConfiguredOrganizationEntriesByPrefix(sourcePayload = {}) {
+  if (!sourcePayload || typeof sourcePayload !== "object") {
+    return [];
+  }
+
+  const candidatePrefixes = [
+    "services.adobe.ims.organizations.",
+    "services.adobe.ims.organization.",
+    "services.adobe.ims.orgs.",
+    "services.adobe.ims.org.",
+    "adobe.ims.organizations.",
+    "adobe.ims.organization.",
+    "adobe.ims.orgs.",
+    "adobe.ims.org.",
+    "ims.organizations.",
+    "ims.organization.",
+    "ims.orgs.",
+    "ims.org.",
+    "organizations.",
+    "organization.",
+    "orgs.",
+    "org."
+  ];
+  const entries = [];
+
+  for (const [key, value] of Object.entries(sourcePayload)) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      continue;
+    }
+
+    const matchedPrefix = candidatePrefixes.find((prefix) => normalizedKey.startsWith(prefix));
+    if (!matchedPrefix) {
+      continue;
+    }
+
+    const organizationId = normalizedKey.slice(matchedPrefix.length).trim();
+    const organizationLabel = String(value ?? "").trim();
+    if (!organizationId || !organizationLabel) {
+      continue;
+    }
+
+    entries.push({
+      id: organizationId,
+      label: organizationLabel
+    });
+  }
+
+  return entries;
+}
+
+function normalizeConfiguredOrganizationEntry(entry, index = 0) {
+  const payload =
+    typeof entry === "string"
+      ? {
+          id: entry,
+          label: entry
+        }
+      : entry && typeof entry === "object"
+        ? entry
+        : null;
+  if (!payload) {
+    return null;
+  }
+
+  const id = firstNonEmptyString([
+    payload.id,
+    payload.orgId,
+    payload.orgID,
+    payload.org_id,
+    payload.organizationId,
+    payload.organizationID,
+    payload.organization_id,
+    payload.customerOrgId,
+    payload.customer_org_id,
+    payload.value
+  ]);
+  const label = firstNonEmptyString([
+    payload.label,
+    payload.name,
+    payload.title,
+    payload.displayName,
+    payload.organizationName,
+    payload.organization_name,
+    id
+  ]);
+  if (!id || !label) {
+    return null;
+  }
+
+  return {
+    key: `target-org:${String(id).trim().toLowerCase() || index}`,
+    id: String(id).trim(),
+    label: String(label).trim()
+  };
 }
 
 export function redactSensitiveTokenValues(value) {
@@ -494,6 +921,20 @@ export function normalizeAvatarCandidate(value) {
   }
 }
 
+export function toImsAvatarDownloadUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = normalizeAvatarCandidate(raw);
+  if (normalized) {
+    return normalized;
+  }
+
+  return `${IMS_BASE_URL}/ims/avatar/download/${encodeURIComponent(raw)}`;
+}
+
 export function collectProfileAvatarCandidates(profilePayload) {
   if (!profilePayload || typeof profilePayload !== "object") {
     return [];
@@ -530,6 +971,17 @@ export function collectProfileAvatarCandidates(profilePayload) {
   for (const value of explicitValues) {
     pushCandidate(value);
   }
+
+  pushCandidate(
+    toImsAvatarDownloadUrl(
+      firstNonEmptyString([
+        profilePayload?.userId,
+        profilePayload?.user_id,
+        profilePayload?.sub,
+        profilePayload?.id
+      ])
+    )
+  );
 
   const seen = new WeakSet();
   const queue = [profilePayload];
@@ -613,12 +1065,24 @@ export function pickAvatarUrl(profilePayload = {}, claims = {}) {
     return profileCandidates[0];
   }
 
+  const fallbackProfileCandidates = collectProfileAvatarCandidates(profilePayload);
+  if (fallbackProfileCandidates.length > 0) {
+    return fallbackProfileCandidates[0];
+  }
+
   const claimCandidates = [
     claims?.picture,
     claims?.avatar,
     claims?.avatarUrl,
     claims?.avatar_url,
-    claims?.image
+    claims?.image,
+    toImsAvatarDownloadUrl(
+      firstNonEmptyString([
+        claims?.user_id,
+        claims?.sub,
+        claims?.id
+      ])
+    )
   ]
     .map((value) => normalizeAvatarCandidate(value))
     .filter(Boolean);
@@ -1037,22 +1501,25 @@ export function mergeProfilePayloads(profilePayloads = []) {
 
 export async function fetchImsOrganizations({
   organizationsEndpoint = IMS_ORGS_URL,
-  accessToken = ""
+  accessToken = "",
+  clientId = IMS_CLIENT_ID
 } = {}) {
   if (!accessToken) {
     return null;
   }
 
+  const endpoint = new URL(String(organizationsEndpoint || IMS_ORGS_URL));
+  if (clientId) {
+    endpoint.searchParams.set("client_id", String(clientId));
+  }
+
   let response;
   try {
-    response = await fetch(String(organizationsEndpoint || IMS_ORGS_URL), {
+    response = await fetch(endpoint.toString(), {
       method: "GET",
       mode: "cors",
       credentials: "omit",
-      headers: {
-        Accept: "application/json, text/plain, */*",
-        Authorization: `Bearer ${accessToken}`
-      }
+      headers: buildImsProfileHeaders(accessToken, clientId)
     });
   } catch (error) {
     throw new Error(`Unable to fetch Adobe organizations: ${serializeError(error)}`);

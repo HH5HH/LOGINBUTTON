@@ -1,7 +1,11 @@
 import {
+  CONSOLE_DEFAULT_ENVIRONMENT,
+  CONSOLE_LATEST_CONFIGURATION_VERSION_PATH,
+  CONSOLE_PROGRAMMERS_PATH,
+  CONSOLE_USER_EXTENDED_PROFILE_PATH,
   FLOW_LABEL,
   IMS_CLIENT_ID,
-  IMS_IDENTITY_SCOPE,
+  IMS_ISSUER_URL,
   IMS_RUNTIME_CONFIG_KEY,
   IMS_ORGS_URL,
   IMS_SCOPE,
@@ -28,11 +32,14 @@ import {
   mergeProfilePayloads,
   normalizeImsRuntimeConfig,
   normalizeAvatarCandidate,
+  getConsoleEnvironmentMeta,
   normalizeScopeList,
+  parseJsonText,
   parseAuthorizationCodeResponse,
   pickAvatarUrl,
   randomToken,
   redactSensitiveTokenValues,
+  resolveConsoleBaseUrl,
   revokeImsToken,
   scopeIncludes,
   serializeError
@@ -51,9 +58,111 @@ const DEFAULT_CONFIG_STATUS_MESSAGE = "Drop key.";
 const DEFAULT_DEBUG_TOGGLE_LABEL = "DEBUG INFO";
 const DEFAULT_DEBUG_TOGGLE_META = "Click copies. Shift+click toggles details.";
 const DEFAULT_DEBUG_COPY_STATUS = "Copied to clipboard";
+const ORG_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_other_org__";
+const ORG_PICKER_REAUTH_VALUE = "__loginbutton_reauth_org__";
+const ORG_PICKER_UNAVAILABLE_VALUE = "__loginbutton_unavailable_org__";
+const CM_TENANT_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_cm_tenant__";
+const CM_TENANT_PICKER_UNAVAILABLE_VALUE = "__loginbutton_cm_tenant_unavailable__";
+const PROGRAMMER_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_programmer__";
+const PROGRAMMER_PICKER_UNAVAILABLE_VALUE = "__loginbutton_programmer_unavailable__";
+const REGISTERED_APPLICATION_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_registered_application__";
+const REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE = "__loginbutton_registered_application_unavailable__";
+const REQUESTOR_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_requestor__";
+const REQUESTOR_PICKER_UNAVAILABLE_VALUE = "__loginbutton_requestor_unavailable__";
+const IMS_ORG_DISCOVERY_SCOPE = "read_organizations";
+const ADOBE_PASS_TENANT_ID = "adobepass";
+const ADOBE_PASS_DISPLAY_NAME = "Adobe Pass";
+const ADOBE_PASS_IMS_ORG_ID = "30FC5E0951240C900A490D4D@AdobeOrg";
+const IMS_DEFAULT_LOGOUT_ENDPOINT = `${IMS_ISSUER_URL}/ims/logout`;
 const THEME_RAMP_STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600];
+const CONSOLE_CHANNELS_PATH = "/entity/ServiceProvider";
+const CONSOLE_APPLICATIONS_PATH = "/applications";
+const UNIFIED_SHELL_GRAPHQL_URL = "https://exc-unifiedcontent.experience.adobe.net/api/gql/app/shell/graphql?appId=shell";
+const UNIFIED_SHELL_API_KEY = "exc_app";
+const UNIFIED_SHELL_OPERATION_NAME = "loginButtonShellInitDataQuery";
+const CM_BASE_URL = "https://config.adobeprimetime.com";
+const CM_REPORTS_BASE_URL = "https://cm-reports.adobeprimetime.com";
+const CM_TENANTS_PATH = "/core/tenants";
+const CM_TENANTS_OWNER_ORG_ID = "adobe";
+const CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT = "https://adobeid-na1.services.adobe.com/ims/check/v6/token";
+const CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT = `${IMS_ISSUER_URL}/ims/validate_token/v1?jslVersion=loginbutton-cm`;
+const CM_CONSOLE_IMS_CLIENT_ID = "cm-console-ui";
+const CM_CONSOLE_IMS_SCOPE = "AdobeID,openid,dma_group_mapping,read_organizations,additional_info.projectedProductContext";
+const CM_CONSOLE_APP_ORIGIN = "https://experience.adobe.com";
+const CM_CONSOLE_APP_REFERER = `${CM_CONSOLE_APP_ORIGIN}/`;
+const CM_CONSOLE_BOOTSTRAP_URL = `${CM_CONSOLE_APP_ORIGIN}/#/@${ADOBE_PASS_TENANT_ID}/cm-console/cmu/year`;
+const ADOBE_PASS_CONSOLE_SHELL_PATH = `/#/@${ADOBE_PASS_TENANT_ID}/pass/authentication`;
+const ADOBE_PASS_CONSOLE_APP_ORIGIN = "https://cdn.experience.adobe.net";
+const ADOBE_PASS_CONSOLE_APP_SLUG = "AdobePass-adobepass-unifiedshell-console-client";
+const CM_REPORTS_APP_ORIGIN = "https://cdn.experience.adobe.net";
+const CM_REPORTS_APP_REFERER = `${CM_REPORTS_APP_ORIGIN}/`;
+const CONSOLE_PAGE_CONTEXT_ALLOWED_ORIGINS = [ADOBE_PASS_CONSOLE_APP_ORIGIN];
+const CM_REPORTS_SUMMARY_PATH = "/v2/year/month";
+const REGISTERED_APPLICATION_SCOPE_LABELS = {
+  "api:client:v2": "REST API V2",
+  "analytics:client": "ESM",
+  "decisions:owner": "degradation",
+  "temporary:passes:owner": "reset TempPass",
+  "mvpd_status:client": "MVPD Status Service",
+  "idp:owner": "Proxy MVPD push",
+  "cmu:analytics:client": "CMU"
+};
+const CMU_TOKEN_HEADER_NAME = "Authorization";
+const CMU_TOKEN_HEADER_SCHEME = "Bearer";
+const CM_TOKEN_REFRESH_SKEW_MS = 45 * 1000;
+const ADOBE_PAGE_CONTEXT_TIMEOUT_MS = 12 * 1000;
+const UNIFIED_SHELL_INIT_QUERY = `
+  query loginButtonShellInitDataQuery($selectedOrg: String, $useConsolidatedAccounts: Boolean) {
+    imsExtendedAccountClusterData(
+      selectedOrg: $selectedOrg
+      ignoreSuppressed: true
+      useV3: true
+      useConsolidatedAccounts: $useConsolidatedAccounts
+    ) {
+      data {
+        consolidatedAccount
+        restricted
+        userId
+        userType
+        owningOrg {
+          aemInstances {
+            domain
+            environment
+            path
+            rootTemplate
+            title
+            type
+          }
+          aepRegion
+          hasAEP
+          imsOrgId
+          orgName
+          tenantId
+        }
+        orgs {
+          aemInstances {
+            domain
+            environment
+            path
+            rootTemplate
+            title
+            type
+          }
+          aepRegion
+          hasAEP
+          imsOrgId
+          orgName
+          tenantId
+        }
+      }
+      next
+      preferredLanguages
+      timestamp
+    }
+    userProfileJson(ignoreImsCache: false)
+  }
+`;
 
-const buildBadge = document.getElementById("buildBadge");
 const themeControl = document.getElementById("themeControl");
 const themePickerButton = document.getElementById("themePickerButton");
 const themePickerButtonSwatch = document.getElementById("themePickerButtonSwatch");
@@ -71,16 +180,48 @@ const authenticatedView = document.getElementById("authenticatedView");
 const loginButton = document.getElementById("loginButton");
 const loadZipKeyButton = document.getElementById("loadZipKeyButton");
 const logoutButton = document.getElementById("logoutButton");
+const loginStatus = document.getElementById("loginStatus");
+const authenticatedHero = document.getElementById("authenticatedHero");
 const avatarMenuButton = document.getElementById("avatarMenuButton");
 const avatarMenu = document.getElementById("avatarMenu");
-const statusBanner = document.getElementById("statusBanner");
 const avatarContainer = document.getElementById("avatarContainer");
 const avatarImage = document.getElementById("avatarImage");
 const avatarFallback = document.getElementById("avatarFallback");
+const mainIdentityCopy = document.getElementById("mainIdentityCopy");
+const identityHeadlineLabel = document.getElementById("identityHeadlineLabel");
 const displayNameLink = document.getElementById("displayNameLink");
 const displayEmail = document.getElementById("displayEmail");
-const selectedOrganizationName = document.getElementById("selectedOrganizationName");
-const selectedOrganizationMeta = document.getElementById("selectedOrganizationMeta");
+const avatarMenuIdentityLabel = document.getElementById("avatarMenuIdentityLabel");
+const avatarMenuDisplayName = document.getElementById("avatarMenuDisplayName");
+const avatarMenuDisplayMeta = document.getElementById("avatarMenuDisplayMeta");
+const avatarMenuOverview = document.getElementById("avatarMenuOverview");
+const avatarMenuSummary = document.getElementById("avatarMenuSummary");
+const avatarMenuCardList = document.getElementById("avatarMenuCardList");
+const avatarMenuUserDataSummary = document.getElementById("avatarMenuUserDataSummary");
+const avatarMenuUserDataList = document.getElementById("avatarMenuUserDataList");
+const detectedOrganizationPicker = document.getElementById("detectedOrganizationPicker");
+const detectedOrganizationPickerSection = document.getElementById("detectedOrganizationPickerContainer");
+const cmuTokenSection = document.getElementById("cmuTokenContainer");
+const cmuTokenHeaderValue = document.getElementById("cmuTokenValue");
+const cmTenantPicker = document.getElementById("cmTenantPicker");
+const cmTenantPickerSection = document.getElementById("cmTenantPickerContainer");
+const organizationPicker = document.getElementById("organizationPicker");
+const programmerPickerSection = document.getElementById("programmerPickerContainer");
+const requestorPicker = document.getElementById("requestorPicker");
+const requestorPickerSection = document.getElementById("requestorPickerContainer");
+const registeredApplicationPicker = document.getElementById("registeredApplicationPicker");
+const registeredApplicationPickerSection = document.getElementById("registeredApplicationPickerContainer");
+const organizationCardList = document.getElementById("organizationCardList");
+const organizationListSummary = document.getElementById("organizationListSummary");
+const organizationPickerMeta = document.getElementById("organizationPickerMeta");
+const authenticatedPanelHeader = document.getElementById("authenticatedPanelHeader");
+const authenticatedSummarySection = document.getElementById("authenticatedSummarySection");
+const authenticatedUserDataSection = document.getElementById("authenticatedUserDataSection");
+const organizationSwitchHelp = document.getElementById("organizationSwitchHelp");
+const organizationReauthButton = document.getElementById("organizationReauthButton");
+const organizationReauthButtonLabel = document.getElementById("organizationReauthButtonLabel");
+const userDataSummary = document.getElementById("userDataSummary");
+const userDataList = document.getElementById("userDataList");
 const debugConsole = document.getElementById("debugConsole");
 const debugConsoleBody = document.getElementById("debugConsoleBody");
 const debugToggleButton = document.getElementById("debugToggleButton");
@@ -134,20 +275,31 @@ const state = {
   debugCopyStatus: "",
   lastSilentAuthAttemptAt: 0,
   dragActive: false,
+  postLoginHydrationInFlight: false,
+  selectedCmTenantId: "",
+  selectedProgrammerId: "",
+  selectedRegisteredApplicationId: "",
+  selectedRequestorId: "",
+  programmerApplicationsLoadingFor: "",
   configStatus: {
     message: DEFAULT_CONFIG_STATUS_MESSAGE,
     tone: ""
   },
+  selectedOrganizationSwitchKey: "",
   logs: []
 };
 let dragDepth = 0;
 let copyDebugResetTimer = 0;
+let backgroundHydrationRequestId = 0;
 
 applyThemePreferenceToDocument(state.theme);
 initializeThemeSwatchGrid();
 
 loginButton.addEventListener("click", async () => {
-  await login();
+  await login({
+    forceInteractive: true,
+    prompt: "login"
+  });
 });
 
 themePickerButton.addEventListener("click", async (event) => {
@@ -168,6 +320,116 @@ loadZipKeyButton.addEventListener("click", () => {
   setAvatarMenuOpen(false);
   zipKeyFileInput.click();
 });
+
+organizationPicker.addEventListener("change", (event) => {
+  const nextValue = String(event.currentTarget?.value || "").trim();
+  if (
+    !nextValue ||
+    nextValue === PROGRAMMER_PICKER_PLACEHOLDER_VALUE ||
+    nextValue === PROGRAMMER_PICKER_UNAVAILABLE_VALUE
+  ) {
+    state.selectedProgrammerId = "";
+    state.selectedRegisteredApplicationId = "";
+    state.selectedRequestorId = "";
+    render();
+    return;
+  }
+
+  state.selectedProgrammerId = nextValue;
+  state.selectedRegisteredApplicationId = "";
+  state.selectedRequestorId = "";
+  render();
+  void ensureSelectedProgrammerApplicationsLoaded(nextValue);
+});
+
+if (registeredApplicationPicker) {
+  registeredApplicationPicker.addEventListener("change", (event) => {
+    const nextValue = String(event.currentTarget?.value || "").trim();
+    if (
+      !nextValue ||
+      nextValue === REGISTERED_APPLICATION_PICKER_PLACEHOLDER_VALUE ||
+      nextValue === REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE
+    ) {
+      state.selectedRegisteredApplicationId = "";
+      render();
+      return;
+    }
+
+    state.selectedRegisteredApplicationId = nextValue;
+    render();
+  });
+}
+
+if (requestorPicker) {
+  requestorPicker.addEventListener("change", (event) => {
+    const nextValue = String(event.currentTarget?.value || "").trim();
+    if (
+      !nextValue ||
+      nextValue === REQUESTOR_PICKER_PLACEHOLDER_VALUE ||
+      nextValue === REQUESTOR_PICKER_UNAVAILABLE_VALUE
+    ) {
+      state.selectedRequestorId = "";
+      render();
+      return;
+    }
+
+    state.selectedRequestorId = nextValue;
+    render();
+  });
+}
+
+if (cmTenantPicker) {
+  cmTenantPicker.addEventListener("change", (event) => {
+    const nextValue = String(event.currentTarget?.value || "").trim();
+    if (
+      !nextValue ||
+      nextValue === CM_TENANT_PICKER_PLACEHOLDER_VALUE ||
+      nextValue === CM_TENANT_PICKER_UNAVAILABLE_VALUE
+    ) {
+      render();
+      return;
+    }
+
+    state.selectedCmTenantId = nextValue;
+    render();
+  });
+}
+
+if (detectedOrganizationPicker) {
+  detectedOrganizationPicker.addEventListener("change", async (event) => {
+    const nextValue = String(event.currentTarget?.value || "").trim();
+    const organizationPickerContext = buildAuthenticatedOrganizationPickerContext(state.session);
+    const activeOrganizationKey = String(organizationPickerContext?.activeOrganization?.key || "").trim();
+    if (!nextValue || nextValue === ORG_PICKER_UNAVAILABLE_VALUE || nextValue === activeOrganizationKey) {
+      state.selectedOrganizationSwitchKey = "";
+      render();
+      return;
+    }
+
+    state.selectedOrganizationSwitchKey = nextValue;
+    render();
+    try {
+      await requestOrganizationSwitch(nextValue);
+    } finally {
+      if (state.selectedOrganizationSwitchKey === nextValue) {
+        state.selectedOrganizationSwitchKey = "";
+        render();
+      }
+    }
+  });
+}
+
+if (organizationReauthButton) {
+  organizationReauthButton.addEventListener("click", async () => {
+    const nextKey = String(state.selectedOrganizationSwitchKey || "").trim();
+    render();
+    if (nextKey) {
+      await requestOrganizationSwitch(nextKey);
+      return;
+    }
+    await switchAdobeOrganization();
+  });
+}
 
 zipKeyDropSurface.addEventListener("click", () => {
   zipKeyFileInput.click();
@@ -235,6 +497,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   if (changes[SESSION_KEY]) {
     state.session = changes[SESSION_KEY].newValue || null;
+    state.selectedOrganizationSwitchKey = "";
+    if (!state.session?.accessToken) {
+      state.postLoginHydrationInFlight = false;
+      state.selectedCmTenantId = "";
+      state.selectedProgrammerId = "";
+      state.selectedRegisteredApplicationId = "";
+      state.selectedRequestorId = "";
+      state.programmerApplicationsLoadingFor = "";
+    }
   }
 
   if (changes[IMS_RUNTIME_CONFIG_KEY]) {
@@ -280,6 +551,9 @@ async function initialize() {
           `ZIP.KEY scope was clamped to the supported Adobe Console scope set. Dropped scopes: ${state.runtimeConfig.droppedScopes.join(", ")}`
         );
       }
+      if (hasActiveSession(state.session) && !hasHydratedPostLoginContext(state.session)) {
+        void refreshSessionPostLoginContextInBackground(state.session, { reason: "startup-existing-session" });
+      }
       await maybeResumeExistingAdobeSession("startup");
     } else {
       setConfigStatus(DEFAULT_CONFIG_STATUS_MESSAGE);
@@ -296,14 +570,24 @@ async function initialize() {
   }
 }
 
-async function login() {
+async function login({
+  forceInteractive = false,
+  forceBrowserLogout = false,
+  prompt = "",
+  intent = "login",
+  targetOrganization = null
+} = {}) {
   if (state.busy) {
     return;
   }
 
   setBusy(true);
   render();
-  log("Starting Adobe IMS sign-in with Chrome identity and PKCE.");
+  log(
+    forceInteractive
+      ? "Starting forced interactive Adobe IMS sign-in so the user can choose a different Adobe IMS org."
+      : "Starting Adobe IMS sign-in with Chrome identity and PKCE."
+  );
 
   try {
     if (!chrome.identity?.launchWebAuthFlow) {
@@ -313,64 +597,156 @@ async function login() {
     const runtimeConfig = await loadRuntimeConfig();
     const clientId = requireConfiguredClientId(runtimeConfig);
     const configuredScope = normalizeScopeList(firstNonEmptyString([runtimeConfig.scope, IMS_SCOPE]), IMS_SCOPE);
+    const requestedTargetOrganization = normalizeRequestedTargetOrganization(targetOrganization);
+    const effectiveForceInteractive = forceInteractive || Boolean(requestedTargetOrganization?.key);
+    const effectivePrompt = firstNonEmptyString([prompt, requestedTargetOrganization ? "login" : ""]);
+    const targetOrgStrategy = buildPreferredOrgSwitchStrategy(requestedTargetOrganization);
+    const scopePlan = buildRequestedScopePlan(configuredScope);
+    const preferredScope = scopePlan[0] || configuredScope;
     const authConfiguration = await loadAuthConfiguration();
     const redirectUri = state.runtime.redirectUri || getExtensionRedirectUri();
     if (!redirectUri) {
       throw new Error("Unable to generate the extension redirect URI.");
     }
 
-    const silentlyResumed = await attemptSessionHydration({
-      authConfiguration,
-      clientId,
-      redirectUri,
-      requestedScope: configuredScope,
-      reason: "login-click",
-      interactive: false,
-      prompt: "none",
-      silent: true
-    });
+    if (requestedTargetOrganization) {
+      log(
+        `Requested Adobe IMS org switch to "${requestedTargetOrganization.label}" (${firstNonEmptyString([requestedTargetOrganization.id, "no org id"])}) and forcing Adobe sign-in so the user can choose that org in Adobe.`
+      );
+      if (targetOrgStrategy) {
+        log(
+          `Login Button will hint Adobe IMS org switching with ${Object.keys(targetOrgStrategy)
+            .map((key) => `${key}=${targetOrgStrategy[key]}`)
+            .join(" ")}.`
+        );
+      }
+    }
+
+    if (preferredScope !== configuredScope) {
+      log(
+        `Login Button is requesting Adobe org discovery scope "${preferredScope}" so the post-login picker can load other detected Adobe IMS orgs.`
+      );
+    }
+
+    let silentlyResumed = null;
+    if (!effectiveForceInteractive) {
+      try {
+        silentlyResumed = await attemptSessionHydration({
+          authConfiguration,
+          clientId,
+          redirectUri,
+          requestedScope: preferredScope,
+          reason: preferredScope === configuredScope ? "login-click" : "login-click-org-discovery",
+          interactive: false,
+          prompt: "none",
+          silent: true
+        });
+      } catch (error) {
+        if (shouldRetryWithConfiguredScope(error, preferredScope, configuredScope) && preferredScope !== configuredScope) {
+          log(`Adobe rejected silent scope "${preferredScope}". Retrying with configured ZIP.KEY scope "${configuredScope}".`);
+          silentlyResumed = await attemptSessionHydration({
+            authConfiguration,
+            clientId,
+            redirectUri,
+            requestedScope: configuredScope,
+            reason: "login-click-configured-scope",
+            interactive: false,
+            prompt: "none",
+            silent: true
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
     if (silentlyResumed) {
       state.session = silentlyResumed;
       await chrome.storage.local.set({ [SESSION_KEY]: silentlyResumed });
-      log("Experience Cloud session was already active. Login Button refreshed the Adobe profile without opening a full sign-in flow.");
+      log("Experience Cloud session was already active. Login Button refreshed the Adobe account and detected orgs without opening a full sign-in flow.");
       return;
     }
 
-    let nextSession;
-    try {
-      nextSession = await attemptSessionHydration({
-        authConfiguration,
-        clientId,
-        redirectUri,
-        requestedScope: configuredScope,
-        reason: "interactive-login",
-        interactive: true
-      });
-    } catch (error) {
-      if (!shouldRetryWithIdentityScope(error, configuredScope)) {
-        throw error;
+    let nextSession = null;
+    let lastInteractiveError = null;
+    let browserLogoutAttempted = false;
+    for (const [index, requestedScope] of scopePlan.entries()) {
+      try {
+        if (effectiveForceInteractive && forceBrowserLogout && !browserLogoutAttempted) {
+          browserLogoutAttempted = true;
+          log("Resetting the Adobe browser session before re-authenticating for an org switch.");
+          await runImsBrowserLogout({
+            accessToken: firstNonEmptyString([state.session?.accessToken]),
+            redirectUri,
+            clientId
+          });
+        }
+        nextSession = await attemptSessionHydration({
+          authConfiguration,
+          clientId,
+          redirectUri,
+          requestedScope,
+          reason:
+            index === 0
+              ? requestedScope === configuredScope
+                ? intent === "org-switch"
+                  ? "interactive-org-switch"
+                  : "interactive-login"
+                : intent === "org-switch"
+                  ? "interactive-org-switch-org-discovery"
+                  : "interactive-login-org-discovery"
+              : intent === "org-switch"
+                ? "interactive-org-switch-configured-scope"
+                : "interactive-login-configured-scope",
+          interactive: true,
+          prompt: effectivePrompt,
+          extraParams: requestedTargetOrganization ? targetOrgStrategy : {},
+          targetOrganization: requestedTargetOrganization
+        });
+        if (index > 0) {
+          setConfigStatus(
+            "Adobe rejected the org discovery scope add-on. Signed in with the configured ZIP.KEY scope instead, so org switching may be limited.",
+            { ok: true }
+          );
+        }
+        break;
+      } catch (error) {
+        lastInteractiveError = error;
+        if (shouldRetryWithConfiguredScope(error, requestedScope, configuredScope) && index < scopePlan.length - 1) {
+          log(`Adobe rejected scope "${requestedScope}". Retrying with configured ZIP.KEY scope "${configuredScope}".`);
+          continue;
+        }
+        break;
       }
-
-      const fallbackScope = IMS_IDENTITY_SCOPE;
-      log(
-        `Adobe rejected the configured scope "${configuredScope}". Retrying with identity-only scope "${fallbackScope}".`
-      );
-      nextSession = await attemptSessionHydration({
-        authConfiguration,
-        clientId,
-        redirectUri,
-        requestedScope: fallbackScope,
-        reason: "interactive-login-fallback",
-        interactive: true
-      });
-      setConfigStatus(
-        "Configured ZIP.KEY scope was rejected by Adobe. Signed in using the documented identity scope fallback.",
-        { ok: true }
-      );
     }
 
-    await chrome.storage.local.set({ [SESSION_KEY]: nextSession });
-    state.session = nextSession;
+    if (!nextSession) {
+      setConfigStatus(
+        "Adobe rejected the requested Adobe IMS scope bundle. Login Button kept the original scope request and did not downgrade sign-in to a narrower profile-only consent.",
+        { error: true }
+      );
+      throw lastInteractiveError || new Error("Adobe rejected the requested Adobe IMS scope bundle.");
+    }
+
+    let finalizedSession = attachTargetOrganizationToSession(nextSession, requestedTargetOrganization);
+    const targetOrganizationVerification = verifyTargetOrganizationSelection(finalizedSession, requestedTargetOrganization);
+    finalizedSession.orgVerification = targetOrganizationVerification;
+    if (requestedTargetOrganization) {
+      log(targetOrganizationVerification.message);
+      if (!isSuccessfulTargetOrganizationVerification(targetOrganizationVerification)) {
+        const verificationFailureMessage = `${targetOrganizationVerification.message} Login Button kept the prior session so it does not misrepresent the selected Adobe profile.`;
+        setConfigStatus(verificationFailureMessage, { error: true });
+        window.alert(verificationFailureMessage);
+        return;
+      }
+    }
+
+    state.session = finalizedSession;
+    await chrome.storage.local.set({ [SESSION_KEY]: finalizedSession });
+    void refreshSessionPostLoginContextInBackground(finalizedSession, {
+      reason: firstNonEmptyString([
+        requestedTargetOrganization ? "interactive-org-switch-post-login" : "interactive-login-post-login"
+      ])
+    });
     log("Adobe IMS session captured and stored locally.");
   } catch (error) {
     const message = describeLoginError(error);
@@ -428,6 +804,13 @@ async function logout() {
   try {
     await chrome.storage.local.remove(SESSION_KEY);
     state.session = null;
+    state.postLoginHydrationInFlight = false;
+    state.selectedCmTenantId = "";
+    state.selectedProgrammerId = "";
+    state.selectedRegisteredApplicationId = "";
+    state.selectedRequestorId = "";
+    state.programmerApplicationsLoadingFor = "";
+    state.selectedOrganizationSwitchKey = "";
     log("Local Adobe IMS session cleared.");
   } catch (error) {
     log(`Unable to clear the stored session: ${serializeError(error)}`);
@@ -455,12 +838,126 @@ async function loadRuntimeConfig() {
   return state.runtimeConfig;
 }
 
+function buildPreferredRequestedScope(configuredScope = IMS_SCOPE) {
+  const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
+  if (scopeIncludes(normalizedConfiguredScope, IMS_ORG_DISCOVERY_SCOPE)) {
+    return normalizedConfiguredScope;
+  }
+
+  return normalizeScopeList(`${normalizedConfiguredScope} ${IMS_ORG_DISCOVERY_SCOPE}`, normalizedConfiguredScope);
+}
+
+function buildRequestedScopePlan(configuredScope = IMS_SCOPE) {
+  const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
+  const preferredScope = buildPreferredRequestedScope(normalizedConfiguredScope);
+  return Array.from(new Set([preferredScope, normalizedConfiguredScope]));
+}
+
+function shouldRetryWithConfiguredScope(error, attemptedScope, configuredScope) {
+  const message = String(serializeError(error) || "");
+  return /invalid_scope/i.test(message) && normalizeScopeList(attemptedScope, IMS_SCOPE) !== normalizeScopeList(configuredScope, IMS_SCOPE);
+}
+
+function buildPreferredOrgSwitchStrategy(targetOrganization = null) {
+  return buildOrgSwitchStrategies(targetOrganization)[0] || null;
+}
+
+function buildOrgSwitchStrategies(targetOrganization = null) {
+  if (!targetOrganization || typeof targetOrganization !== "object") {
+    return [];
+  }
+
+  const tenantId = firstNonEmptyString([targetOrganization.tenantId, targetOrganization.id]);
+  const imsOrgId = firstNonEmptyString([targetOrganization.imsOrgId]);
+  const userId = firstNonEmptyString([targetOrganization.userId, targetOrganization.clusterUserId]);
+  const organizationName = firstNonEmptyString([targetOrganization.name, targetOrganization.label]);
+  const isAdobePass = isAdobePassOrganization(targetOrganization);
+  const strategyCandidates = [
+    imsOrgId && tenantId && userId ? { organization_id: imsOrgId, organization: tenantId, user_id: userId } : null,
+    imsOrgId && tenantId ? { organization_id: imsOrgId, organization: tenantId } : null,
+    imsOrgId ? { organization_id: imsOrgId } : null,
+    imsOrgId && userId ? { organization_id: imsOrgId, user_id: userId } : null,
+    tenantId ? { organization: tenantId } : null,
+    tenantId && userId ? { organization: tenantId, user_id: userId } : null,
+    organizationName ? { organization: organizationName } : null,
+    isAdobePass ? { organization: ADOBE_PASS_TENANT_ID } : null,
+    isAdobePass && imsOrgId && userId
+      ? { organization_id: imsOrgId, organization: ADOBE_PASS_TENANT_ID, user_id: userId }
+      : null,
+    userId ? { user_id: userId } : null
+  ];
+
+  const seen = new Set();
+  const strategies = [];
+  strategyCandidates.forEach((candidate) => {
+    if (!candidate || typeof candidate !== "object") {
+      return;
+    }
+
+    const cleaned = Object.fromEntries(
+      Object.entries(candidate).filter(([, value]) => value !== undefined && value !== null && value !== "")
+    );
+    const key = JSON.stringify(cleaned);
+    if (key !== "{}" && !seen.has(key)) {
+      seen.add(key);
+      strategies.push(cleaned);
+    }
+  });
+
+  return strategies;
+}
+
+function buildImsLogoutUrl({ accessToken = "", redirectUri = "", clientId = "" } = {}) {
+  const params = new URLSearchParams();
+  const normalizedAccessToken = String(accessToken || "").trim();
+  const normalizedRedirectUri = String(redirectUri || "").trim();
+  const normalizedClientId = String(clientId || "").trim();
+
+  if (normalizedAccessToken) {
+    params.set("access_token", normalizedAccessToken);
+  }
+  if (normalizedRedirectUri) {
+    params.set("redirect_uri", normalizedRedirectUri);
+  }
+  if (normalizedClientId) {
+    params.set("client_id", normalizedClientId);
+  }
+
+  return `${IMS_DEFAULT_LOGOUT_ENDPOINT}?${params.toString()}`;
+}
+
+async function runImsBrowserLogout({ accessToken = "", redirectUri = "", clientId = "" } = {}) {
+  const logoutUrl = buildImsLogoutUrl({
+    accessToken,
+    redirectUri,
+    clientId
+  });
+
+  if (!chrome.identity?.launchWebAuthFlow) {
+    return false;
+  }
+
+  try {
+    await chrome.identity.launchWebAuthFlow({
+      url: logoutUrl,
+      interactive: true
+    });
+    return true;
+  } catch (error) {
+    log(`Adobe browser logout reset failed: ${summarizeErrorHeadline(error)}`);
+    return false;
+  }
+}
+
 async function maybeResumeExistingAdobeSession(reason = "auto") {
   if (state.silentAuthInFlight || state.interactiveAuthInFlight || !state.runtimeConfig?.clientId) {
     return null;
   }
 
   const currentSession = state.session;
+  if (!currentSession?.accessToken) {
+    return null;
+  }
   const hasUsableSession =
     Boolean(currentSession?.accessToken) && !isExpired(currentSession?.expiresAtMs || currentSession?.expiresAt);
   if (hasUsableSession) {
@@ -485,20 +982,40 @@ async function maybeResumeExistingAdobeSession(reason = "auto") {
       return null;
     }
 
-    const silentlyResumed = await attemptSessionHydration({
-      authConfiguration,
-      clientId: requireConfiguredClientId(state.runtimeConfig),
-      redirectUri,
-      requestedScope: normalizeScopeList(firstNonEmptyString([state.runtimeConfig.scope, IMS_SCOPE]), IMS_SCOPE),
-      reason,
-      interactive: false,
-      prompt: "none",
-      silent: true
-    });
+    const clientId = requireConfiguredClientId(state.runtimeConfig);
+    const configuredScope = normalizeScopeList(firstNonEmptyString([state.runtimeConfig.scope, IMS_SCOPE]), IMS_SCOPE);
+    const scopePlan = buildRequestedScopePlan(configuredScope);
+    let silentlyResumed = null;
+
+    for (const [index, requestedScope] of scopePlan.entries()) {
+      try {
+        silentlyResumed = await attemptSessionHydration({
+          authConfiguration,
+          clientId,
+          redirectUri,
+          requestedScope,
+          reason: index === 0 ? reason : `${reason}-configured-scope`,
+          interactive: false,
+          prompt: "none",
+          silent: true
+        });
+      } catch (error) {
+        if (shouldRetryWithConfiguredScope(error, requestedScope, configuredScope) && index < scopePlan.length - 1) {
+          log(`Adobe rejected the broader silent Adobe Pass scope "${requestedScope}". Retrying with configured scope "${configuredScope}".`);
+          continue;
+        }
+        throw error;
+      }
+
+      if (silentlyResumed) {
+        break;
+      }
+    }
 
     if (silentlyResumed) {
-      await chrome.storage.local.set({ [SESSION_KEY]: silentlyResumed });
       state.session = silentlyResumed;
+      await chrome.storage.local.set({ [SESSION_KEY]: silentlyResumed });
+      void refreshSessionPostLoginContextInBackground(silentlyResumed, { reason });
       setConfigStatus("Adobe Experience Cloud session detected. Login Button auto-refreshed the logged-in profile.", {
         ok: true
       });
@@ -524,7 +1041,9 @@ async function attemptSessionHydration({
   reason = "",
   interactive = true,
   prompt = "",
-  silent = false
+  silent = false,
+  extraParams = {},
+  targetOrganization = null
 }) {
   const authContext = {
     clientId,
@@ -556,7 +1075,8 @@ async function attemptSessionHydration({
     scope: requestedScope,
     state: requestState,
     codeChallenge,
-    prompt
+    prompt,
+    extraParams
   });
 
   const launchStartedAt = Date.now();
@@ -645,7 +1165,6 @@ async function attemptSessionHydration({
     throw buildDetailedAuthError(error, authContext, Date.now() - launchStartedAt, "token");
   }
 
-  const shouldLoadOrganizations = scopeIncludes(requestedScope, "read_organizations");
   const [profileResult, imsProfileResult, organizationsResult] = await Promise.all([
     settle(() =>
       fetchImsUserInfo({
@@ -660,14 +1179,13 @@ async function attemptSessionHydration({
         clientId
       })
     ),
-    shouldLoadOrganizations
-      ? settle(() =>
-          fetchImsOrganizations({
-            organizationsEndpoint: IMS_ORGS_URL,
-            accessToken: tokenPayload.access_token
-          })
-        )
-      : Promise.resolve({ ok: true, value: null })
+    settle(() =>
+      fetchImsOrganizations({
+        organizationsEndpoint: IMS_ORGS_URL,
+        accessToken: tokenPayload.access_token,
+        clientId
+      })
+    )
   ]);
 
   if (!profileResult.ok) {
@@ -677,7 +1195,11 @@ async function attemptSessionHydration({
     log(`Adobe IMS profile enrichment fetch failed: ${serializeError(imsProfileResult.error)}`);
   }
   if (!organizationsResult.ok) {
-    log(`Adobe organizations fetch failed: ${serializeError(organizationsResult.error)}`);
+    log(
+      scopeIncludes(firstNonEmptyString([tokenPayload?.scope, requestedScope]), IMS_ORG_DISCOVERY_SCOPE)
+        ? `Adobe organizations fetch failed: ${serializeError(organizationsResult.error)}`
+        : `Adobe organizations fetch was unavailable with the current scope: ${serializeError(organizationsResult.error)}`
+    );
   }
 
   const resolvedProfile = mergeProfilePayloads([
@@ -688,17 +1210,20 @@ async function attemptSessionHydration({
     log("Resolved Adobe avatar from merged IMS profile payloads.");
   }
 
-  const sessionRecord = buildSessionRecord({
-    authConfiguration,
-    clientId,
-    redirectUri,
-    requestState,
-    requestedScope,
-    authTransport: authContext.transport,
-    tokenPayload,
-    profile: resolvedProfile,
-    organizations: organizationsResult.ok ? organizationsResult.value : null
-  });
+  const sessionRecord = attachTargetOrganizationToSession(
+    buildSessionRecord({
+      authConfiguration,
+      clientId,
+      redirectUri,
+      requestState,
+      requestedScope,
+      authTransport: authContext.transport,
+      tokenPayload,
+      profile: resolvedProfile,
+      organizations: organizationsResult.ok ? organizationsResult.value : null
+    }),
+    targetOrganization
+  );
 
   recordAuthOutcome({
     status: "success",
@@ -738,6 +1263,12 @@ function buildSessionRecord({
   const expiresAt = expiresAtMs > 0 ? new Date(expiresAtMs).toISOString() : "";
   const tokenType = String(tokenPayload?.token_type || "bearer").trim() || "bearer";
   const returnedScope = String(tokenPayload?.scope || requestedScope || IMS_SCOPE).trim() || IMS_SCOPE;
+  const normalizedOrganizations = collectOrganizationCandidates({
+    profile,
+    accessClaims: accessTokenClaims,
+    idClaims: idTokenClaims,
+    organizations: flattenOrganizations(organizations)
+  });
   const avatarUrl = normalizeAvatarCandidate(
     firstNonEmptyString([
       pickAvatarUrl(profile || {}, idTokenClaims || {}),
@@ -791,6 +1322,7 @@ function buildSessionRecord({
     ),
     profile,
     organizations,
+    detectedOrganizations: normalizedOrganizations,
     avatarUrl
   };
 }
@@ -813,6 +1345,2798 @@ function buildImsSession(accessClaims, idClaims, expiresAtMs, scope, tokenType, 
   return Object.keys(filtered).length > 0 ? filtered : null;
 }
 
+function hasActiveSession(session = state.session) {
+  return Boolean(session?.accessToken) && !isExpired(session?.expiresAtMs || session?.expiresAt);
+}
+
+function hasHydratedPostLoginContext(session = state.session) {
+  return Boolean(session?.console?.hydratedAt) && Boolean(session?.unifiedShell?.hydratedAt);
+}
+
+async function refreshSessionPostLoginContextInBackground(session, { reason = "post-login" } = {}) {
+  const currentSession = session && typeof session === "object" ? { ...session } : null;
+  if (!currentSession?.accessToken) {
+    return currentSession;
+  }
+
+  const requestId = ++backgroundHydrationRequestId;
+  state.postLoginHydrationInFlight = true;
+  render();
+
+  try {
+    const hydratedSession = await hydratePostLoginSessionData(currentSession, { reason });
+    if (requestId !== backgroundHydrationRequestId) {
+      return hydratedSession;
+    }
+
+    const activeAccessToken = firstNonEmptyString([state.session?.accessToken]);
+    const hydratedAccessToken = firstNonEmptyString([hydratedSession?.accessToken]);
+    if (activeAccessToken && hydratedAccessToken && activeAccessToken !== hydratedAccessToken) {
+      return hydratedSession;
+    }
+
+    state.session = hydratedSession;
+    await chrome.storage.local.set({ [SESSION_KEY]: hydratedSession });
+    render();
+    return hydratedSession;
+  } catch (error) {
+    log(`Background Adobe post-login hydration failed (${reason}): ${serializeError(error)}`);
+    return currentSession;
+  } finally {
+    if (requestId === backgroundHydrationRequestId) {
+      state.postLoginHydrationInFlight = false;
+      render();
+    }
+  }
+}
+
+async function hydratePostLoginSessionData(session, { reason = "post-login" } = {}) {
+  const currentSession = session && typeof session === "object" ? { ...session } : null;
+  if (!currentSession?.accessToken) {
+    return currentSession;
+  }
+
+  const [nextConsoleContext, nextCmContext, nextUnifiedShellContext] = await Promise.all([
+    buildConsoleContext(currentSession, reason),
+    buildCmContext(currentSession, reason),
+    buildUnifiedShellContext(currentSession, reason)
+  ]);
+  const mergedDetectedOrganizations = mergeDetectedOrganizationCandidates({
+    existingOrganizations: currentSession?.detectedOrganizations,
+    additionalOrganizations: nextUnifiedShellContext?.organizations,
+    activeOrganizationHint: buildOrganizationContextFromSession(currentSession).activeOrganization
+  });
+
+  return {
+    ...currentSession,
+    console: nextConsoleContext,
+    cm: nextCmContext,
+    unifiedShell: nextUnifiedShellContext,
+    detectedOrganizations: mergedDetectedOrganizations
+  };
+}
+
+async function buildConsoleContext(session, reason = "post-login") {
+  const previousConsole = session?.console && typeof session.console === "object" ? session.console : {};
+  const environmentId = firstNonEmptyString([
+    state.runtimeConfig?.consoleEnvironment,
+    previousConsole.environmentId,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const environmentMeta = getConsoleEnvironmentMeta(environmentId);
+  const baseUrl = resolveConsoleBaseUrl({
+    consoleEnvironment: environmentMeta.id,
+    consoleBaseUrl: firstNonEmptyString([state.runtimeConfig?.consoleBaseUrl, previousConsole.baseUrl])
+  });
+  const accessToken = firstNonEmptyString([session?.accessToken]);
+  const hydratedAt = new Date().toISOString();
+  const programmerAccess = resolveProgrammerAccessContext(session);
+
+  if (!accessToken) {
+    return {
+      ...previousConsole,
+      environmentId: environmentMeta.id,
+      environmentLabel: environmentMeta.label,
+      baseUrl,
+      transport: "",
+      pageContextOrigin: "",
+      pageContextUrl: "",
+      hydratedAt,
+      status: "unavailable",
+      channels: [],
+      errors: {
+        accessToken: "Adobe IMS access token is unavailable."
+      }
+    };
+  }
+
+  if (!programmerAccess.eligible) {
+    log(`Adobe Pass programmer hydration skipped: ${programmerAccess.reason}`);
+    return {
+      ...previousConsole,
+      environmentId: environmentMeta.id,
+      environmentLabel: environmentMeta.label,
+      expectedImsEnvironment: environmentMeta.imsEnvironment,
+      baseUrl,
+      transport: "",
+      pageContextOrigin: "",
+      pageContextUrl: "",
+      configurationVersion: "",
+      extendedProfile: null,
+      roles: [],
+      channels: [],
+      programmers: [],
+      hydratedAt,
+      status: "org-selection-required",
+      programmerAccess,
+      errors: {
+        extendedProfile: "",
+        configurationVersion: "",
+        channels: "",
+        programmers: ""
+      }
+    };
+  }
+
+  log(`Hydrating Adobe Pass console context from ${baseUrl} (${reason}).`);
+
+  let csrfToken = "NO-TOKEN";
+  let transport = "";
+  let pageContextOrigin = "";
+  let pageContextUrl = "";
+  const consolePageContextRef = {
+    target: null
+  };
+  const syncConsoleFetchMeta = (result = null) => {
+    if (!result || typeof result !== "object") {
+      return;
+    }
+
+    transport = firstNonEmptyString([result.transport, transport]);
+    csrfToken = firstNonEmptyString([result.csrfToken, csrfToken]);
+    pageContextOrigin = firstNonEmptyString([result.pageContext?.origin, pageContextOrigin]);
+    pageContextUrl = firstNonEmptyString([result.pageContext?.url, pageContextUrl]);
+  };
+  const extendedProfileResult = await settle(() =>
+    fetchConsoleJsonWithFallback({
+      baseUrl,
+      path: CONSOLE_USER_EXTENDED_PROFILE_PATH,
+      accessToken,
+      csrfToken,
+      environmentId: environmentMeta.id,
+      pageContextTargetRef: consolePageContextRef
+    })
+  );
+  if (extendedProfileResult.ok) {
+    syncConsoleFetchMeta(extendedProfileResult.value);
+  }
+
+  const configurationVersionResult = await settle(() =>
+    fetchConsoleJsonWithFallback({
+      baseUrl,
+      path: CONSOLE_LATEST_CONFIGURATION_VERSION_PATH,
+      accessToken,
+      csrfToken,
+      environmentId: environmentMeta.id,
+      pageContextTargetRef: consolePageContextRef
+    })
+  );
+  if (configurationVersionResult.ok) {
+    syncConsoleFetchMeta(configurationVersionResult.value);
+  }
+
+  const configurationVersion = normalizeConsoleConfigurationVersion(
+    configurationVersionResult.ok ? configurationVersionResult.value?.data : ""
+  );
+  const configurationQueryParams = configurationVersion
+    ? {
+        configurationVersion
+      }
+    : null;
+  const defaultConfigurationError =
+    configurationVersionResult.ok
+      ? new Error("Console did not return an activated configuration version.")
+      : configurationVersionResult.error;
+  const [channelsResult, programmersResult] = configurationQueryParams
+    ? await Promise.all([
+        settle(() =>
+          fetchConsoleJsonWithFallback({
+            baseUrl,
+            path: CONSOLE_CHANNELS_PATH,
+            accessToken,
+            csrfToken,
+            queryParams: configurationQueryParams,
+            environmentId: environmentMeta.id,
+            pageContextTargetRef: consolePageContextRef
+          })
+        ),
+        settle(() =>
+          fetchConsoleJsonWithFallback({
+            baseUrl,
+            path: CONSOLE_PROGRAMMERS_PATH,
+            accessToken,
+            csrfToken,
+            queryParams: configurationQueryParams,
+            environmentId: environmentMeta.id,
+            pageContextTargetRef: consolePageContextRef
+          })
+        )
+      ])
+    : [
+        {
+          ok: false,
+          error: defaultConfigurationError
+        },
+        {
+          ok: false,
+          error: defaultConfigurationError
+        }
+      ];
+
+  if (!extendedProfileResult.ok) {
+    log(`Adobe Pass extended profile fetch failed: ${serializeError(extendedProfileResult.error)}`);
+  }
+  if (!configurationVersion) {
+    log(
+      `Adobe Pass configuration version fetch failed: ${
+        configurationVersionResult.ok
+          ? "Console did not return an activated configuration version."
+          : serializeError(configurationVersionResult.error)
+      }`
+    );
+  }
+  if (!channelsResult.ok) {
+    log(`Adobe Pass channels fetch failed: ${serializeError(channelsResult.error)}`);
+  }
+  if (!programmersResult.ok) {
+    log(`Adobe Pass programmers fetch failed: ${serializeError(programmersResult.error)}`);
+  }
+  if (channelsResult.ok) {
+    syncConsoleFetchMeta(channelsResult.value);
+  }
+  if (programmersResult.ok) {
+    syncConsoleFetchMeta(programmersResult.value);
+  }
+
+  const extendedProfile =
+    extendedProfileResult.ok && extendedProfileResult.value?.data && typeof extendedProfileResult.value.data === "object"
+      ? extendedProfileResult.value.data
+      : null;
+  const roles = extractConsoleAuthorities(extendedProfile);
+  const channels = channelsResult.ok ? normalizeConsoleChannels(channelsResult.value?.data) : [];
+  const programmers = programmersResult.ok ? normalizeConsoleProgrammers(programmersResult.value?.data) : [];
+  const errors = {
+    extendedProfile: extendedProfileResult.ok ? "" : serializeError(extendedProfileResult.error),
+    configurationVersion:
+      configurationVersionResult.ok && configurationVersion
+        ? ""
+        : configurationVersionResult.ok
+          ? "Console did not return an activated configuration version."
+          : serializeError(configurationVersionResult.error),
+    channels: channelsResult.ok ? "" : serializeError(channelsResult.error),
+    programmers: programmersResult.ok ? "" : serializeError(programmersResult.error)
+  };
+  const successfulSegments = [
+    extendedProfile ? 1 : 0,
+    configurationVersion ? 1 : 0,
+    channelsResult.ok ? 1 : 0,
+    programmersResult.ok ? 1 : 0
+  ].reduce(
+    (total, value) => total + value,
+    0
+  );
+
+  const nextConsoleContext = {
+    ...previousConsole,
+    environmentId: environmentMeta.id,
+    environmentLabel: environmentMeta.label,
+    expectedImsEnvironment: environmentMeta.imsEnvironment,
+    baseUrl,
+    transport,
+    pageContextOrigin,
+    pageContextUrl,
+    configurationVersion,
+    extendedProfile,
+    roles,
+    channels,
+    programmers,
+    hydratedAt,
+    programmerAccess,
+    status: successfulSegments === 4 ? "ready" : successfulSegments > 0 ? "limited" : "unavailable",
+    errors
+  };
+
+  await closeTemporaryAdobePageContextTarget(consolePageContextRef.target?.temporaryTarget);
+  return nextConsoleContext;
+}
+
+async function buildCmContext(session, reason = "post-login") {
+  const previousCm = session?.cm && typeof session.cm === "object" ? session.cm : {};
+  const accessToken = firstNonEmptyString([session?.accessToken]);
+  const hydratedAt = new Date().toISOString();
+  const programmerAccess = resolveProgrammerAccessContext(session);
+
+  if (!accessToken) {
+    return {
+      ...previousCm,
+      baseUrl: CM_BASE_URL,
+      reportsBaseUrl: CM_REPORTS_BASE_URL,
+      checkTokenEndpoint: CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT,
+      validateTokenEndpoint: CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT,
+      tenantAuthModel: "loginbutton-ims",
+      cmuAuthModel: "cm-console-ui",
+      cmuToken: "",
+      cmuTokenSource: "",
+      cmuTokenClientId: "",
+      cmuTokenScope: "",
+      cmuTokenUserId: "",
+      cmuTokenExpiresAt: "",
+      cmuTokenHeaderName: CMU_TOKEN_HEADER_NAME,
+      cmuTokenHeaderValue: "",
+      reportsStatus: "unavailable",
+      tenants: [],
+      hydratedAt,
+      status: "unavailable",
+      errors: {
+        cmuToken: "Adobe IMS access token is unavailable.",
+        tenants: "Adobe IMS access token is unavailable.",
+        reports: "Adobe IMS access token is unavailable."
+      }
+    };
+  }
+
+  if (!programmerAccess.eligible) {
+    return {
+      ...previousCm,
+      baseUrl: CM_BASE_URL,
+      reportsBaseUrl: CM_REPORTS_BASE_URL,
+      checkTokenEndpoint: CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT,
+      validateTokenEndpoint: CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT,
+      tenantAuthModel: "loginbutton-ims",
+      cmuAuthModel: "cm-console-ui",
+      cmuToken: "",
+      cmuTokenSource: "",
+      cmuTokenClientId: "",
+      cmuTokenScope: "",
+      cmuTokenUserId: "",
+      cmuTokenExpiresAt: "",
+      cmuTokenHeaderName: CMU_TOKEN_HEADER_NAME,
+      cmuTokenHeaderValue: "",
+      reportsStatus: "org-selection-required",
+      tenants: [],
+      hydratedAt,
+      status: "org-selection-required",
+      errors: {
+        cmuToken: "",
+        tenants: "",
+        reports: ""
+      }
+    };
+  }
+
+  log(
+    `Hydrating CM tenant + CMU context from ${CM_BASE_URL}, ${CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT}, and ${CM_REPORTS_BASE_URL} (${reason}).`
+  );
+  const cmuTokenResult = await settle(() =>
+    resolveQualifiedCmConsoleAccessToken(session, previousCm?.cmuToken)
+  );
+
+  if (!cmuTokenResult.ok) {
+    log(`CMU token fetch failed: ${serializeError(cmuTokenResult.error)}`);
+  }
+
+  const cmuToken = cmuTokenResult.ok ? normalizeBearerTokenValue(cmuTokenResult.value?.token) : "";
+  const cmuTokenSource = cmuTokenResult.ok ? firstNonEmptyString([cmuTokenResult.value?.source]) : "";
+  const cmuTokenError =
+    cmuTokenResult.ok
+      ? cmuToken
+        ? ""
+        : "CMU token bootstrap returned an empty token."
+      : serializeError(cmuTokenResult.error);
+  if (cmuTokenResult.ok && !cmuToken) {
+    log("CMU token fetch completed but returned an empty token payload.");
+  }
+  const cmuTokenClaims = cmuToken ? decodeJwtPayload(cmuToken) : null;
+  const cmuTokenClientId = firstNonEmptyString([cmuTokenClaims?.client_id, CM_CONSOLE_IMS_CLIENT_ID]);
+  const cmuTokenScope = firstNonEmptyString([cmuTokenClaims?.scope, CM_CONSOLE_IMS_SCOPE]);
+  const cmuTokenUserId = firstNonEmptyString([
+    cmuTokenClaims?.user_id,
+    session?.imsSession?.userId,
+    session?.accessTokenClaims?.user_id,
+    session?.accessTokenClaims?.sub
+  ]);
+  const cmuTokenIssuedAt = coerceClaimTime(firstNonEmptyString([cmuTokenClaims?.created_at, cmuTokenClaims?.iat]));
+  const cmuTokenExpiresInMs = Number(firstNonEmptyString([cmuTokenClaims?.expires_in, "0"]));
+  const cmuTokenExpiresAt =
+    Number.isFinite(cmuTokenIssuedAt) && cmuTokenIssuedAt > 0 && Number.isFinite(cmuTokenExpiresInMs) && cmuTokenExpiresInMs > 0
+      ? new Date(cmuTokenIssuedAt + cmuTokenExpiresInMs).toISOString()
+      : "";
+  const cmuTokenHeaderValue = buildCmuAuthorizationHeaderValue(cmuToken);
+
+  const tenantsResult = await settle(() =>
+    fetchPrimetimeJson({
+      baseUrl: CM_BASE_URL,
+      path: CM_TENANTS_PATH,
+      accessToken,
+      queryParams: {
+        orgId: CM_TENANTS_OWNER_ORG_ID
+      }
+    })
+  );
+
+  if (!tenantsResult.ok) {
+    log(`CM tenants fetch failed: ${serializeError(tenantsResult.error)}`);
+  }
+
+  const reportsResult = cmuToken
+    ? await settle(() =>
+        fetchCmuReportJson({
+          baseUrl: CM_REPORTS_BASE_URL,
+          path: CM_REPORTS_SUMMARY_PATH,
+          accessToken: cmuToken,
+          queryParams: {
+            format: "json"
+          }
+        })
+      )
+    : {
+        ok: false,
+        error: new Error("CMU token is unavailable.")
+      };
+
+  if (cmuToken && !reportsResult.ok) {
+    log(`CMU reports bootstrap failed: ${serializeError(reportsResult.error)}`);
+  }
+
+  const successfulSegments = [cmuTokenHeaderValue ? 1 : 0, tenantsResult.ok ? 1 : 0, reportsResult.ok ? 1 : 0].reduce(
+    (total, value) => total + value,
+    0
+  );
+
+  return {
+    ...previousCm,
+    baseUrl: CM_BASE_URL,
+    reportsBaseUrl: CM_REPORTS_BASE_URL,
+    checkTokenEndpoint: CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT,
+    validateTokenEndpoint: CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT,
+    tenantAuthModel: "loginbutton-ims",
+    cmuAuthModel: "cm-console-ui",
+    cmuToken,
+    cmuTokenSource,
+    cmuTokenClientId,
+    cmuTokenScope,
+    cmuTokenUserId,
+    cmuTokenExpiresAt,
+    cmuTokenHeaderName: CMU_TOKEN_HEADER_NAME,
+    cmuTokenHeaderValue,
+    reportsStatus: reportsResult.ok ? "ready" : cmuToken ? "unavailable" : "pending",
+    tenants: tenantsResult.ok ? normalizeCmTenants(tenantsResult.value) : [],
+    hydratedAt,
+    status: successfulSegments === 3 ? "ready" : successfulSegments > 0 ? "limited" : "unavailable",
+    errors: {
+      cmuToken: cmuTokenError,
+      tenants: tenantsResult.ok ? "" : serializeError(tenantsResult.error),
+      reports: reportsResult.ok ? "" : serializeError(reportsResult.error)
+    }
+  };
+}
+
+async function fetchProgrammerRegisteredApplications(session, programmerId) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const accessToken = firstNonEmptyString([currentSession?.accessToken]);
+  const baseUrl = firstNonEmptyString([consoleContext?.baseUrl]);
+  const configurationVersion = firstNonEmptyString([consoleContext?.configurationVersion]);
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const environmentId = firstNonEmptyString([
+    consoleContext?.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const csrfToken = firstNonEmptyString([consoleContext?.csrfToken, "NO-TOKEN"]);
+
+  if (!accessToken || !baseUrl || !configurationVersion || !normalizedProgrammerId) {
+    throw new Error("Registered Applications request is missing console context.");
+  }
+
+  const consolePageContextRef = {
+    target: null
+  };
+
+  try {
+    const result = await fetchConsoleJsonWithFallback({
+      baseUrl,
+      path: CONSOLE_APPLICATIONS_PATH,
+      accessToken,
+      csrfToken,
+      queryParams: {
+        configurationVersion,
+        programmer: normalizedProgrammerId
+      },
+      environmentId,
+      pageContextTargetRef: consolePageContextRef
+    });
+
+    return {
+      applications: normalizeConsoleRegisteredApplications(result?.data),
+      csrfToken: firstNonEmptyString([result?.csrfToken, csrfToken]),
+      pageContext: result?.pageContext || null,
+      transport: firstNonEmptyString([result?.transport])
+    };
+  } finally {
+    await closeTemporaryAdobePageContextTarget(consolePageContextRef.target?.temporaryTarget);
+  }
+}
+
+async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const applicationsByProgrammer =
+    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
+      ? consoleContext.applicationsByProgrammer
+      : {};
+  const existingApplications = Array.isArray(applicationsByProgrammer?.[normalizedProgrammerId])
+    ? applicationsByProgrammer[normalizedProgrammerId]
+    : null;
+
+  if (!normalizedProgrammerId || !currentSession?.accessToken) {
+    return;
+  }
+  if (state.programmerApplicationsLoadingFor === normalizedProgrammerId) {
+    return;
+  }
+  if (existingApplications) {
+    render();
+    return;
+  }
+
+  state.programmerApplicationsLoadingFor = normalizedProgrammerId;
+  render();
+
+  const result = await settle(() => fetchProgrammerRegisteredApplications(currentSession, normalizedProgrammerId));
+  if (state.selectedProgrammerId !== normalizedProgrammerId) {
+    if (state.programmerApplicationsLoadingFor === normalizedProgrammerId) {
+      state.programmerApplicationsLoadingFor = "";
+      render();
+    }
+    return;
+  }
+
+  const liveSession = state.session && typeof state.session === "object" ? state.session : null;
+  const liveConsole = liveSession?.console && typeof liveSession.console === "object" ? liveSession.console : {};
+  const liveApplicationsByProgrammer =
+    liveConsole?.applicationsByProgrammer && typeof liveConsole.applicationsByProgrammer === "object"
+      ? liveConsole.applicationsByProgrammer
+      : {};
+  const liveApplicationErrorsByProgrammer =
+    liveConsole?.applicationErrorsByProgrammer && typeof liveConsole.applicationErrorsByProgrammer === "object"
+      ? liveConsole.applicationErrorsByProgrammer
+      : {};
+
+  state.programmerApplicationsLoadingFor = "";
+
+  if (!liveSession) {
+    render();
+    return;
+  }
+
+  if (!result.ok) {
+    log(`Adobe Pass registered applications fetch failed: ${serializeError(result.error)}`);
+    state.session = {
+      ...liveSession,
+      console: {
+        ...liveConsole,
+        applicationErrorsByProgrammer: {
+          ...liveApplicationErrorsByProgrammer,
+          [normalizedProgrammerId]: serializeError(result.error)
+        },
+        applicationsByProgrammer: {
+          ...liveApplicationsByProgrammer,
+          [normalizedProgrammerId]: []
+        }
+      }
+    };
+    render();
+    return;
+  }
+
+  state.session = {
+    ...liveSession,
+    console: {
+      ...liveConsole,
+      transport: firstNonEmptyString([result.value?.transport, liveConsole?.transport]),
+      csrfToken: firstNonEmptyString([result.value?.csrfToken, liveConsole?.csrfToken]),
+      pageContextOrigin: firstNonEmptyString([result.value?.pageContext?.origin, liveConsole?.pageContextOrigin]),
+      pageContextUrl: firstNonEmptyString([result.value?.pageContext?.url, liveConsole?.pageContextUrl]),
+      applicationsByProgrammer: {
+        ...liveApplicationsByProgrammer,
+        [normalizedProgrammerId]: Array.isArray(result.value?.applications) ? result.value.applications : []
+      },
+      applicationErrorsByProgrammer: {
+        ...liveApplicationErrorsByProgrammer,
+        [normalizedProgrammerId]: ""
+      }
+    }
+  };
+  render();
+}
+
+function resolveProgrammerAccessContext(session) {
+  const organizationContext = buildOrganizationContextFromSession(session);
+  const activeOrganization = organizationContext.activeOrganization;
+  const requiredOrganization = findAdobePassOrganizationCandidate([
+    activeOrganization,
+    ...(Array.isArray(organizationContext?.options) ? organizationContext.options : []),
+    ...(Array.isArray(session?.unifiedShell?.organizations) ? session.unifiedShell.organizations : [])
+  ]);
+  const activeIsAdobePass = isAdobePassOrganization(activeOrganization);
+  const requiredLabel = firstNonEmptyString([
+    requiredOrganization?.label,
+    requiredOrganization?.name,
+    ADOBE_PASS_DISPLAY_NAME
+  ]);
+
+  if (activeIsAdobePass) {
+    return {
+      eligible: true,
+      activeIsAdobePass: true,
+      activeOrganization,
+      requiredOrganization,
+      requiredOrgKey: firstNonEmptyString([requiredOrganization?.key, `org:${ADOBE_PASS_TENANT_ID}`]),
+      requiredOrgId: firstNonEmptyString([requiredOrganization?.id, ADOBE_PASS_TENANT_ID]),
+      requiredLabel,
+      reason: ""
+    };
+  }
+
+  if (requiredOrganization) {
+    return {
+      eligible: false,
+      activeIsAdobePass: false,
+      activeOrganization,
+      requiredOrganization,
+      requiredOrgKey: firstNonEmptyString([requiredOrganization.key, `org:${ADOBE_PASS_TENANT_ID}`]),
+      requiredOrgId: firstNonEmptyString([requiredOrganization.id, ADOBE_PASS_TENANT_ID]),
+      requiredLabel,
+      reason: `Switch Adobe Org to ${requiredLabel} to load the Adobe Pass Programmer list.`
+    };
+  }
+
+  return {
+    eligible: false,
+    activeIsAdobePass: false,
+    activeOrganization,
+    requiredOrganization: null,
+    requiredOrgKey: `org:${ADOBE_PASS_TENANT_ID}`,
+    requiredOrgId: ADOBE_PASS_TENANT_ID,
+    requiredLabel: ADOBE_PASS_DISPLAY_NAME,
+    reason: "Adobe Pass org was not detected in the current Adobe session, so the Programmer list stays hidden."
+  };
+}
+
+function findAdobePassOrganizationCandidate(organizations = []) {
+  return (Array.isArray(organizations) ? organizations : []).find((organization) => isAdobePassOrganization(organization)) || null;
+}
+
+function isAdobePassOrganization(organization) {
+  if (!organization || typeof organization !== "object") {
+    return false;
+  }
+
+  const values = [
+    organization.key,
+    organization.id,
+    organization.tenantId,
+    organization.imsOrgId,
+    organization.name,
+    organization.label
+  ]
+    .map((value) => normalizeOrganizationIdentifier(value))
+    .filter(Boolean);
+
+  return values.some((value) =>
+    value === ADOBE_PASS_TENANT_ID ||
+    value === `org:${ADOBE_PASS_TENANT_ID}` ||
+    value === normalizeOrganizationIdentifier(ADOBE_PASS_DISPLAY_NAME) ||
+    value === normalizeOrganizationIdentifier(ADOBE_PASS_IMS_ORG_ID)
+  );
+}
+
+async function buildUnifiedShellContext(session, reason = "post-login") {
+  const previousUnifiedShell = session?.unifiedShell && typeof session.unifiedShell === "object" ? session.unifiedShell : {};
+  const accessToken = firstNonEmptyString([session?.accessToken]);
+  const hydratedAt = new Date().toISOString();
+  const activeOrganization = buildOrganizationContextFromSession(session).activeOrganization;
+  const selectedOrg = resolveUnifiedShellSelectedOrg(session, activeOrganization);
+
+  if (!accessToken) {
+    return {
+      ...previousUnifiedShell,
+      hydratedAt,
+      selectedOrg,
+      status: "unavailable",
+      organizations: [],
+      clusterCount: 0,
+      userProfile: null,
+      errors: {
+        init: "Adobe IMS access token is unavailable."
+      }
+    };
+  }
+
+  log(`Hydrating Unified Shell org context from ${UNIFIED_SHELL_GRAPHQL_URL} (${reason}).`);
+  const initResult = await settle(() =>
+    fetchUnifiedShellInit({
+      accessToken,
+      selectedOrg
+    })
+  );
+
+  if (!initResult.ok) {
+    log(`Unified Shell org hydration failed: ${serializeError(initResult.error)}`);
+    return {
+      ...previousUnifiedShell,
+      hydratedAt,
+      selectedOrg,
+      status: "unavailable",
+      organizations: [],
+      clusterCount: 0,
+      userProfile: null,
+      errors: {
+        init: serializeError(initResult.error)
+      }
+    };
+  }
+
+  const payload = initResult.value?.data && typeof initResult.value.data === "object" ? initResult.value.data : {};
+  const clusterData = normalizeUnifiedShellClusterData(payload?.imsExtendedAccountClusterData);
+  const organizations = normalizeUnifiedShellOrganizations({
+    clusters: clusterData,
+    activeOrganization,
+    selectedOrg
+  });
+  const userProfile = payload?.userProfileJson && typeof payload.userProfileJson === "object" ? payload.userProfileJson : null;
+  const clusterMeta =
+    payload?.imsExtendedAccountClusterData && typeof payload.imsExtendedAccountClusterData === "object"
+      ? payload.imsExtendedAccountClusterData
+      : {};
+
+  return {
+    ...previousUnifiedShell,
+    hydratedAt,
+    selectedOrg,
+    status: organizations.length > 0 || userProfile ? "ready" : "limited",
+    clusterCount: clusterData.length,
+    next: firstNonEmptyString([clusterMeta.next]),
+    timestamp: firstNonEmptyString([clusterMeta.timestamp]),
+    preferredLanguages: Array.isArray(clusterMeta.preferredLanguages) ? clusterMeta.preferredLanguages.filter(Boolean) : [],
+    organizations,
+    userProfile,
+    errors: {
+      init: ""
+    }
+  };
+}
+
+function buildApiRequestId() {
+  return `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+}
+
+function buildConsoleRequestHeaders(accessToken = "", csrfToken = "NO-TOKEN") {
+  const bearerToken = String(accessToken || "").trim();
+  return {
+    Accept: "application/json, text/plain, */*",
+    Authorization: `bearer ${bearerToken}`,
+    "X-CSRF-Token": firstNonEmptyString([csrfToken, "NO-TOKEN"]),
+    "AP-Request-Id": buildApiRequestId()
+  };
+}
+
+function buildPrimetimeRequestHeaders(accessToken = "") {
+  const bearerToken = String(accessToken || "").trim();
+  return {
+    Accept: "*/*",
+    Authorization: `Bearer ${bearerToken}`
+  };
+}
+
+function buildCmuReportRequestHeaders(accessToken = "") {
+  const bearerToken = normalizeBearerTokenValue(accessToken);
+  return {
+    Accept: "*/*",
+    ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {})
+  };
+}
+
+function normalizeBearerTokenValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+}
+
+function isProbablyJwt(value = "") {
+  const token = normalizeBearerTokenValue(value);
+  return token.split(".").length === 3;
+}
+
+function isTokenFreshEnough(value = "", skewMs = 0) {
+  const token = normalizeBearerTokenValue(value);
+  if (!isProbablyJwt(token)) {
+    return false;
+  }
+
+  const claims = decodeJwtPayload(token) || {};
+  const expSeconds = Number(claims?.exp || 0);
+  if (!Number.isFinite(expSeconds) || expSeconds <= 0) {
+    return true;
+  }
+  return expSeconds * 1000 > Date.now() + Math.max(0, Number(skewMs || 0));
+}
+
+function tokenSupportsCmConsoleRequests(value = "") {
+  const token = normalizeBearerTokenValue(value);
+  if (!isProbablyJwt(token)) {
+    return false;
+  }
+
+  const claims = decodeJwtPayload(token) || {};
+  const clientId = String(firstNonEmptyString([claims?.client_id, claims?.clientId]) || "")
+    .trim()
+    .toLowerCase();
+  return clientId === CM_CONSOLE_IMS_CLIENT_ID;
+}
+
+function dedupeCandidateStrings(values = []) {
+  const output = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    output.push(normalized);
+  });
+  return output;
+}
+
+function collectCmConsoleUserIdCandidates(session = null, seedToken = "") {
+  const currentSession = session && typeof session === "object" ? session : {};
+  const profile = currentSession?.profile && typeof currentSession.profile === "object" ? currentSession.profile : {};
+  const imsSession = currentSession?.imsSession && typeof currentSession.imsSession === "object" ? currentSession.imsSession : {};
+  const accessTokenClaims = currentSession?.accessTokenClaims && typeof currentSession.accessTokenClaims === "object"
+    ? currentSession.accessTokenClaims
+    : {};
+  const idTokenClaims = currentSession?.idTokenClaims && typeof currentSession.idTokenClaims === "object"
+    ? currentSession.idTokenClaims
+    : {};
+  const seedClaims = decodeJwtPayload(seedToken) || {};
+
+  return dedupeCandidateStrings([
+    imsSession?.userId,
+    accessTokenClaims?.user_id,
+    accessTokenClaims?.userId,
+    accessTokenClaims?.sub,
+    idTokenClaims?.user_id,
+    idTokenClaims?.userId,
+    idTokenClaims?.sub,
+    profile?.userId,
+    profile?.user_id,
+    profile?.sub,
+    profile?.id,
+    profile?.additional_info?.userId,
+    profile?.additional_info?.user_id,
+    imsSession?.authId,
+    profile?.authId,
+    profile?.aa_id,
+    profile?.adobeID,
+    profile?.additional_info?.authId,
+    profile?.additional_info?.aa_id,
+    profile?.email,
+    profile?.user_email,
+    profile?.emailAddress,
+    profile?.additional_info?.email,
+    seedClaims?.user_id,
+    seedClaims?.userId,
+    seedClaims?.sub,
+    seedClaims?.aa_id,
+    seedClaims?.authId
+  ]);
+}
+
+function extractJwtLikeTokenFromText(value = "") {
+  const rawText = String(value || "").trim();
+  if (!rawText) {
+    return "";
+  }
+
+  const matches = rawText.match(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
+  if (!Array.isArray(matches)) {
+    return "";
+  }
+
+  for (const candidate of matches) {
+    if (isProbablyJwt(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function extractImsAccessTokenFromPayload(payload, rawText = "") {
+  const normalizedRawText = String(rawText || "").trim();
+  if (!payload && !normalizedRawText) {
+    return "";
+  }
+
+  if (typeof payload === "string") {
+    const directToken = normalizeBearerTokenValue(payload);
+    if (isProbablyJwt(directToken)) {
+      return directToken;
+    }
+  }
+
+  if (payload && typeof payload === "object") {
+    const nestedToken =
+      payload.token && typeof payload.token === "object"
+        ? firstNonEmptyString([
+            payload.token.access_token,
+            payload.token.accessToken,
+            payload.token.token,
+            payload.token.value
+          ])
+        : payload.token;
+    const structuredToken = normalizeBearerTokenValue(
+      firstNonEmptyString([
+        payload.access_token,
+        payload.accessToken,
+        nestedToken,
+        payload.tenantDataToken,
+        payload.tenant_data_token,
+        payload.imsToken,
+        payload.authToken,
+        payload.authorization,
+        payload.Authorization,
+        payload.bearer,
+        payload.value
+      ])
+    );
+    if (isProbablyJwt(structuredToken)) {
+      return structuredToken;
+    }
+  }
+
+  return extractJwtLikeTokenFromText(typeof payload === "string" ? payload : normalizedRawText);
+}
+
+function normalizeCmuAccessToken(value, rawText = "") {
+  return extractImsAccessTokenFromPayload(value, rawText);
+}
+
+function buildCmuAuthorizationHeaderValue(token = "") {
+  const normalizedToken = normalizeBearerTokenValue(token);
+  return normalizedToken ? `${CMU_TOKEN_HEADER_SCHEME} ${normalizedToken}` : "";
+}
+
+function buildImsCheckTokenUrl({ endpoint, clientId, scope, userId }) {
+  const normalizedEndpoint = String(endpoint || "").trim();
+  const normalizedClientId = String(clientId || "").trim();
+  const normalizedScope = String(scope || "").trim();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedEndpoint || !normalizedClientId || !normalizedScope || !normalizedUserId) {
+    throw new Error("IMS check token request is missing required context.");
+  }
+
+  const url = new URL(normalizedEndpoint);
+  url.searchParams.set("client_id", normalizedClientId);
+  url.searchParams.set("scope", normalizedScope);
+  url.searchParams.set("user_id", normalizedUserId);
+  return url;
+}
+
+function sleep(ms = 0) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, Math.max(0, Number(ms || 0)));
+  });
+}
+
+function buildApiRequestUrl(baseUrl = "", path = "", queryParams = {}) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+  const normalizedPath = String(path || "").trim();
+  if (!normalizedBaseUrl || !normalizedPath) {
+    throw new Error("API request URL is missing required context.");
+  }
+
+  const base = normalizedBaseUrl.endsWith("/") ? normalizedBaseUrl : `${normalizedBaseUrl}/`;
+  const relativePath = normalizedPath.replace(/^\/+/, "");
+  const url = new URL(relativePath, base);
+  Object.entries(queryParams || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return;
+    }
+    url.searchParams.set(key, String(value));
+  });
+  return url;
+}
+
+function isExperienceAdobeTabUrl(value = "") {
+  const normalizedUrl = String(value || "").trim().toLowerCase();
+  const normalizedOrigin = String(CM_CONSOLE_APP_ORIGIN || "").trim().toLowerCase().replace(/\/+$/, "");
+  if (!normalizedUrl || !normalizedOrigin) {
+    return false;
+  }
+  return normalizedUrl === normalizedOrigin || normalizedUrl.startsWith(`${normalizedOrigin}/`);
+}
+
+function buildAdobePassConsoleBootstrapUrl(environmentId = CONSOLE_DEFAULT_ENVIRONMENT, page = "programmers") {
+  const normalizedEnvironmentId = String(environmentId || "").trim() || CONSOLE_DEFAULT_ENVIRONMENT;
+  const normalizedPage = String(page || "").trim() || "programmers";
+  return `${ADOBE_PASS_CONSOLE_APP_ORIGIN}/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG}/${normalizedEnvironmentId}/${normalizedPage}`;
+}
+
+function isAdobePassConsoleAppUrl(value = "") {
+  const normalizedUrl = String(value || "").trim().toLowerCase();
+  return normalizedUrl.includes(`/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG.toLowerCase()}/`);
+}
+
+async function getTabByIdSafe(tabId) {
+  const normalizedTabId = Number(tabId || 0);
+  if (!chrome.tabs?.get || normalizedTabId <= 0) {
+    return null;
+  }
+
+  try {
+    return await chrome.tabs.get(normalizedTabId);
+  } catch {
+    return null;
+  }
+}
+
+async function waitForTabCompletion(tabId, timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS) {
+  const normalizedTabId = Number(tabId || 0);
+  if (normalizedTabId <= 0) {
+    return null;
+  }
+
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0));
+  let lastTab = await getTabByIdSafe(normalizedTabId);
+  while (lastTab && Date.now() < deadline) {
+    if (String(lastTab?.status || "").trim().toLowerCase() === "complete") {
+      return lastTab;
+    }
+    await sleep(150);
+    lastTab = await getTabByIdSafe(normalizedTabId);
+  }
+  return lastTab;
+}
+
+async function findExistingExperienceAdobeTab() {
+  if (!chrome.tabs?.query) {
+    return null;
+  }
+
+  try {
+    const tabs = await chrome.tabs.query({
+      url: [`${CM_CONSOLE_APP_ORIGIN}/*`]
+    });
+    const normalizedTabs = Array.isArray(tabs) ? tabs : [];
+    const scored = normalizedTabs
+      .filter((tab) => Number(tab?.id || 0) > 0)
+      .map((tab) => {
+        const url = String(tab?.url || tab?.pendingUrl || "").trim().toLowerCase();
+        let score = Number(tab?.lastAccessed || 0);
+        if (tab?.active === true) {
+          score += 5000;
+        }
+        if (url.includes("/#/@adobepass/cm-console/")) {
+          score += 2400;
+        }
+        if (url.includes("/#/@adobepass/")) {
+          score += 1800;
+        }
+        if (isExperienceAdobeTabUrl(url)) {
+          score += 1200;
+        }
+        return {
+          tab,
+          score
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+    return scored[0]?.tab || null;
+  } catch {
+    return null;
+  }
+}
+
+async function openTemporaryAdobePageContextTarget(targetUrl = CM_CONSOLE_BOOTSTRAP_URL) {
+  const normalizedUrl = String(targetUrl || "").trim();
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  let temporaryTarget = null;
+  if (chrome.tabs?.create) {
+    try {
+      const createdTab = await chrome.tabs.create({
+        url: normalizedUrl,
+        active: false
+      });
+      const tabId = Number(createdTab?.id || 0);
+      if (tabId > 0) {
+        temporaryTarget = {
+          tab: createdTab,
+          tabId,
+          windowId: Number(createdTab?.windowId || 0),
+          ownsWindow: false
+        };
+      }
+    } catch {
+      temporaryTarget = null;
+    }
+  }
+
+  if (!temporaryTarget && chrome.windows?.create) {
+    try {
+      const createdWindow = await chrome.windows.create({
+        url: normalizedUrl,
+        type: "popup",
+        focused: false,
+        width: 480,
+        height: 640
+      });
+      const tab =
+        Array.isArray(createdWindow?.tabs) && createdWindow.tabs.length > 0
+          ? createdWindow.tabs.find((candidate) => Number(candidate?.id || 0) > 0) || null
+          : null;
+      const tabId = Number(tab?.id || 0);
+      const windowId = Number(createdWindow?.id || 0);
+      if (tabId > 0 && windowId > 0) {
+        temporaryTarget = {
+          tab,
+          tabId,
+          windowId,
+          ownsWindow: true
+        };
+      }
+    } catch {
+      temporaryTarget = null;
+    }
+  }
+
+  if (!temporaryTarget?.tabId) {
+    return null;
+  }
+
+  const resolvedTab = await waitForTabCompletion(temporaryTarget.tabId, ADOBE_PAGE_CONTEXT_TIMEOUT_MS).catch(() => null);
+  return {
+    ...temporaryTarget,
+    tab: resolvedTab || temporaryTarget.tab
+  };
+}
+
+async function closeTemporaryAdobePageContextTarget(target = null) {
+  const tabId = Number(target?.tabId || target?.tab?.id || 0);
+  const windowId = Number(target?.windowId || target?.tab?.windowId || 0);
+  const ownsWindow = target?.ownsWindow === true;
+
+  if (ownsWindow && windowId > 0 && chrome.windows?.remove) {
+    try {
+      await chrome.windows.remove(windowId);
+      return;
+    } catch {
+      // Fall through to tab cleanup if the temporary window is already gone.
+    }
+  }
+
+  if (tabId > 0 && chrome.tabs?.remove) {
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch {
+      // Ignore cleanup failures for temporary Adobe page-context tabs.
+    }
+  }
+}
+
+async function resolveExperienceAdobePageContextTarget({ preferredTabId = 0, allowTemporaryTab = true } = {}) {
+  let tab = await getTabByIdSafe(preferredTabId);
+  const preferredUrl = String(tab?.url || tab?.pendingUrl || "").trim();
+  if (!isExperienceAdobeTabUrl(preferredUrl)) {
+    tab = await findExistingExperienceAdobeTab();
+  }
+
+  let temporaryTarget = null;
+  if (!tab?.id && allowTemporaryTab) {
+    temporaryTarget = await openTemporaryAdobePageContextTarget(CM_CONSOLE_BOOTSTRAP_URL);
+    tab = temporaryTarget?.tab || null;
+  }
+
+  return {
+    tab: tab || null,
+    tabId: Number(tab?.id || 0),
+    temporaryTarget
+  };
+}
+
+function isAdobeConsoleTabUrl(value = "") {
+  return isAdobePassConsoleAppUrl(value);
+}
+
+async function findExistingAdobeConsoleTab() {
+  if (!chrome.tabs?.query) {
+    return null;
+  }
+
+  try {
+    const tabs = await chrome.tabs.query({
+      url: [`${ADOBE_PASS_CONSOLE_APP_ORIGIN}/*`]
+    });
+    const normalizedTabs = Array.isArray(tabs) ? tabs : [];
+    const scored = normalizedTabs
+      .filter((tab) => Number(tab?.id || 0) > 0)
+      .map((tab) => ({
+        tab,
+        url: String(tab?.url || tab?.pendingUrl || "").trim().toLowerCase()
+      }))
+      .filter(({ url }) => isAdobePassConsoleAppUrl(url))
+      .map(({ tab, url }) => {
+        let score = Number(tab?.lastAccessed || 0);
+        if (tab?.active === true) {
+          score += 5000;
+        }
+        if (isAdobePassConsoleAppUrl(url)) {
+          score += 2600;
+        }
+        if (url.includes("/programmers")) {
+          score += 1800;
+        }
+        return {
+          tab,
+          score
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+    return scored[0]?.tab || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAdobeConsolePageContextTarget({
+  preferredTabId = 0,
+  allowTemporaryTab = true,
+  environmentId = CONSOLE_DEFAULT_ENVIRONMENT
+} = {}) {
+  let tab = await getTabByIdSafe(preferredTabId);
+  const preferredUrl = String(tab?.url || tab?.pendingUrl || "").trim();
+  if (!isAdobePassConsoleAppUrl(preferredUrl)) {
+    tab = await findExistingAdobeConsoleTab();
+  }
+
+  let temporaryTarget = null;
+  if (!tab?.id && allowTemporaryTab) {
+    temporaryTarget = await openTemporaryAdobePageContextTarget(buildAdobePassConsoleBootstrapUrl(environmentId, "programmers"));
+    tab = temporaryTarget?.tab || null;
+  }
+
+  return {
+    tab: tab || null,
+    tabId: Number(tab?.id || 0),
+    temporaryTarget
+  };
+}
+
+async function executeFetchViaAdobePageContextTarget({
+  tabId,
+  requestUrl,
+  method = "GET",
+  headers = {},
+  bodyText = "",
+  timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS,
+  requiredFrameOrigins = [],
+  requiredFrameUrlIncludes = []
+}) {
+  if (!chrome.scripting?.executeScript) {
+    throw new Error("Chrome page-context scripting is unavailable. Add the scripting permission and reload the extension.");
+  }
+
+  const normalizedTabId = Number(tabId || 0);
+  if (normalizedTabId <= 0) {
+    throw new Error("Adobe page-context fetch is missing a usable tab target.");
+  }
+
+  const normalizedRequestUrl = String(requestUrl || "").trim();
+  if (!normalizedRequestUrl) {
+    throw new Error("Adobe page-context fetch is missing a request URL.");
+  }
+
+  const normalizedMethod = String(method || "GET").trim().toUpperCase();
+  const normalizedHeaders = Object.entries(headers || {}).reduce((result, [key, value]) => {
+    const normalizedKey = String(key || "").trim();
+    const normalizedValue = String(value || "").trim();
+    if (normalizedKey && normalizedValue) {
+      result[normalizedKey] = normalizedValue;
+    }
+    return result;
+  }, {});
+  const normalizedOrigins = (Array.isArray(requiredFrameOrigins) ? requiredFrameOrigins : [])
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const normalizedUrlIncludes = (Array.isArray(requiredFrameUrlIncludes) ? requiredFrameUrlIncludes : [])
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const deadline = Date.now() + Math.max(2500, Number(timeoutMs || 0) || ADOBE_PAGE_CONTEXT_TIMEOUT_MS);
+  let lastFrameSummary = [];
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      await waitForTabCompletion(normalizedTabId, Math.min(1200, Math.max(200, deadline - Date.now()))).catch(() => null);
+      const executionResults = await chrome.scripting.executeScript({
+        target: { tabId: normalizedTabId, allFrames: true },
+        world: "MAIN",
+        args: [
+          {
+            requestUrl: normalizedRequestUrl,
+            method: normalizedMethod,
+            headers: normalizedHeaders,
+            bodyText: String(bodyText || ""),
+            timeoutMs: Math.max(1500, deadline - Date.now()),
+            requiredFrameOrigins: normalizedOrigins,
+            requiredFrameUrlIncludes: normalizedUrlIncludes
+          }
+        ],
+        func: async (config) => {
+          const normalize = (value) => String(value || "").trim();
+          const parseJson = (text) => {
+            try {
+              return JSON.parse(String(text || ""));
+            } catch {
+              return null;
+            }
+          };
+          const frameUrl = normalize(globalThis.location?.href);
+          const frameOrigin = normalize(globalThis.location?.origin).toLowerCase();
+          const documentReadyState = normalize(globalThis.document?.readyState);
+          const requiredOrigins = (Array.isArray(config?.requiredFrameOrigins) ? config.requiredFrameOrigins : [])
+            .map((value) => normalize(value).toLowerCase())
+            .filter(Boolean);
+          const requiredUrlIncludes = (Array.isArray(config?.requiredFrameUrlIncludes) ? config.requiredFrameUrlIncludes : [])
+            .map((value) => normalize(value).toLowerCase())
+            .filter(Boolean);
+          const matchesOrigin = requiredOrigins.length === 0 || requiredOrigins.includes(frameOrigin);
+          const frameUrlLower = frameUrl.toLowerCase();
+          const matchesUrl =
+            requiredUrlIncludes.length === 0 || requiredUrlIncludes.some((fragment) => frameUrlLower.includes(fragment));
+
+          if (!matchesOrigin || !matchesUrl) {
+            return {
+              skipped: true,
+              frameUrl,
+              frameOrigin,
+              documentReadyState
+            };
+          }
+
+          const controller = new AbortController();
+          const timerId = window.setTimeout(
+            () => controller.abort(),
+            Math.max(1200, Number(config?.timeoutMs || 0) || 5000)
+          );
+
+          try {
+            const response = await fetch(normalize(config?.requestUrl), {
+              method: normalize(config?.method || "GET") || "GET",
+              credentials: "include",
+              headers: config?.headers && typeof config.headers === "object" ? config.headers : {},
+              ...(normalize(config?.method || "GET").toUpperCase() === "GET"
+                ? {}
+                : { body: String(config?.bodyText || "") }),
+              signal: controller.signal
+            });
+            const text = await response.text().catch(() => "");
+            const responseHeaders = {};
+            response.headers.forEach((value, key) => {
+              const normalizedKey = normalize(key).toLowerCase();
+              if (normalizedKey) {
+                responseHeaders[normalizedKey] = normalize(value);
+              }
+            });
+            return {
+              skipped: false,
+              ok: Boolean(response.ok),
+              status: Number(response.status || 0),
+              statusText: normalize(response.statusText),
+              url: normalize(response.url || config?.requestUrl),
+              text,
+              parsed: parseJson(text),
+              responseHeaders,
+              frameUrl,
+              frameOrigin,
+              documentReadyState
+            };
+          } catch (error) {
+            return {
+              skipped: false,
+              ok: false,
+              status: 0,
+              statusText: error instanceof Error ? error.message : String(error),
+              url: normalize(config?.requestUrl),
+              text: "",
+              parsed: null,
+              responseHeaders: {},
+              frameUrl,
+              frameOrigin,
+              documentReadyState
+            };
+          } finally {
+            window.clearTimeout(timerId);
+          }
+        }
+      });
+
+      const results = (Array.isArray(executionResults) ? executionResults : [])
+        .map((entry) => (entry?.result && typeof entry.result === "object" ? entry.result : null))
+        .filter(Boolean);
+      const matchingResults = results.filter((result) => result?.skipped !== true);
+
+      if (matchingResults.length === 0) {
+        lastFrameSummary = results.map((result) => ({
+          frameOrigin: firstNonEmptyString([result?.frameOrigin, "unknown-origin"]),
+          frameUrl: firstNonEmptyString([result?.frameUrl, "unknown-url"])
+        }));
+        await sleep(150);
+        continue;
+      }
+
+      const scoreResult = (result) => {
+        const frameOrigin = String(result?.frameOrigin || "").trim().toLowerCase();
+        const originIndex = normalizedOrigins.indexOf(frameOrigin);
+        return originIndex >= 0 ? normalizedOrigins.length - originIndex : 0;
+      };
+      matchingResults.sort((left, right) => scoreResult(right) - scoreResult(left));
+      const selectedResult = matchingResults[0];
+
+      if (!selectedResult?.ok) {
+        const message = extractConsoleErrorMessage(selectedResult?.parsed, selectedResult?.text);
+        throw new Error(
+          `${new URL(normalizedRequestUrl).pathname} returned ${Number(selectedResult?.status || 0)}${
+            message ? `: ${message}` : ""
+          } via Adobe page context ${firstNonEmptyString([selectedResult?.frameOrigin, "unknown-origin"])}.`
+        );
+      }
+
+      return {
+        data: selectedResult.parsed ?? (selectedResult.text ? String(selectedResult.text).trim() : null),
+        rawText: String(selectedResult.text || ""),
+        headers: selectedResult.responseHeaders && typeof selectedResult.responseHeaders === "object" ? selectedResult.responseHeaders : {},
+        pageContext: {
+          url: firstNonEmptyString([selectedResult.frameUrl]),
+          origin: firstNonEmptyString([selectedResult.frameOrigin]),
+          readyState: firstNonEmptyString([selectedResult.documentReadyState])
+        }
+      };
+    } catch (error) {
+      lastError = error;
+      break;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  const observedFrames = lastFrameSummary
+    .map((frame) => {
+      const origin = firstNonEmptyString([frame?.frameOrigin, "unknown-origin"]);
+      const url = firstNonEmptyString([frame?.frameUrl, "unknown-url"]);
+      return `${origin} | ${url}`;
+    })
+    .filter(Boolean)
+    .join(", ");
+  throw new Error(
+    observedFrames
+      ? `Adobe page context did not expose the Adobe Pass console frame. Observed: ${observedFrames}`
+      : "Adobe page context did not expose the Adobe Pass console frame."
+  );
+}
+
+async function fetchConsoleJsonViaAdobePageContext({
+  baseUrl,
+  path,
+  accessToken,
+  csrfToken = "NO-TOKEN",
+  queryParams = {},
+  tabId,
+  requiredFrameUrlIncludes = []
+}) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+  const normalizedPath = String(path || "").trim();
+  const bearerToken = String(accessToken || "").trim();
+  if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
+    throw new Error("Console request is missing required context.");
+  }
+
+  const url = buildApiRequestUrl(normalizedBaseUrl, normalizedPath, queryParams);
+
+  const result = await executeFetchViaAdobePageContextTarget({
+    tabId,
+    requestUrl: url.toString(),
+    method: "GET",
+    headers: buildConsoleRequestHeaders(bearerToken, csrfToken),
+    requiredFrameOrigins: CONSOLE_PAGE_CONTEXT_ALLOWED_ORIGINS,
+    requiredFrameUrlIncludes
+  });
+
+  return {
+    data: result.data,
+    rawText: result.rawText,
+    csrfToken: firstNonEmptyString([result.headers?.["x-csrf-token"], csrfToken]),
+    pageContext: result.pageContext
+  };
+}
+
+function buildConsoleFallbackError(directError, fallbackError) {
+  const directMessage = serializeError(directError);
+  const fallbackMessage = serializeError(fallbackError);
+  if (directMessage && fallbackMessage) {
+    return new Error(`Direct IMS console request failed: ${directMessage}. Adobe page-context fallback failed: ${fallbackMessage}`);
+  }
+  return fallbackError || directError || new Error("Adobe Pass console request failed.");
+}
+
+async function fetchConsoleJsonWithFallback({
+  baseUrl,
+  path,
+  accessToken,
+  csrfToken = "NO-TOKEN",
+  queryParams = {},
+  environmentId = CONSOLE_DEFAULT_ENVIRONMENT,
+  pageContextTargetRef = null
+}) {
+  let consolePageContextTarget =
+    pageContextTargetRef && typeof pageContextTargetRef === "object" ? pageContextTargetRef.target : null;
+  if (Number(consolePageContextTarget?.tabId || 0) <= 0) {
+    consolePageContextTarget = await resolveAdobeConsolePageContextTarget({
+      allowTemporaryTab: true,
+      environmentId
+    });
+    if (pageContextTargetRef && typeof pageContextTargetRef === "object") {
+      pageContextTargetRef.target = consolePageContextTarget;
+    }
+  }
+
+  const consoleTabId = Number(consolePageContextTarget?.tabId || 0);
+  let pageContextError =
+    consoleTabId > 0 ? null : new Error("Unable to open an Adobe Pass console page context for the live console hydration.");
+  if (consoleTabId > 0) {
+    const pageContextResult = await settle(() =>
+      fetchConsoleJsonViaAdobePageContext({
+        baseUrl,
+        path,
+        accessToken,
+        csrfToken,
+        queryParams,
+        tabId: consoleTabId,
+        requiredFrameUrlIncludes: [`/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG}/`]
+      })
+    );
+    if (pageContextResult.ok) {
+      return {
+        ...pageContextResult.value,
+        transport: "ims-bearer:page-context"
+      };
+    }
+    pageContextError = pageContextResult.error;
+  }
+
+  const directResult = await settle(() =>
+    fetchConsoleJson({
+      baseUrl,
+      path,
+      accessToken,
+      csrfToken,
+      queryParams
+    })
+  );
+  if (directResult.ok) {
+    return {
+      ...directResult.value,
+      transport: "ims-bearer:direct",
+      pageContext: null
+    };
+  }
+
+  throw buildConsoleFallbackError(directResult.error, pageContextError);
+}
+
+async function fetchImsCheckTokenViaAdobePageContext({
+  endpoint,
+  clientId,
+  scope,
+  userId,
+  preferredTabId = 0,
+  allowTemporaryTab = true,
+  timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS
+}) {
+  if (!chrome.scripting?.executeScript) {
+    throw new Error("Chrome page-context scripting is unavailable. Add the scripting permission and reload the extension.");
+  }
+
+  const requestUrl = buildImsCheckTokenUrl({
+    endpoint,
+    clientId,
+    scope,
+    userId
+  }).toString();
+  const target = await resolveExperienceAdobePageContextTarget({
+    preferredTabId,
+    allowTemporaryTab
+  });
+  const temporaryTarget = target?.temporaryTarget || null;
+  const tabId = Number(target?.tabId || 0);
+  if (tabId <= 0) {
+    throw new Error("Unable to open an Adobe Experience Cloud page context for the CMU token bootstrap.");
+  }
+
+  try {
+    await waitForTabCompletion(tabId, timeoutMs).catch(() => null);
+    const executionResults = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [
+        {
+          requestUrl,
+          timeoutMs
+        }
+      ],
+      func: async (config) => {
+        const normalize = (value) => String(value || "").trim();
+        const parseJson = (text) => {
+          try {
+            return JSON.parse(String(text || ""));
+          } catch {
+            return null;
+          }
+        };
+
+        const controller = new AbortController();
+        const timerId = window.setTimeout(
+          () => controller.abort(),
+          Math.max(2000, Number(config?.timeoutMs || 0) || 12000)
+        );
+        try {
+          const response = await fetch(String(config?.requestUrl || ""), {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              Accept: "*/*"
+            },
+            signal: controller.signal
+          });
+          const text = await response.text().catch(() => "");
+          return {
+            ok: Boolean(response.ok),
+            status: Number(response.status || 0),
+            statusText: normalize(response.statusText),
+            url: normalize(response.url || config?.requestUrl),
+            text,
+            parsed: parseJson(text),
+            frameUrl: normalize(globalThis.location?.href),
+            frameOrigin: normalize(globalThis.location?.origin),
+            documentReadyState: normalize(globalThis.document?.readyState)
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            status: 0,
+            statusText: error instanceof Error ? error.message : String(error),
+            url: normalize(config?.requestUrl),
+            text: "",
+            parsed: null,
+            frameUrl: normalize(globalThis.location?.href),
+            frameOrigin: normalize(globalThis.location?.origin),
+            documentReadyState: normalize(globalThis.document?.readyState)
+          };
+        } finally {
+          window.clearTimeout(timerId);
+        }
+      }
+    });
+
+    const result = executionResults?.[0]?.result;
+    if (!result || typeof result !== "object") {
+      throw new Error("Adobe page context did not return a usable IMS check response.");
+    }
+
+    if (!result.ok) {
+      const message = extractConsoleErrorMessage(result.parsed, result.text);
+      throw new Error(
+        `${new URL(requestUrl).pathname} returned ${Number(result.status || 0)}${
+          message ? `: ${message}` : ""
+        } via Adobe page context ${firstNonEmptyString([result.frameOrigin, "unknown-origin"])}.`
+      );
+    }
+
+    return {
+      data: result.parsed ?? (result.text ? String(result.text).trim() : null),
+      rawText: String(result.text || ""),
+      pageContext: {
+        url: firstNonEmptyString([result.frameUrl]),
+        origin: firstNonEmptyString([result.frameOrigin]),
+        readyState: firstNonEmptyString([result.documentReadyState])
+      }
+    };
+  } finally {
+    await closeTemporaryAdobePageContextTarget(temporaryTarget);
+  }
+}
+
+async function fetchImsValidateToken({ endpoint, clientId, token, credentials = "include" }) {
+  const normalizedEndpoint = String(endpoint || "").trim();
+  const normalizedClientId = String(clientId || "").trim();
+  const normalizedToken = normalizeBearerTokenValue(token);
+  if (!normalizedEndpoint || !normalizedClientId || !normalizedToken) {
+    throw new Error("IMS validate token request is missing required context.");
+  }
+
+  const body = new URLSearchParams({
+    type: "access_token",
+    token: normalizedToken
+  });
+  body.set("client_id", normalizedClientId);
+
+  let response;
+  try {
+    response = await fetch(normalizedEndpoint, {
+      method: "POST",
+      mode: "cors",
+      credentials,
+      referrer: CM_CONSOLE_APP_REFERER,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      headers: {
+        Accept: "*/*",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        client_id: normalizedClientId
+      },
+      body: body.toString()
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach ${new URL(normalizedEndpoint).pathname}: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`${new URL(normalizedEndpoint).pathname} returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+
+  return {
+    data: parsed ?? (text ? text.trim() : null),
+    rawText: text
+  };
+}
+
+async function fetchImsCheckToken({ endpoint, clientId, scope, userId, credentials = "include", seedToken = "" }) {
+  const url = buildImsCheckTokenUrl({
+    endpoint,
+    clientId,
+    scope,
+    userId
+  });
+  const normalizedClientId = String(clientId || "").trim();
+  const normalizedSeedToken = normalizeBearerTokenValue(seedToken);
+  const requestHeaders = {
+    Accept: "*/*",
+    ...(normalizedSeedToken
+      ? {
+          Authorization: `Bearer ${normalizedSeedToken}`,
+          "X-IMS-ClientId": normalizedClientId,
+          "x-api-key": normalizedClientId
+        }
+      : {})
+  };
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "POST",
+      mode: "cors",
+      credentials,
+      referrer: CM_CONSOLE_APP_REFERER,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      headers: requestHeaders
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach ${url.pathname}: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`${url.pathname} returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+
+  return {
+    data: parsed ?? (text ? text.trim() : null),
+    rawText: text
+  };
+}
+
+async function resolveQualifiedCmConsoleAccessToken(session = null, previousToken = "") {
+  const currentSession = session && typeof session === "object" ? session : {};
+  const existingTokenCandidates = dedupeCandidateStrings([
+    previousToken,
+    currentSession?.cm?.cmuToken,
+    currentSession?.accessToken
+  ]);
+
+  for (const candidate of existingTokenCandidates) {
+    if (tokenSupportsCmConsoleRequests(candidate) && isTokenFreshEnough(candidate, CM_TOKEN_REFRESH_SKEW_MS)) {
+      return {
+        token: normalizeBearerTokenValue(candidate),
+        source: candidate === currentSession?.accessToken ? "existing:session" : "existing:cached"
+      };
+    }
+  }
+
+  const seedTokens = dedupeCandidateStrings([
+    currentSession?.accessToken,
+    previousToken
+  ]).filter((value) => isProbablyJwt(value));
+  const userIdCandidates = collectCmConsoleUserIdCandidates(currentSession);
+  let lastError = null;
+
+  for (const userId of userIdCandidates) {
+    const pageContextResult = await settle(() =>
+      fetchImsCheckTokenViaAdobePageContext({
+        endpoint: CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT,
+        clientId: CM_CONSOLE_IMS_CLIENT_ID,
+        scope: CM_CONSOLE_IMS_SCOPE,
+        userId,
+        allowTemporaryTab: true
+      })
+    );
+    if (pageContextResult.ok) {
+      const nextToken = normalizeCmuAccessToken(pageContextResult.value?.data, pageContextResult.value?.rawText);
+      if (tokenSupportsCmConsoleRequests(nextToken) && isTokenFreshEnough(nextToken, CM_TOKEN_REFRESH_SKEW_MS)) {
+        return {
+          token: nextToken,
+          source: "page-context:ims-check"
+        };
+      }
+      if (nextToken) {
+        const claims = decodeJwtPayload(nextToken) || {};
+        lastError = new Error(
+          `Adobe page context minted an unsupported Adobe IMS token client_id=${firstNonEmptyString([
+            claims?.client_id,
+            claims?.clientId,
+            "unknown"
+          ])}.`
+        );
+      } else {
+        lastError = new Error("Adobe page context IMS check response did not include a cm-console-ui access token.");
+      }
+    } else {
+      lastError = pageContextResult.error;
+    }
+
+    const attempts = [
+      {
+        credentials: "include",
+        seedToken: ""
+      },
+      {
+        credentials: "omit",
+        seedToken: ""
+      },
+      ...seedTokens.map((seedToken) => ({
+        credentials: "omit",
+        seedToken
+      }))
+    ];
+
+    for (const attempt of attempts) {
+      const result = await settle(() =>
+        fetchImsCheckToken({
+          endpoint: CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT,
+          clientId: CM_CONSOLE_IMS_CLIENT_ID,
+          scope: CM_CONSOLE_IMS_SCOPE,
+          userId,
+          credentials: attempt.credentials,
+          seedToken: attempt.seedToken
+        })
+      );
+      if (!result.ok) {
+        lastError = result.error;
+        continue;
+      }
+
+      const nextToken = normalizeCmuAccessToken(result.value?.data, result.value?.rawText);
+      if (tokenSupportsCmConsoleRequests(nextToken) && isTokenFreshEnough(nextToken, CM_TOKEN_REFRESH_SKEW_MS)) {
+        return {
+          token: nextToken,
+          source: `ims-check:${attempt.credentials}${attempt.seedToken ? ":seed" : ""}`
+        };
+      }
+      if (nextToken) {
+        const claims = decodeJwtPayload(nextToken) || {};
+        lastError = new Error(
+          `IMS check minted an unsupported Adobe IMS token client_id=${firstNonEmptyString([claims?.client_id, claims?.clientId, "unknown"])}.`
+        );
+      } else {
+        lastError = new Error("IMS check token response did not include a cm-console-ui access token.");
+      }
+    }
+  }
+
+  for (const seedToken of seedTokens) {
+    for (const credentials of ["include", "omit"]) {
+      const result = await settle(() =>
+        fetchImsValidateToken({
+          endpoint: CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT,
+          clientId: CM_CONSOLE_IMS_CLIENT_ID,
+          token: seedToken,
+          credentials
+        })
+      );
+      if (!result.ok) {
+        lastError = result.error;
+        continue;
+      }
+
+      const nextToken = normalizeCmuAccessToken(result.value?.data, result.value?.rawText);
+      if (tokenSupportsCmConsoleRequests(nextToken) && isTokenFreshEnough(nextToken, CM_TOKEN_REFRESH_SKEW_MS)) {
+        return {
+          token: nextToken,
+          source: `validate:${credentials}`
+        };
+      }
+      if (nextToken) {
+        const claims = decodeJwtPayload(nextToken) || {};
+        lastError = new Error(
+          `IMS validate token minted an unsupported Adobe IMS token client_id=${firstNonEmptyString([claims?.client_id, claims?.clientId, "unknown"])}.`
+        );
+      } else {
+        lastError = new Error("IMS validate token response did not include a cm-console-ui access token.");
+      }
+    }
+  }
+
+  throw lastError || new Error("Login Button could not auto-hydrate a cm-console-ui bearer from the current Adobe IMS session.");
+}
+
+async function fetchConsoleJson({ baseUrl, path, accessToken, csrfToken = "NO-TOKEN", queryParams = {} }) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+  const normalizedPath = String(path || "").trim();
+  const bearerToken = String(accessToken || "").trim();
+  if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
+    throw new Error("Console request is missing required context.");
+  }
+
+  const url = buildApiRequestUrl(normalizedBaseUrl, normalizedPath, queryParams);
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      mode: "cors",
+      credentials: "include",
+      headers: buildConsoleRequestHeaders(bearerToken, csrfToken)
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach ${url.pathname}: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`${url.pathname} returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+
+  return {
+    data: parsed ?? (text ? text.trim() : null),
+    csrfToken: firstNonEmptyString([response.headers.get("x-csrf-token"), csrfToken])
+  };
+}
+
+async function fetchPrimetimeJson({ baseUrl, path, accessToken, queryParams = {} }) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+  const normalizedPath = String(path || "").trim();
+  const bearerToken = String(accessToken || "").trim();
+  if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
+    throw new Error("CM request is missing required context.");
+  }
+
+  const url = new URL(normalizedPath, `${normalizedBaseUrl.replace(/\/+$/, "")}/`);
+  Object.entries(queryParams || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return;
+    }
+    url.searchParams.set(key, String(value));
+  });
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      mode: "cors",
+      credentials: "include",
+      headers: buildPrimetimeRequestHeaders(bearerToken)
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach ${url.pathname}: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`${url.pathname} returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+
+  return parsed ?? (text ? text.trim() : null);
+}
+
+async function fetchCmuReportJson({ baseUrl, path, accessToken, queryParams = {} }) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+  const normalizedPath = String(path || "").trim();
+  const bearerToken = normalizeBearerTokenValue(accessToken);
+  if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
+    throw new Error("CMU report request is missing required context.");
+  }
+
+  const url = new URL(normalizedPath, `${normalizedBaseUrl.replace(/\/+$/, "")}/`);
+  Object.entries(queryParams || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return;
+    }
+    url.searchParams.set(key, String(value));
+  });
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      mode: "cors",
+      credentials: "include",
+      referrer: CM_REPORTS_APP_REFERER,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      headers: buildCmuReportRequestHeaders(bearerToken)
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach ${url.pathname}: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`${url.pathname} returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+
+  return parsed ?? (text ? text.trim() : null);
+}
+
+async function fetchUnifiedShellInit({ accessToken, selectedOrg = "" }) {
+  const bearerToken = String(accessToken || "").trim();
+  if (!bearerToken) {
+    throw new Error("Unified Shell request is missing the Adobe IMS access token.");
+  }
+
+  let response;
+  try {
+    response = await fetch(UNIFIED_SHELL_GRAPHQL_URL, {
+      method: "POST",
+      mode: "cors",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${bearerToken}`,
+        "Content-Type": "application/json",
+        "x-api-key": UNIFIED_SHELL_API_KEY
+      },
+      body: JSON.stringify({
+        operationName: UNIFIED_SHELL_OPERATION_NAME,
+        query: UNIFIED_SHELL_INIT_QUERY,
+        variables: {
+          selectedOrg: firstNonEmptyString([selectedOrg]) || null,
+          useConsolidatedAccounts: false
+        }
+      })
+    });
+  } catch (error) {
+    throw new Error(`Unable to reach Unified Shell GraphQL: ${serializeError(error)}`);
+  }
+
+  const text = await response.text().catch(() => "");
+  const parsed = parseJsonText(text, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`Unified Shell GraphQL returned ${response.status}${message ? `: ${message}` : ""}`);
+  }
+  if (Array.isArray(parsed?.errors) && parsed.errors.length > 0) {
+    const message = extractConsoleErrorMessage(parsed, text);
+    throw new Error(`Unified Shell GraphQL returned an application error${message ? `: ${message}` : ""}`);
+  }
+
+  return parsed ?? { data: {} };
+}
+
+function resolveUnifiedShellSelectedOrg(session, activeOrganization = null) {
+  const requestedTargetOrganization = normalizeRequestedTargetOrganization(session?.targetOrganization);
+  const targetSelectedOrg = firstNonEmptyString([
+    requestedTargetOrganization?.tenantId,
+    requestedTargetOrganization?.id && !/@adobeorg$/i.test(requestedTargetOrganization.id) ? requestedTargetOrganization.id : ""
+  ]);
+  if (targetSelectedOrg) {
+    return targetSelectedOrg;
+  }
+
+  const previousSelectedOrg = firstNonEmptyString([session?.unifiedShell?.selectedOrg]);
+  if (previousSelectedOrg && !/@adobeorg$/i.test(previousSelectedOrg)) {
+    return previousSelectedOrg;
+  }
+
+  const activeId = firstNonEmptyString([activeOrganization?.tenantId, activeOrganization?.id]);
+  if (activeId && !/@adobeorg$/i.test(activeId)) {
+    return activeId;
+  }
+
+  const projectedProductContexts = [
+    ...(Array.isArray(session?.profile?.projectedProductContext) ? session.profile.projectedProductContext : []),
+    ...(Array.isArray(session?.profile?.additional_info?.projectedProductContext)
+      ? session.profile.additional_info.projectedProductContext
+      : []),
+    ...(Array.isArray(session?.console?.extendedProfile?.userProfile?.projectedProductContext)
+      ? session.console.extendedProfile.userProfile.projectedProductContext
+      : [])
+  ];
+
+  for (const entry of projectedProductContexts) {
+    const prodCtx = entry?.prodCtx && typeof entry.prodCtx === "object" ? entry.prodCtx : entry;
+    const tenantId = firstNonEmptyString([prodCtx?.tenantId, prodCtx?.tenant_id, prodCtx?.companyId, prodCtx?.company_id]);
+    if (tenantId) {
+      return tenantId;
+    }
+  }
+
+  return firstNonEmptyString([previousSelectedOrg, activeId]);
+}
+
+function normalizeUnifiedShellClusterData(payload) {
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+  return data
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      return {
+        index,
+        consolidatedAccount: entry.consolidatedAccount === true,
+        restricted: entry.restricted === true,
+        userId: firstNonEmptyString([entry.userId]),
+        userType: firstNonEmptyString([entry.userType]),
+        owningOrg: normalizeUnifiedShellOrganizationNode(entry.owningOrg),
+        orgs: Array.isArray(entry.orgs)
+          ? entry.orgs.map((organization) => normalizeUnifiedShellOrganizationNode(organization)).filter(Boolean)
+          : []
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeUnifiedShellOrganizationNode(organization) {
+  if (!organization || typeof organization !== "object") {
+    return null;
+  }
+
+  const tenantId = firstNonEmptyString([organization.tenantId, organization.tenant_id]);
+  const imsOrgId = firstNonEmptyString([organization.imsOrgId, organization.ims_org_id]);
+  const name = firstNonEmptyString([organization.orgName, organization.org_name, organization.organizationName]);
+  const id = firstNonEmptyString([tenantId, imsOrgId, organization.id]);
+  if (!id && !name) {
+    return null;
+  }
+
+  return {
+    id,
+    tenantId,
+    imsOrgId,
+    name: name || id,
+    aepRegion: firstNonEmptyString([organization.aepRegion, organization.aep_region]),
+    hasAEP: organization.hasAEP === true,
+    aemInstances: Array.isArray(organization.aemInstances)
+      ? organization.aemInstances
+          .filter((entry) => entry && typeof entry === "object")
+          .map((entry) => ({
+            domain: firstNonEmptyString([entry.domain]),
+            environment: firstNonEmptyString([entry.environment]),
+            path: firstNonEmptyString([entry.path]),
+            rootTemplate: firstNonEmptyString([entry.rootTemplate]),
+            title: firstNonEmptyString([entry.title]),
+            type: firstNonEmptyString([entry.type])
+          }))
+      : []
+  };
+}
+
+function normalizeUnifiedShellOrganizations({ clusters = [], activeOrganization = null, selectedOrg = "" } = {}) {
+  const candidateMap = new Map();
+  const idIndex = new Map();
+  const nameIndex = new Map();
+  const normalizedSelectedOrg = normalizeOrganizationIdentifier(selectedOrg);
+  const activeIdentifiers = new Set(
+    [
+      firstNonEmptyString([activeOrganization?.key]),
+      firstNonEmptyString([activeOrganization?.id]),
+      firstNonEmptyString([activeOrganization?.tenantId]),
+      firstNonEmptyString([activeOrganization?.imsOrgId]),
+      firstNonEmptyString([activeOrganization?.name])
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+  );
+
+  const upsertOrganization = (organization, source, cluster) => {
+    if (!organization || typeof organization !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([organization.id, organization.tenantId, organization.imsOrgId]);
+    const name = firstNonEmptyString([organization.name, id ? `Adobe IMS Org ${id}` : ""]);
+    if (!id && !name) {
+      return;
+    }
+
+    const normalizedId = normalizeOrganizationIdentifier(id);
+    const normalizedName = normalizeOrganizationIdentifier(name);
+    let existingKey = normalizedId ? idIndex.get(normalizedId) : "";
+    if (!existingKey && normalizedName) {
+      existingKey = nameIndex.get(normalizedName) || "";
+    }
+
+    if (!existingKey) {
+      const key = buildOrganizationOptionKey({ id, name });
+      if (!key) {
+        return;
+      }
+
+      const nextCandidate = {
+        key,
+        id,
+        tenantId: firstNonEmptyString([organization.tenantId, id]),
+        imsOrgId: firstNonEmptyString([organization.imsOrgId]),
+        name,
+        source,
+        sources: source ? [source] : [],
+        hinted:
+          activeIdentifiers.has(normalizedId) ||
+          activeIdentifiers.has(normalizedName) ||
+          (normalizedSelectedOrg && normalizedSelectedOrg === normalizeOrganizationIdentifier(organization.tenantId)),
+        label: buildOrganizationOptionLabel({ id, name }),
+        aepRegion: firstNonEmptyString([organization.aepRegion]),
+        hasAEP: organization.hasAEP === true,
+        aemInstances: Array.isArray(organization.aemInstances) ? organization.aemInstances : [],
+        clusterIndex: Number.isFinite(cluster?.index) ? cluster.index : -1,
+        clusterUserId: firstNonEmptyString([cluster?.userId]),
+        clusterUserType: firstNonEmptyString([cluster?.userType]),
+        clusterRestricted: cluster?.restricted === true,
+        consolidatedAccount: cluster?.consolidatedAccount === true
+      };
+
+      candidateMap.set(key, nextCandidate);
+      if (normalizedId) {
+        idIndex.set(normalizedId, key);
+      }
+      if (normalizedName) {
+        nameIndex.set(normalizedName, key);
+      }
+      return;
+    }
+
+    const existingCandidate = candidateMap.get(existingKey);
+    if (!existingCandidate) {
+      return;
+    }
+
+    existingCandidate.id = firstNonEmptyString([existingCandidate.id, id]);
+    existingCandidate.tenantId = firstNonEmptyString([existingCandidate.tenantId, organization.tenantId, existingCandidate.id]);
+    existingCandidate.imsOrgId = firstNonEmptyString([existingCandidate.imsOrgId, organization.imsOrgId]);
+    existingCandidate.name = choosePreferredOrganizationName(existingCandidate.name, name, existingCandidate.id || id);
+    existingCandidate.aepRegion = firstNonEmptyString([existingCandidate.aepRegion, organization.aepRegion]);
+    existingCandidate.hasAEP = existingCandidate.hasAEP === true || organization.hasAEP === true;
+    if ((!Array.isArray(existingCandidate.aemInstances) || existingCandidate.aemInstances.length === 0) && Array.isArray(organization.aemInstances)) {
+      existingCandidate.aemInstances = organization.aemInstances;
+    }
+    existingCandidate.clusterIndex = existingCandidate.clusterIndex >= 0 ? existingCandidate.clusterIndex : Number(cluster?.index || -1);
+    existingCandidate.clusterUserId = firstNonEmptyString([existingCandidate.clusterUserId, cluster?.userId]);
+    existingCandidate.clusterUserType = firstNonEmptyString([existingCandidate.clusterUserType, cluster?.userType]);
+    existingCandidate.clusterRestricted = existingCandidate.clusterRestricted === true || cluster?.restricted === true;
+    existingCandidate.consolidatedAccount = existingCandidate.consolidatedAccount === true || cluster?.consolidatedAccount === true;
+    existingCandidate.hinted =
+      existingCandidate.hinted === true ||
+      activeIdentifiers.has(normalizedId) ||
+      activeIdentifiers.has(normalizedName) ||
+      (normalizedSelectedOrg && normalizedSelectedOrg === normalizeOrganizationIdentifier(organization.tenantId));
+
+    if (source && !existingCandidate.sources.includes(source)) {
+      existingCandidate.sources.push(source);
+    }
+    if (!existingCandidate.source || rankOrganizationSource(source) < rankOrganizationSource(existingCandidate.source)) {
+      existingCandidate.source = source;
+    }
+
+    existingCandidate.label = buildOrganizationOptionLabel({
+      id: existingCandidate.id,
+      name: existingCandidate.name
+    });
+  };
+
+  (Array.isArray(clusters) ? clusters : []).forEach((cluster) => {
+    upsertOrganization(cluster?.owningOrg, `unifiedShell.imsExtendedAccountClusterData[${cluster?.index}].owningOrg`, cluster);
+    (Array.isArray(cluster?.orgs) ? cluster.orgs : []).forEach((organization, organizationIndex) => {
+      upsertOrganization(
+        organization,
+        `unifiedShell.imsExtendedAccountClusterData[${cluster?.index}].orgs[${organizationIndex}]`,
+        cluster
+      );
+    });
+  });
+
+  return Array.from(candidateMap.values());
+}
+
+function mergeDetectedOrganizationCandidates({
+  existingOrganizations = [],
+  additionalOrganizations = [],
+  activeOrganizationHint = null
+} = {}) {
+  const candidateMap = new Map();
+  const idIndex = new Map();
+  const nameIndex = new Map();
+  const activeIdentifiers = new Set(
+    [
+      firstNonEmptyString([activeOrganizationHint?.key]),
+      firstNonEmptyString([activeOrganizationHint?.id]),
+      firstNonEmptyString([activeOrganizationHint?.tenantId]),
+      firstNonEmptyString([activeOrganizationHint?.imsOrgId]),
+      firstNonEmptyString([activeOrganizationHint?.name])
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+  );
+
+  const upsert = (organization, defaultSource) => {
+    if (!organization || typeof organization !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([
+      organization.id,
+      organization.tenantId,
+      organization.imsOrgId,
+      organization.orgId,
+      organization.organizationId
+    ]);
+    const name = firstNonEmptyString([organization.name, organization.label, id ? `Adobe IMS Org ${id}` : ""]);
+    if (!id && !name) {
+      return;
+    }
+
+    const normalizedId = normalizeOrganizationIdentifier(id);
+    const normalizedName = normalizeOrganizationIdentifier(name);
+    let existingKey = normalizedId ? idIndex.get(normalizedId) : "";
+    if (!existingKey && normalizedName) {
+      existingKey = nameIndex.get(normalizedName) || "";
+    }
+
+    const source = firstNonEmptyString([
+      organization.source,
+      Array.isArray(organization.sources) ? organization.sources[0] : "",
+      defaultSource
+    ]);
+    const sources = [];
+    [source, ...(Array.isArray(organization.sources) ? organization.sources : [])].forEach((value) => {
+      const normalizedSource = String(value || "").trim();
+      if (normalizedSource && !sources.includes(normalizedSource)) {
+        sources.push(normalizedSource);
+      }
+    });
+
+    if (!existingKey) {
+      const key = firstNonEmptyString([organization.key, buildOrganizationOptionKey({ id, name })]);
+      if (!key) {
+        return;
+      }
+
+      const nextCandidate = {
+        key,
+        id,
+        tenantId: firstNonEmptyString([organization.tenantId, id]),
+        imsOrgId: firstNonEmptyString([organization.imsOrgId]),
+        name,
+        source,
+        sources,
+        hinted:
+          organization.hinted === true ||
+          activeIdentifiers.has(normalizedId) ||
+          activeIdentifiers.has(normalizedName) ||
+          activeIdentifiers.has(normalizeOrganizationIdentifier(organization.key)),
+        label: firstNonEmptyString([organization.label, buildOrganizationOptionLabel({ id, name })]),
+        aepRegion: firstNonEmptyString([organization.aepRegion]),
+        hasAEP: organization.hasAEP === true,
+        aemInstances: Array.isArray(organization.aemInstances) ? organization.aemInstances : [],
+        clusterIndex: Number.isFinite(organization.clusterIndex) ? organization.clusterIndex : -1,
+        clusterUserId: firstNonEmptyString([organization.clusterUserId, organization.userId]),
+        clusterUserType: firstNonEmptyString([organization.clusterUserType, organization.userType]),
+        clusterRestricted: organization.clusterRestricted === true || organization.restricted === true,
+        consolidatedAccount: organization.consolidatedAccount === true
+      };
+
+      candidateMap.set(key, nextCandidate);
+      if (normalizedId) {
+        idIndex.set(normalizedId, key);
+      }
+      if (normalizedName) {
+        nameIndex.set(normalizedName, key);
+      }
+      return;
+    }
+
+    const existingCandidate = candidateMap.get(existingKey);
+    if (!existingCandidate) {
+      return;
+    }
+
+    existingCandidate.id = firstNonEmptyString([existingCandidate.id, id]);
+    existingCandidate.tenantId = firstNonEmptyString([existingCandidate.tenantId, organization.tenantId, existingCandidate.id]);
+    existingCandidate.imsOrgId = firstNonEmptyString([existingCandidate.imsOrgId, organization.imsOrgId]);
+    existingCandidate.name = choosePreferredOrganizationName(existingCandidate.name, name, existingCandidate.id || id);
+    existingCandidate.aepRegion = firstNonEmptyString([existingCandidate.aepRegion, organization.aepRegion]);
+    existingCandidate.hasAEP = existingCandidate.hasAEP === true || organization.hasAEP === true;
+    if ((!Array.isArray(existingCandidate.aemInstances) || existingCandidate.aemInstances.length === 0) && Array.isArray(organization.aemInstances)) {
+      existingCandidate.aemInstances = organization.aemInstances;
+    }
+    existingCandidate.clusterIndex =
+      existingCandidate.clusterIndex >= 0 ? existingCandidate.clusterIndex : Number(organization.clusterIndex || -1);
+    existingCandidate.clusterUserId = firstNonEmptyString([existingCandidate.clusterUserId, organization.clusterUserId, organization.userId]);
+    existingCandidate.clusterUserType = firstNonEmptyString([existingCandidate.clusterUserType, organization.clusterUserType, organization.userType]);
+    existingCandidate.clusterRestricted =
+      existingCandidate.clusterRestricted === true ||
+      organization.clusterRestricted === true ||
+      organization.restricted === true;
+    existingCandidate.consolidatedAccount =
+      existingCandidate.consolidatedAccount === true || organization.consolidatedAccount === true;
+    existingCandidate.hinted =
+      existingCandidate.hinted === true ||
+      organization.hinted === true ||
+      activeIdentifiers.has(normalizedId) ||
+      activeIdentifiers.has(normalizedName) ||
+      activeIdentifiers.has(normalizeOrganizationIdentifier(organization.key));
+
+    sources.forEach((value) => {
+      if (!existingCandidate.sources.includes(value)) {
+        existingCandidate.sources.push(value);
+      }
+    });
+    if (!existingCandidate.source || rankOrganizationSource(source) < rankOrganizationSource(existingCandidate.source)) {
+      existingCandidate.source = source;
+    }
+
+    existingCandidate.label = buildOrganizationOptionLabel({
+      id: existingCandidate.id,
+      name: existingCandidate.name
+    });
+  };
+
+  (Array.isArray(existingOrganizations) ? existingOrganizations : []).forEach((organization, index) => {
+    upsert(organization, `session.detectedOrganizations[${index}]`);
+  });
+  (Array.isArray(additionalOrganizations) ? additionalOrganizations : []).forEach((organization, index) => {
+    upsert(organization, `unifiedShell.organizations[${index}]`);
+  });
+
+  return Array.from(candidateMap.values());
+}
+
+function extractConsoleErrorMessage(parsedPayload, rawText = "") {
+  if (parsedPayload && typeof parsedPayload === "object") {
+    const directMessage = firstNonEmptyString([
+      parsedPayload.message,
+      parsedPayload.error,
+      parsedPayload.error_description,
+      parsedPayload.detail,
+      parsedPayload.reason
+    ]);
+    if (directMessage) {
+      return directMessage;
+    }
+
+    if (Array.isArray(parsedPayload.errors)) {
+      const firstError = parsedPayload.errors.find((value) => value && typeof value === "object") || parsedPayload.errors[0];
+      if (firstError && typeof firstError === "object") {
+        return firstNonEmptyString([
+          firstError.message,
+          firstError.detail,
+          firstError.error,
+          firstError.reason
+        ]);
+      }
+      return firstNonEmptyString(parsedPayload.errors);
+    }
+  }
+
+  return firstNonEmptyString([String(rawText || "").trim()]);
+}
+
+function normalizeConsoleConfigurationVersion(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  if (value && typeof value === "object") {
+    return firstNonEmptyString([
+      value.configurationVersion,
+      value.version,
+      typeof value.value === "number" || typeof value.value === "string" ? String(value.value) : ""
+    ]);
+  }
+
+  return "";
+}
+
+function extractConsoleAuthorities(extendedProfile) {
+  if (!extendedProfile || typeof extendedProfile !== "object" || !Array.isArray(extendedProfile.grantedAuthorities)) {
+    return [];
+  }
+
+  return extendedProfile.grantedAuthorities
+    .map((authority) =>
+      firstNonEmptyString([
+        authority?.authority,
+        authority?.name,
+        typeof authority === "string" ? authority : ""
+      ])
+    )
+    .filter(Boolean);
+}
+
+function computeEntityReferenceId(reference = "") {
+  const normalizedReference = String(reference || "").trim();
+  if (!normalizedReference) {
+    return "";
+  }
+
+  const matches = normalizedReference.match(/@[^:]+:(.+)$/);
+  return firstNonEmptyString([matches?.[1], normalizedReference]);
+}
+
+function normalizeConsoleChannels(payload) {
+  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const seen = new Set();
+  const channels = [];
+
+  entities.forEach((entity, index) => {
+    const entityData = entity?.entityData && typeof entity.entityData === "object" ? entity.entityData : entity;
+    if (!entityData || typeof entityData !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
+    const key = firstNonEmptyString([id, entity?.key, `channel-${index + 1}`]);
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    const name = firstNonEmptyString([
+      entityData.displayName,
+      entityData.name,
+      entityData.label,
+      entityData.title,
+      id ? `Channel ${id}` : `Channel ${index + 1}`
+    ]);
+    channels.push({
+      key,
+      id,
+      name,
+      label:
+        id &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(id) &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(`Channel ${id}`)
+          ? `${name} | ${id}`
+          : name,
+      programmerId: computeEntityReferenceId(entityData.programmer),
+      integrationsCount:
+        entityData.integrations && typeof entityData.integrations === "object" ? Object.keys(entityData.integrations).length : 0,
+      raw: entityData
+    });
+  });
+
+  return channels.sort((left, right) => {
+    const leftLabel = firstNonEmptyString([left?.name, left?.label, left?.id]);
+    const rightLabel = firstNonEmptyString([right?.name, right?.label, right?.id]);
+    return leftLabel.localeCompare(rightLabel, undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
+function normalizeConsoleProgrammers(payload) {
+  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const seen = new Set();
+  const programmers = [];
+
+  entities.forEach((entity, index) => {
+    const entityData = entity?.entityData && typeof entity.entityData === "object" ? entity.entityData : entity;
+    if (!entityData || typeof entityData !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
+    const name = firstNonEmptyString([
+      entityData.displayName,
+      entityData.name,
+      entityData.label,
+      entityData.title,
+      id ? `Programmer ${id}` : `Programmer ${index + 1}`
+    ]);
+    const key = firstNonEmptyString([id, entity?.key, `programmer-${index + 1}`]);
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    programmers.push({
+      key,
+      id,
+      name,
+      label:
+        id &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(id) &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(`Programmer ${id}`)
+          ? `${name} | ${id}`
+          : name,
+      owner: firstNonEmptyString([
+        entityData.owner,
+        entityData.organizationName,
+        entityData.organizationId,
+        entityData.orgId
+      ]),
+      requestorIds: Array.isArray(entityData.serviceProviders)
+        ? entityData.serviceProviders.map((reference) => computeEntityReferenceId(reference)).filter(Boolean)
+        : [],
+      requestorCount: Array.isArray(entityData.serviceProviders) ? entityData.serviceProviders.filter(Boolean).length : 0,
+      raw: entityData
+    });
+  });
+
+  return programmers.sort((left, right) => {
+    const leftLabel = firstNonEmptyString([left?.name, left?.label, left?.id]);
+    const rightLabel = firstNonEmptyString([right?.name, right?.label, right?.id]);
+    return leftLabel.localeCompare(rightLabel, undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
+function normalizeConsoleRegisteredApplications(payload) {
+  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const seen = new Set();
+  const applications = [];
+
+  entities.forEach((entity, index) => {
+    const entityData = entity?.entityData && typeof entity.entityData === "object" ? entity.entityData : entity;
+    if (!entityData || typeof entityData !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
+    const key = firstNonEmptyString([id, entity?.key, `registered-application-${index + 1}`]);
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    const name = firstNonEmptyString([
+      entityData.displayName,
+      entityData.name,
+      entityData.clientId,
+      entityData.label,
+      entityData.title,
+      id ? `Registered Application ${id}` : `Registered Application ${index + 1}`
+    ]);
+    const clientId = firstNonEmptyString([entityData.clientId, entityData.client_id]);
+    const rawScopes = Array.isArray(entityData.scopes) ? entityData.scopes.filter(Boolean) : [];
+    const scopeLabels = [
+      "DEFAULT",
+      ...rawScopes.map(
+        (scope) =>
+          REGISTERED_APPLICATION_SCOPE_LABELS[String(scope || "").trim()] || String(scope || "").trim()
+      )
+    ].filter(Boolean);
+    const scopeSummary = scopeLabels.join(", ");
+    applications.push({
+      key,
+      id,
+      name,
+      label: scopeSummary ? `${name} | ${scopeSummary}` : name,
+      clientId,
+      scopes: rawScopes,
+      scopeLabels,
+      type: firstNonEmptyString([entityData.type, entityData.applicationType]),
+      raw: entityData
+    });
+  });
+
+  return applications.sort((left, right) => {
+    const leftLabel = firstNonEmptyString([left?.name, left?.label, left?.id]);
+    const rightLabel = firstNonEmptyString([right?.name, right?.label, right?.id]);
+    return leftLabel.localeCompare(rightLabel, undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
+function normalizeCmTenants(payload) {
+  const entities = Array.isArray(payload) ? payload : [];
+  const seen = new Set();
+  const tenants = [];
+
+  entities.forEach((entity, index) => {
+    if (!entity || typeof entity !== "object") {
+      return;
+    }
+
+    const payloadData = entity?.payload && typeof entity.payload === "object" ? entity.payload : {};
+    const id = firstNonEmptyString([entity.consoleId, payloadData.id, payloadData.name]);
+    const key = firstNonEmptyString([id, `cm-tenant-${index + 1}`]);
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    const name = firstNonEmptyString([payloadData.name, id, `CM Tenant ${index + 1}`]);
+    tenants.push({
+      key,
+      id,
+      name,
+      label:
+        id &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(id) &&
+        normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(`CM Tenant ${id}`)
+          ? `${name} | ${id}`
+          : name,
+      type: firstNonEmptyString([payloadData.type]),
+      ownerId: firstNonEmptyString([entity.consoleOwnerId]),
+      raw: entity
+    });
+  });
+
+  return tenants.sort((left, right) => {
+    const leftLabel = firstNonEmptyString([left?.name, left?.label, left?.id]);
+    const rightLabel = firstNonEmptyString([right?.name, right?.label, right?.id]);
+    return leftLabel.localeCompare(rightLabel, undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
 function render() {
   const session = state.session;
   const ready = state.ready === true;
@@ -821,9 +4145,9 @@ function render() {
   const hasRuntimeConfig = Boolean(firstNonEmptyString([state.runtimeConfig?.clientId]));
   const hasSession = Boolean(session?.accessToken);
   const profile = session?.profile && typeof session.profile === "object" ? session.profile : null;
-  const accessClaims = session?.accessTokenClaims || null;
   const idClaims = session?.idTokenClaims || null;
-  const organizations = flattenOrganizations(session?.organizations);
+  const authenticatedDataContext = buildAuthenticatedUserDataContext(session);
+  const detectedOrganizationContext = buildAuthenticatedOrganizationPickerContext(session);
   const expired = isExpired(session?.expiresAtMs || session?.expiresAt);
   const name =
     firstNonEmptyString([
@@ -848,19 +4172,15 @@ function render() {
       idClaims?.avatar
     ])
   );
-  const activeOrganization = resolveActiveOrganization({
-    profile,
-    accessClaims,
-    idClaims,
-    organizations
-  });
+  const activeOrganization = authenticatedDataContext.activeOrganization;
   const nextThemeStop = getNextThemeStop(activeTheme.stop);
   const isThemeProcessing = isThemeActivityActive();
   const initials = deriveInitials(name, email);
   const flow = session?.flow && typeof session.flow === "object" ? session.flow : {};
-  const isAvatarMenuVisible = hasSession && state.avatarMenuOpen;
+  const avatarMenuAvailable = hasSession && authenticatedDataContext.showHero === true;
+  const isAvatarMenuVisible = avatarMenuAvailable && state.avatarMenuOpen;
+  const statusLabel = getStatusLabel(hasSession, expired, flow);
 
-  buildBadge.textContent = BUILD_VERSION;
   themePickerButton.setAttribute(
     "aria-label",
     `Theme picker. Active theme ${activeTheme.stop} x ${activeAccent.label}. Click for colors. Shift-click switches to ${nextThemeStop}.`
@@ -873,24 +4193,36 @@ function render() {
   themePickerButtonSwatch.style.setProperty("--login-button-theme-swatch", `var(--spectrum-${activeAccent.tokenFamily}-visual-color)`);
   themePickerPopover.hidden = !state.themePickerOpen;
   syncThemeSwatchSelection(activeTheme);
-  setupView.hidden = !ready || hasRuntimeConfig;
-  loggedOutView.hidden = !ready || !hasRuntimeConfig || hasSession;
-  authenticatedView.hidden = !ready || !hasRuntimeConfig || !hasSession;
+  setupView.hidden = hasRuntimeConfig;
+  loggedOutView.hidden = !hasRuntimeConfig || hasSession;
+  authenticatedView.hidden = !hasRuntimeConfig || !hasSession;
   zipKeyDropSurface.classList.toggle("is-drag-active", state.dragActive);
   zipKeyDropOverlay.hidden = !state.dragActive;
 
-  statusBanner.textContent = getStatusLabel(hasSession, expired, flow);
   zipKeyStatus.textContent = state.configStatus.message || DEFAULT_CONFIG_STATUS_MESSAGE;
   zipKeyStatus.classList.toggle("is-error", state.configStatus.tone === "error");
   zipKeyStatus.classList.toggle("is-ok", state.configStatus.tone === "ok");
 
-  loginButton.disabled = state.busy || !hasRuntimeConfig;
+  loginButton.disabled = !hasRuntimeConfig;
+  loginButton.setAttribute("aria-busy", state.busy ? "true" : "false");
+  loginButton.classList.toggle("is-busy", state.busy);
   loginButtonLabel.textContent = state.busy
     ? state.silentAuthInFlight
       ? "REFRESHING…"
       : "SIGNING IN…"
     : "SIGN IN";
-  avatarMenuButton.disabled = !hasSession;
+  if (loginStatus) {
+    const nextLoginStatus = state.busy
+      ? state.silentAuthInFlight
+        ? "Refreshing the Adobe session in the background."
+        : "Completing Adobe sign-in. The session will appear here as soon as Adobe returns it."
+      : "";
+    loginStatus.textContent = state.busy
+      ? nextLoginStatus
+      : "";
+    loginStatus.hidden = !nextLoginStatus;
+  }
+  avatarMenuButton.disabled = !avatarMenuAvailable;
   avatarMenuButton.setAttribute("aria-expanded", isAvatarMenuVisible ? "true" : "false");
   avatarMenu.hidden = !isAvatarMenuVisible;
   loadZipKeyButton.disabled = state.busy;
@@ -912,12 +4244,46 @@ function render() {
   debugToggleStatus.hidden = !state.debugCopyStatus;
   debugToggleStatus.textContent = state.debugCopyStatus || DEFAULT_DEBUG_COPY_STATUS;
 
+  if (identityHeadlineLabel) {
+    identityHeadlineLabel.textContent = "Logged in Adobe user";
+  }
+  if (mainIdentityCopy) {
+    mainIdentityCopy.hidden = true;
+  }
   displayNameLink.textContent = name;
   displayNameLink.href = buildExperienceOrgUrl(activeOrganization);
   displayNameLink.title = buildExperienceOrgTitle(activeOrganization);
-  displayEmail.textContent = email;
-  selectedOrganizationName.textContent = activeOrganization.name;
-  selectedOrganizationMeta.textContent = activeOrganization.meta;
+  displayEmail.textContent = authenticatedDataContext.identityMeta || "Adobe account";
+  if (avatarMenuIdentityLabel) {
+    avatarMenuIdentityLabel.textContent = "Logged in Adobe user";
+  }
+  if (avatarMenuDisplayName) {
+    avatarMenuDisplayName.textContent = name;
+    avatarMenuDisplayName.href = buildExperienceOrgUrl(activeOrganization);
+    avatarMenuDisplayName.title = buildExperienceOrgTitle(activeOrganization);
+  }
+  if (avatarMenuDisplayMeta) {
+    avatarMenuDisplayMeta.textContent = authenticatedDataContext.identityMeta || "Adobe account";
+  }
+  if (organizationListSummary) {
+    organizationListSummary.textContent = authenticatedDataContext.cardSummary;
+  }
+  if (organizationPickerMeta) {
+    organizationPickerMeta.textContent = authenticatedDataContext.panelMeta;
+  }
+  if (organizationSwitchHelp) {
+    organizationSwitchHelp.textContent = detectedOrganizationContext.help;
+  }
+  syncAuthenticatedMainContentLayout(authenticatedDataContext);
+  syncAuthenticatedSummaryCards(authenticatedDataContext.summaryCards);
+  syncDetectedOrganizationPicker(detectedOrganizationContext);
+  syncCmuTokenRow(authenticatedDataContext);
+  syncCmTenantPicker(authenticatedDataContext);
+  syncProgrammerPicker(authenticatedDataContext);
+  syncRegisteredApplicationPicker(authenticatedDataContext);
+  syncRequestorPicker(authenticatedDataContext);
+  syncUserDataList(authenticatedDataContext.userDataEntries, authenticatedDataContext.userDataSummary);
+  syncAvatarMenuDetails(authenticatedDataContext, statusLabel);
 
   syncResolvedAvatar({ session, profile, idClaims });
   const displayAvatarUrl = firstNonEmptyString([
@@ -941,6 +4307,1066 @@ function render() {
   }
 
   setTextOutput(logOutput, composeDebugConsoleOutput({ ready, hasSession, flow, expired }));
+}
+
+function buildAuthenticatedUserDataContext(session = state.session) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const profile = currentSession?.profile && typeof currentSession.profile === "object" ? currentSession.profile : null;
+  const idClaims = currentSession?.idTokenClaims || null;
+  const imsSession = currentSession?.imsSession && typeof currentSession.imsSession === "object" ? currentSession.imsSession : {};
+  const organizationContext = buildOrganizationContextFromSession(currentSession);
+  const activeOrganization = organizationContext.activeOrganization;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const cmContext = currentSession?.cm && typeof currentSession.cm === "object" ? currentSession.cm : {};
+  const unifiedShellContext =
+    currentSession?.unifiedShell && typeof currentSession.unifiedShell === "object" ? currentSession.unifiedShell : {};
+  const programmerAccess = consoleContext?.programmerAccess || resolveProgrammerAccessContext(currentSession);
+  const adobePassWorkflowActive = programmerAccess.activeIsAdobePass === true;
+  const roles = Array.isArray(consoleContext.roles) ? consoleContext.roles.filter(Boolean) : [];
+  const channels = Array.isArray(consoleContext.channels) ? consoleContext.channels.filter(Boolean) : [];
+  const applicationsByProgrammer =
+    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
+      ? consoleContext.applicationsByProgrammer
+      : {};
+  const cmuTokenHeaderName = programmerAccess.eligible
+    ? firstNonEmptyString([cmContext.cmuTokenHeaderName, CMU_TOKEN_HEADER_NAME])
+    : "";
+  const cmuTokenHeaderValue = programmerAccess.eligible ? firstNonEmptyString([cmContext.cmuTokenHeaderValue]) : "";
+  const cmTenants = programmerAccess.eligible && Array.isArray(cmContext.tenants) ? cmContext.tenants : [];
+  const selectedCmTenant = programmerAccess.eligible ? resolveSelectedCmTenant(cmTenants, state.selectedCmTenantId) : null;
+  const programmers = programmerAccess.eligible && Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
+  const selectedProgrammer = programmerAccess.eligible ? resolveSelectedProgrammer(programmers, state.selectedProgrammerId) : null;
+  const registeredApplications = programmerAccess.eligible
+    ? resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer)
+    : [];
+  const selectedRegisteredApplication = programmerAccess.eligible
+    ? resolveSelectedRegisteredApplication(registeredApplications, state.selectedRegisteredApplicationId)
+    : null;
+  const requestors = programmerAccess.eligible ? deriveProgrammerRequestorOptions(channels, selectedProgrammer) : [];
+  const selectedRequestor = programmerAccess.eligible ? resolveSelectedRequestor(requestors, state.selectedRequestorId) : null;
+  const name =
+    firstNonEmptyString([
+      profile?.name,
+      profile?.displayName,
+      profile?.given_name && profile?.family_name ? `${profile.given_name} ${profile.family_name}` : "",
+      idClaims?.name
+    ]) || "Adobe user";
+  const email =
+    firstNonEmptyString([
+      profile?.email,
+      profile?.user_email,
+      profile?.emailAddress,
+      profile?.additional_info?.email,
+      idClaims?.email
+    ]) || "Email not returned";
+  const identityMeta = [
+    email,
+    firstNonEmptyString([activeOrganization.name]),
+    roles.length > 0 ? `${roles.length} console role${roles.length === 1 ? "" : "s"}` : ""
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const menuMeta = [
+    activeOrganization.id ? `Org ID ${activeOrganization.id}` : firstNonEmptyString([activeOrganization.meta]),
+    firstNonEmptyString([consoleContext.environmentLabel]),
+    programmerAccess.eligible ? (cmuTokenHeaderValue ? "CMU token ready" : "CMU token pending") : "",
+    programmerAccess.eligible && cmTenants.length > 0 ? `${cmTenants.length} CM tenant${cmTenants.length === 1 ? "" : "s"}` : "",
+    programmerAccess.eligible && programmers.length > 0 ? `${programmers.length} programmer${programmers.length === 1 ? "" : "s"}` : "",
+    programmerAccess.eligible && registeredApplications.length > 0
+      ? `${registeredApplications.length} registered app${registeredApplications.length === 1 ? "" : "s"}`
+      : "",
+    programmerAccess.eligible && requestors.length > 0 ? `${requestors.length} requestor${requestors.length === 1 ? "" : "s"}` : "",
+    !programmerAccess.eligible ? `Programmers require ${programmerAccess.requiredLabel}` : "",
+    roles.length > 0 ? roles.join(", ") : ""
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const panelMeta = adobePassWorkflowActive
+    ? [
+        consoleContext.transport ? "Adobe Pass console live" : "Adobe Pass console pending",
+        cmuTokenHeaderValue ? "CMU token ready" : "CMU token pending",
+        cmTenants.length > 0 ? `CM tenants ${cmTenants.length}` : firstNonEmptyString([cmContext.status, "CM pending"]),
+        programmers.length > 0 ? `Programmers ${programmers.length}` : firstNonEmptyString([consoleContext.status, "Programmers pending"]),
+        selectedProgrammer
+          ? state.programmerApplicationsLoadingFor === selectedProgrammer.id
+            ? "Registered Applications loading"
+            : `Registered Applications ${registeredApplications.length}`
+          : "Choose a programmer to load registered applications",
+        selectedProgrammer ? `Content providers ${requestors.length}` : "Choose a programmer to load content providers"
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    : "";
+
+  return {
+    activeOrganization,
+    consoleContext,
+    cmContext,
+    unifiedShellContext,
+    programmerAccess,
+    cmuTokenHeaderName,
+    cmuTokenHeaderValue,
+    selectedCmTenant,
+    selectedProgrammer,
+    selectedRegisteredApplication,
+    selectedRequestor,
+    cmuTokenVisible: programmerAccess.eligible,
+    cmTenantOptions: cmTenants,
+    cmTenantPickerVisible: programmerAccess.eligible,
+    programmerOptions: programmers,
+    programmerPickerVisible: programmerAccess.eligible,
+    registeredApplicationOptions: registeredApplications,
+    registeredApplicationPickerVisible: programmerAccess.eligible,
+    registeredApplicationLoading:
+      Boolean(selectedProgrammer) &&
+      normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id),
+    requestorOptions: requestors,
+    requestorPickerVisible: programmerAccess.eligible,
+    workflowMode: adobePassWorkflowActive ? "adobe-pass" : "org-switch-only",
+    showHero: adobePassWorkflowActive,
+    showOrganizationMeta: false,
+    identityMeta,
+    menuMeta: menuMeta || "Awaiting Adobe organization context.",
+    panelMeta: panelMeta || "Awaiting session.",
+    programmerHelp: buildProgrammerHelpText(consoleContext, programmers, programmerAccess),
+    cardSummary: "",
+    summaryCards: [],
+    userDataEntries: [],
+    userDataSummary: ""
+  };
+}
+
+function buildAuthenticatedSummaryCards({
+  currentSession,
+  profile,
+  name,
+  email,
+  imsSession,
+  activeOrganization,
+  organizationContext,
+  consoleContext,
+  cmContext,
+  unifiedShellContext,
+  programmerAccess,
+  roles,
+  channels,
+  cmuTokenHeaderName,
+  cmuTokenHeaderValue,
+  cmTenants,
+  selectedCmTenant,
+  requestors,
+  selectedRequestor,
+  selectedProgrammer,
+  programmers
+}) {
+  const accountType = firstNonEmptyString([
+    profile?.additional_info?.account_type,
+    profile?.account_type,
+    profile?.accountType
+  ]);
+  const jobFunction = firstNonEmptyString([
+    profile?.additional_info?.job_function,
+    profile?.job_function,
+    profile?.jobFunction
+  ]);
+
+  return [
+    {
+      title: "IMS Identity",
+      items: [
+        { label: "Name", value: name },
+        { label: "Email", value: email },
+        { label: "User ID", value: firstNonEmptyString([imsSession.userId, currentSession?.accessTokenClaims?.sub, currentSession?.idTokenClaims?.sub, "Not returned"]) },
+        { label: "Auth ID", value: firstNonEmptyString([imsSession.authId, "Not returned"]) }
+      ]
+    },
+    {
+      title: "Avatar",
+      items: [
+        { label: "Loaded as image", value: state.avatarAsset.displayUrl ? "Yes" : "No" },
+        { label: "Mode", value: firstNonEmptyString([state.avatarAsset.mode, "fallback"]) },
+        { label: "Source URL", value: firstNonEmptyString([state.avatarAsset.sourceUrl, currentSession?.avatarUrl, "Not returned"]) },
+        { label: "Display URL", value: firstNonEmptyString([state.avatarAsset.displayUrl, "Not returned"]) }
+      ]
+    },
+    {
+      title: "Scope + Org",
+      items: [
+        { label: "Requested scope", value: firstNonEmptyString([currentSession?.flow?.scope, IMS_SCOPE]) },
+        { label: "Granted scope", value: firstNonEmptyString([currentSession?.scope, "Not returned"]) },
+        { label: "Active org", value: firstNonEmptyString([activeOrganization.name, "Not resolved"]) },
+        { label: "Detected orgs", value: String(Array.isArray(organizationContext?.options) ? organizationContext.options.length : 0) }
+      ]
+    },
+    {
+      title: "Unified Shell",
+      items: [
+        { label: "Status", value: firstNonEmptyString([unifiedShellContext.status, "Not loaded"]) },
+        { label: "Selected org", value: firstNonEmptyString([unifiedShellContext.selectedOrg, "Not returned"]) },
+        { label: "Cluster rows", value: String(Number(unifiedShellContext.clusterCount || 0)) },
+        {
+          label: "Shell user profile",
+          value: unifiedShellContext.userProfile && typeof unifiedShellContext.userProfile === "object" ? "Returned" : "Not returned"
+        }
+      ]
+    },
+    {
+      title: "Profile Extras",
+      items: [
+        { label: "Account type", value: firstNonEmptyString([accountType, "Not returned"]) },
+        { label: "Job function", value: firstNonEmptyString([jobFunction, "Not returned"]) },
+        {
+          label: "Profile source",
+          value: currentSession?.profile ? "Merged userinfo + IMS profile" : "Not returned"
+        },
+        { label: "Session expires", value: firstNonEmptyString([currentSession?.expiresAt, "Not returned"]) }
+      ]
+    },
+    {
+      title: "Console Access",
+      items: [
+        { label: "Environment", value: firstNonEmptyString([consoleContext.environmentLabel, "Not loaded"]) },
+        { label: "Base URL", value: firstNonEmptyString([consoleContext.baseUrl, "Not loaded"]) },
+        { label: "Transport", value: firstNonEmptyString([consoleContext.transport, "Not loaded"]) },
+        { label: "Frame origin", value: firstNonEmptyString([consoleContext.pageContextOrigin, "Not returned"]) },
+        { label: "Config version", value: firstNonEmptyString([consoleContext.configurationVersion, "Unavailable"]) },
+        { label: "Roles", value: roles.length > 0 ? roles.join(", ") : "No roles returned" }
+      ]
+    },
+    {
+      title: "Channels + CM",
+      items: [
+        { label: "Adobe Pass channels", value: String(channels.length) },
+        {
+          label: "CMU token",
+          value: programmerAccess?.eligible ? (cmuTokenHeaderValue ? "Ready" : "Not returned") : "Hidden until Adobe Pass org is active"
+        },
+        {
+          label: "CMU header",
+          value: programmerAccess?.eligible ? firstNonEmptyString([cmuTokenHeaderName, CMU_TOKEN_HEADER_NAME]) : "Unavailable"
+        },
+        {
+          label: "CMU reports",
+          value: programmerAccess?.eligible ? firstNonEmptyString([cmContext?.reportsStatus, "Not verified"]) : "Unavailable"
+        },
+        { label: "CM tenants", value: programmerAccess?.eligible ? String(cmTenants.length) : "Hidden until Adobe Pass org is active" },
+        {
+          label: "Selected CM tenant",
+          value: programmerAccess?.eligible ? firstNonEmptyString([selectedCmTenant?.label, "Not selected"]) : "Unavailable"
+        },
+        { label: "CM status", value: programmerAccess?.eligible ? firstNonEmptyString([cmContext?.status, "Not loaded"]) : "Unavailable" }
+      ]
+    },
+    {
+      title: "Programmers",
+      items: [
+        {
+          label: "Availability",
+          value: programmerAccess?.eligible
+            ? "Adobe Pass org selected"
+            : firstNonEmptyString([programmerAccess?.requiredLabel, ADOBE_PASS_DISPLAY_NAME])
+        },
+        {
+          label: "Count",
+          value: programmerAccess?.eligible ? String(programmers.length) : "Hidden until Adobe Pass org is active"
+        },
+        {
+          label: "Selected",
+          value: programmerAccess?.eligible ? firstNonEmptyString([selectedProgrammer?.label, "Not selected"]) : "Unavailable"
+        },
+        {
+          label: "Programmer ID",
+          value: programmerAccess?.eligible ? firstNonEmptyString([selectedProgrammer?.id, "Not selected"]) : "Unavailable"
+        },
+        {
+          label: "RequestorIds",
+          value:
+            programmerAccess?.eligible && selectedProgrammer
+              ? String(requestors.length)
+              : programmerAccess?.eligible
+                ? "Choose a programmer first"
+                : "Unavailable"
+        },
+        {
+          label: "Selected RequestorId",
+          value:
+            programmerAccess?.eligible && selectedProgrammer
+              ? firstNonEmptyString([selectedRequestor?.label, "Not selected"])
+              : programmerAccess?.eligible
+                ? "Choose a programmer first"
+                : "Unavailable"
+        }
+      ]
+    }
+  ];
+}
+
+function buildProgrammerHelpText(consoleContext = {}, programmers = [], programmerAccess = {}) {
+  if (programmerAccess?.eligible !== true) {
+    return firstNonEmptyString([
+      programmerAccess?.reason,
+      `Switch Adobe Org to ${firstNonEmptyString([programmerAccess?.requiredLabel, ADOBE_PASS_DISPLAY_NAME])} to load programmers.`
+    ]);
+  }
+  if (consoleContext?.errors?.programmers) {
+    return `Programmers could not be loaded from ${firstNonEmptyString([consoleContext.baseUrl, "the configured console endpoint"])}: ${consoleContext.errors.programmers}`;
+  }
+  if (programmers.length === 0) {
+    return `No programmers were returned from ${firstNonEmptyString([consoleContext.baseUrl, "the configured console endpoint"])}.`;
+  }
+
+  return `Programmers load from ${firstNonEmptyString([consoleContext.baseUrl, "Adobe Pass console"])} using the live console contract: /user/extendedProfile, /config/latestActivatedConsoleConfigurationVersion, and /entity/Programmer?configurationVersion=<version>.`;
+}
+
+function resolveSelectedProgrammer(programmers = [], selectedProgrammerId = "") {
+  const options = Array.isArray(programmers) ? programmers : [];
+  const selectedId = String(selectedProgrammerId || "").trim();
+  return options.find((option) => option.key === selectedId || option.id === selectedId) || null;
+}
+
+function resolveSelectedCmTenant(cmTenants = [], selectedCmTenantId = "") {
+  const options = Array.isArray(cmTenants) ? cmTenants : [];
+  const selectedId = String(selectedCmTenantId || "").trim();
+  return options.find((option) => option.key === selectedId || option.id === selectedId) || options[0] || null;
+}
+
+function resolveSelectedProgrammerApplications(applicationsByProgrammer = {}, selectedProgrammer = null) {
+  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
+    return [];
+  }
+
+  const normalizedProgrammerId = String(firstNonEmptyString([selectedProgrammer.id, selectedProgrammer.key]) || "").trim();
+  if (!normalizedProgrammerId || !applicationsByProgrammer || typeof applicationsByProgrammer !== "object") {
+    return [];
+  }
+
+  return Array.isArray(applicationsByProgrammer[normalizedProgrammerId]) ? applicationsByProgrammer[normalizedProgrammerId] : [];
+}
+
+function resolveSelectedRegisteredApplication(applications = [], selectedApplicationId = "") {
+  const options = Array.isArray(applications) ? applications : [];
+  const selectedId = String(selectedApplicationId || "").trim();
+  return options.find((option) => option.key === selectedId || option.id === selectedId) || null;
+}
+
+function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = null) {
+  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
+    return [];
+  }
+
+  const normalizedProgrammerId = normalizeOrganizationIdentifier(selectedProgrammer.id);
+  const channelOptions = Array.isArray(channels) ? channels : [];
+  const rawServiceProviders = Array.isArray(selectedProgrammer?.raw?.serviceProviders)
+    ? selectedProgrammer.raw.serviceProviders
+    : Array.isArray(selectedProgrammer?.requestorIds)
+      ? selectedProgrammer.requestorIds
+      : [];
+  const referencedRequestorIds = new Set(
+    rawServiceProviders
+      .map((reference) => computeEntityReferenceId(reference))
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  const seen = new Set();
+  const requestors = [];
+
+  const pushRequestor = (option) => {
+    if (!option || typeof option !== "object") {
+      return;
+    }
+
+    const id = String(firstNonEmptyString([option.id, option.key]) || "").trim();
+    const key = String(firstNonEmptyString([option.key, id]) || "").trim();
+    if (!id || !key) {
+      return;
+    }
+
+    const dedupeKey = key.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    requestors.push({
+      key,
+      id,
+      name: firstNonEmptyString([option.name, option.label, id]) || id,
+      label: firstNonEmptyString([option.label, option.name, id]) || id,
+      programmerId: firstNonEmptyString([option.programmerId, selectedProgrammer.id]),
+      raw: option.raw || option
+    });
+  };
+
+  channelOptions.forEach((channel) => {
+    const channelProgrammerId = normalizeOrganizationIdentifier(channel?.programmerId);
+    const channelId = String(channel?.id || "").trim();
+    const matchesProgrammer =
+      normalizedProgrammerId && channelProgrammerId && channelProgrammerId === normalizedProgrammerId;
+    const matchesReference = channelId && referencedRequestorIds.has(channelId);
+    if (matchesProgrammer || matchesReference) {
+      pushRequestor(channel);
+    }
+  });
+
+  referencedRequestorIds.forEach((requestorId) => {
+    pushRequestor({
+      key: requestorId,
+      id: requestorId,
+      name: requestorId,
+      label: requestorId,
+      programmerId: selectedProgrammer.id,
+      raw: {
+        id: requestorId,
+        programmer: selectedProgrammer.id
+      }
+    });
+  });
+
+  return requestors.sort((left, right) =>
+    firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
+      firstNonEmptyString([right?.label, right?.name, right?.id]),
+      undefined,
+      { sensitivity: "base" }
+    )
+  );
+}
+
+function resolveSelectedRequestor(requestors = [], selectedRequestorId = "") {
+  const options = Array.isArray(requestors) ? requestors : [];
+  const selectedId = String(selectedRequestorId || "").trim();
+  return options.find((option) => option.key === selectedId || option.id === selectedId) || null;
+}
+
+function buildInspectableUserPayload({
+  currentSession,
+  profile,
+  imsSession,
+  activeOrganization,
+  organizationContext,
+  consoleContext,
+  cmContext,
+  unifiedShellContext,
+  programmerAccess,
+  roles,
+  channels,
+  cmuTokenHeaderName,
+  cmuTokenHeaderValue,
+  cmTenants,
+  selectedCmTenant,
+  requestors,
+  selectedRequestor,
+  selectedProgrammer
+}) {
+  return {
+    identity: {
+      name: firstNonEmptyString([profile?.name, profile?.displayName, currentSession?.idTokenClaims?.name]),
+      email: firstNonEmptyString([profile?.email, profile?.user_email, profile?.emailAddress, currentSession?.idTokenClaims?.email]),
+      avatarUrl: firstNonEmptyString([state.avatarAsset.sourceUrl, currentSession?.avatarUrl]),
+      activeOrganization: sanitizeInspectableOrganization(activeOrganization)
+    },
+    imsProfile: profile,
+    imsSession,
+    accessTokenClaims: currentSession?.accessTokenClaims || null,
+    idTokenClaims: currentSession?.idTokenClaims || null,
+    organizations: {
+      detected: Array.isArray(organizationContext?.options)
+        ? organizationContext.options.map((option) => sanitizeInspectableOrganization(option))
+        : []
+    },
+    avatar: {
+      mode: firstNonEmptyString([state.avatarAsset.mode]),
+      sourceUrl: firstNonEmptyString([state.avatarAsset.sourceUrl, currentSession?.avatarUrl]),
+      displayUrl: firstNonEmptyString([state.avatarAsset.displayUrl]),
+      loaded: Boolean(state.avatarAsset.displayUrl)
+    },
+    console: {
+      environmentId: firstNonEmptyString([consoleContext.environmentId]),
+      environmentLabel: firstNonEmptyString([consoleContext.environmentLabel]),
+      baseUrl: firstNonEmptyString([consoleContext.baseUrl]),
+      transport: firstNonEmptyString([consoleContext.transport]),
+      pageContextOrigin: firstNonEmptyString([consoleContext.pageContextOrigin]),
+      pageContextUrl: firstNonEmptyString([consoleContext.pageContextUrl]),
+      configurationVersion: firstNonEmptyString([consoleContext.configurationVersion]),
+      status: firstNonEmptyString([consoleContext.status]),
+      roles,
+      channels: Array.isArray(channels) ? channels.map((channel) => channel.raw || channel) : [],
+      extendedProfile: consoleContext.extendedProfile || null,
+      programmerAccess: programmerAccess || null,
+      selectedProgrammer: selectedProgrammer?.raw || selectedProgrammer || null
+    },
+    cm: {
+      baseUrl: firstNonEmptyString([cmContext.baseUrl]),
+      reportsBaseUrl: firstNonEmptyString([cmContext.reportsBaseUrl]),
+      checkTokenEndpoint: firstNonEmptyString([cmContext.checkTokenEndpoint]),
+      validateTokenEndpoint: firstNonEmptyString([cmContext.validateTokenEndpoint]),
+      status: firstNonEmptyString([cmContext.status]),
+      tenantAuthModel: firstNonEmptyString([cmContext.tenantAuthModel]),
+      cmuAuthModel: firstNonEmptyString([cmContext.cmuAuthModel]),
+      reportsStatus: firstNonEmptyString([cmContext.reportsStatus]),
+      cmuTokenSource: firstNonEmptyString([cmContext.cmuTokenSource]),
+      cmuTokenClientId: firstNonEmptyString([cmContext.cmuTokenClientId]),
+      cmuTokenScope: firstNonEmptyString([cmContext.cmuTokenScope]),
+      cmuTokenUserId: firstNonEmptyString([cmContext.cmuTokenUserId]),
+      cmuTokenExpiresAt: firstNonEmptyString([cmContext.cmuTokenExpiresAt]),
+      cmuTokenHeaderName: firstNonEmptyString([cmuTokenHeaderName]),
+      cmuTokenPresent: Boolean(cmuTokenHeaderValue),
+      selectedTenant: selectedCmTenant?.raw || selectedCmTenant || null,
+      tenants: Array.isArray(cmTenants) ? cmTenants.map((tenant) => tenant.raw || tenant) : [],
+      requestors: Array.isArray(requestors) ? requestors.map((requestor) => requestor.raw || requestor) : [],
+      selectedRequestor: selectedRequestor?.raw || selectedRequestor || null,
+      errors: cmContext.errors || null
+    },
+    unifiedShell: {
+      status: firstNonEmptyString([unifiedShellContext.status]),
+      selectedOrg: firstNonEmptyString([unifiedShellContext.selectedOrg]),
+      clusterCount: Number(unifiedShellContext.clusterCount || 0),
+      next: firstNonEmptyString([unifiedShellContext.next]),
+      timestamp: firstNonEmptyString([unifiedShellContext.timestamp]),
+      preferredLanguages: Array.isArray(unifiedShellContext.preferredLanguages)
+        ? unifiedShellContext.preferredLanguages.filter(Boolean)
+        : [],
+      organizations: Array.isArray(unifiedShellContext.organizations)
+        ? unifiedShellContext.organizations.map((organization) => sanitizeInspectableOrganization(organization))
+        : [],
+      userProfile: unifiedShellContext.userProfile || null,
+      errors: unifiedShellContext.errors || null
+    }
+  };
+}
+
+function sanitizeInspectableOrganization(organization = null) {
+  if (!organization || typeof organization !== "object") {
+    return null;
+  }
+
+  return {
+    id: firstNonEmptyString([organization.id]),
+    tenantId: firstNonEmptyString([organization.tenantId]),
+    imsOrgId: firstNonEmptyString([organization.imsOrgId]),
+    name: firstNonEmptyString([organization.name, organization.label]),
+    source: firstNonEmptyString([organization.source]),
+    sources: Array.isArray(organization.sources) ? organization.sources.filter(Boolean) : [],
+    hinted: organization.hinted === true,
+    aepRegion: firstNonEmptyString([organization.aepRegion]),
+    hasAEP: organization.hasAEP === true,
+    clusterUserId: firstNonEmptyString([organization.clusterUserId]),
+    clusterUserType: firstNonEmptyString([organization.clusterUserType]),
+    clusterRestricted: organization.clusterRestricted === true,
+    consolidatedAccount: organization.consolidatedAccount === true,
+    aemInstances: Array.isArray(organization.aemInstances) ? organization.aemInstances : []
+  };
+}
+
+function flattenInspectableEntries(value, path = "", entries = [], seen = new WeakSet()) {
+  if (value === undefined || value === null) {
+    return entries;
+  }
+
+  if (typeof value === "string") {
+    const normalized = redactSensitiveTokenValues(value).trim();
+    if (normalized) {
+      entries.push({
+        path,
+        value: normalized
+      });
+    }
+    return entries;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    entries.push({
+      path,
+      value: String(value)
+    });
+    return entries;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      flattenInspectableEntries(entry, `${path}[${index}]`, entries, seen);
+    });
+    return entries;
+  }
+
+  if (typeof value !== "object") {
+    return entries;
+  }
+
+  if (seen.has(value)) {
+    return entries;
+  }
+  seen.add(value);
+
+  Object.keys(value)
+    .sort((left, right) => left.localeCompare(right))
+    .forEach((key) => {
+      flattenInspectableEntries(value[key], path ? `${path}.${key}` : key, entries, seen);
+    });
+
+  return entries;
+}
+
+function renderSummaryCardsInto(
+  container,
+  cards = [],
+  emptyTitleText = "No post-login data yet",
+  emptyBodyText = "Sign in to enumerate the Adobe user and Adobe Pass console data."
+) {
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  if (!Array.isArray(cards) || cards.length === 0) {
+    const emptyCard = document.createElement("article");
+    emptyCard.className = "org-card org-card--empty data-card";
+    emptyCard.setAttribute("role", "listitem");
+
+    const emptyTitle = document.createElement("p");
+    emptyTitle.className = "spectrum-Heading spectrum-Heading--sizeS org-cardEmptyTitle";
+    emptyTitle.textContent = emptyTitleText || "No post-login data yet";
+
+    const emptyBody = document.createElement("p");
+    emptyBody.className = "spectrum-Body spectrum-Body--sizeS org-cardEmptyBody";
+    emptyBody.textContent = emptyBodyText || "Sign in to enumerate the Adobe user and Adobe Pass console data.";
+
+    emptyCard.append(emptyTitle, emptyBody);
+    container.appendChild(emptyCard);
+    return;
+  }
+
+  cards.forEach((card) => {
+    const cardElement = document.createElement("article");
+    cardElement.className = "org-card data-card";
+    cardElement.setAttribute("role", "listitem");
+
+    const title = document.createElement("p");
+    title.className = "spectrum-Heading spectrum-Heading--sizeS data-cardTitle";
+    title.textContent = firstNonEmptyString([card?.title, "Data group"]);
+
+    const items = document.createElement("div");
+    items.className = "data-cardItems";
+
+    (Array.isArray(card?.items) ? card.items : []).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "data-cardItem";
+
+      const label = document.createElement("p");
+      label.className = "spectrum-Detail spectrum-Detail--sizeM data-cardLabel";
+      label.textContent = firstNonEmptyString([item?.label, "Field"]);
+
+      const value = document.createElement("p");
+      value.className = "spectrum-Body spectrum-Body--sizeS data-cardValue";
+      value.textContent = firstNonEmptyString([item?.value, "Not returned"]);
+      value.title = value.textContent;
+
+      row.append(label, value);
+      items.appendChild(row);
+    });
+
+    cardElement.append(title, items);
+    container.appendChild(cardElement);
+  });
+}
+
+function syncAuthenticatedSummaryCards(cards = []) {
+  renderSummaryCardsInto(organizationCardList, cards);
+}
+
+function syncDetectedOrganizationPicker(organizationContext = {}) {
+  if (!detectedOrganizationPicker) {
+    return;
+  }
+
+  const options = Array.isArray(organizationContext?.options) ? organizationContext.options : [];
+  const activeOrganizationKey = String(organizationContext?.activeOrganization?.key || "").trim();
+  const switchableOptionCount = options.filter((option) => String(option?.key || "").trim() !== activeOrganizationKey).length;
+  const hasStoredSelection = options.some((option) => option.key === state.selectedOrganizationSwitchKey);
+  const nextValue = hasStoredSelection
+    ? state.selectedOrganizationSwitchKey
+    : firstNonEmptyString([organizationContext?.pickerValue, options[0]?.key, ORG_PICKER_UNAVAILABLE_VALUE]);
+  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+
+  if (detectedOrganizationPicker.dataset.optionsSignature !== signature) {
+    detectedOrganizationPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.key;
+        optionElement.textContent = option.label;
+        detectedOrganizationPicker.appendChild(optionElement);
+      });
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = ORG_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = firstNonEmptyString([
+        organizationContext?.emptyLabel,
+        "No other detected Adobe orgs"
+      ]);
+      detectedOrganizationPicker.appendChild(unavailableOption);
+    }
+
+    detectedOrganizationPicker.dataset.optionsSignature = signature;
+  }
+
+  if (!hasStoredSelection) {
+    state.selectedOrganizationSwitchKey = "";
+  }
+
+  detectedOrganizationPicker.value = nextValue;
+  detectedOrganizationPicker.disabled = state.busy || switchableOptionCount === 0;
+}
+
+function syncCmTenantPicker(authenticatedDataContext = {}) {
+  if (!cmTenantPicker) {
+    return;
+  }
+
+  const pickerVisible = authenticatedDataContext?.cmTenantPickerVisible === true;
+  if (cmTenantPickerSection) {
+    cmTenantPickerSection.hidden = !pickerVisible;
+  }
+  if (!pickerVisible) {
+    cmTenantPicker.disabled = true;
+    cmTenantPicker.value = CM_TENANT_PICKER_UNAVAILABLE_VALUE;
+    return;
+  }
+
+  const options = Array.isArray(authenticatedDataContext?.cmTenantOptions) ? authenticatedDataContext.cmTenantOptions : [];
+  const nextValue = firstNonEmptyString([
+    authenticatedDataContext?.selectedCmTenant?.key,
+    authenticatedDataContext?.selectedCmTenant?.id,
+    options.length > 0 ? CM_TENANT_PICKER_PLACEHOLDER_VALUE : CM_TENANT_PICKER_UNAVAILABLE_VALUE
+  ]);
+  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+
+  if (cmTenantPicker.dataset.optionsSignature !== signature) {
+    cmTenantPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      const placeholderOption = document.createElement("option");
+      placeholderOption.value = CM_TENANT_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = "Choose a CM tenant";
+      cmTenantPicker.appendChild(placeholderOption);
+
+      options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.key;
+        optionElement.textContent = option.label;
+        cmTenantPicker.appendChild(optionElement);
+      });
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = CM_TENANT_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = state.postLoginHydrationInFlight ? "Loading CM tenants…" : "No CM tenants returned";
+      cmTenantPicker.appendChild(unavailableOption);
+    }
+
+    cmTenantPicker.dataset.optionsSignature = signature;
+  }
+
+  cmTenantPicker.value = nextValue;
+  cmTenantPicker.disabled = state.busy || options.length === 0;
+}
+
+function syncCmuTokenRow(authenticatedDataContext = {}) {
+  if (!cmuTokenSection || !cmuTokenHeaderValue) {
+    return;
+  }
+
+  const rowVisible = authenticatedDataContext?.cmuTokenVisible === true;
+  cmuTokenSection.hidden = !rowVisible;
+  if (!rowVisible) {
+    cmuTokenHeaderValue.value = "";
+    cmuTokenHeaderValue.removeAttribute("title");
+    cmuTokenHeaderValue.classList.remove("is-empty");
+    return;
+  }
+
+  const nextHeaderValue = firstNonEmptyString([
+    normalizeBearerTokenValue(authenticatedDataContext?.cmuTokenHeaderValue),
+    state.postLoginHydrationInFlight ? "Loading…" : "Not returned"
+  ]);
+
+  cmuTokenHeaderValue.value = nextHeaderValue;
+  cmuTokenHeaderValue.title = nextHeaderValue;
+  cmuTokenHeaderValue.classList.toggle("is-empty", nextHeaderValue === "Not returned");
+}
+
+function syncProgrammerPicker(authenticatedDataContext = {}) {
+  if (!organizationPicker) {
+    return;
+  }
+
+  const pickerVisible = authenticatedDataContext?.programmerPickerVisible === true;
+  if (programmerPickerSection) {
+    programmerPickerSection.hidden = !pickerVisible;
+  }
+  if (!pickerVisible) {
+    organizationPicker.disabled = true;
+    organizationPicker.value = PROGRAMMER_PICKER_UNAVAILABLE_VALUE;
+    return;
+  }
+
+  const options = Array.isArray(authenticatedDataContext?.programmerOptions)
+    ? authenticatedDataContext.programmerOptions
+    : [];
+  const nextValue = firstNonEmptyString([
+    authenticatedDataContext?.selectedProgrammer?.key,
+    authenticatedDataContext?.selectedProgrammer?.id,
+    options.length > 0 ? PROGRAMMER_PICKER_PLACEHOLDER_VALUE : PROGRAMMER_PICKER_UNAVAILABLE_VALUE
+  ]);
+  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+
+  if (organizationPicker.dataset.optionsSignature !== signature) {
+    organizationPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      const placeholderOption = document.createElement("option");
+      placeholderOption.value = PROGRAMMER_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = "Choose a programmer";
+      organizationPicker.appendChild(placeholderOption);
+
+      options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.key;
+        optionElement.textContent = option.label;
+        organizationPicker.appendChild(optionElement);
+      });
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = PROGRAMMER_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = state.postLoginHydrationInFlight ? "Loading programmers…" : "No programmers returned";
+      organizationPicker.appendChild(unavailableOption);
+    }
+
+    organizationPicker.dataset.optionsSignature = signature;
+  }
+
+  organizationPicker.value = nextValue;
+  organizationPicker.disabled = state.busy || options.length === 0;
+}
+
+function syncRegisteredApplicationPicker(authenticatedDataContext = {}) {
+  if (!registeredApplicationPicker) {
+    return;
+  }
+
+  const pickerVisible = authenticatedDataContext?.registeredApplicationPickerVisible === true;
+  if (registeredApplicationPickerSection) {
+    registeredApplicationPickerSection.hidden = !pickerVisible;
+  }
+  if (!pickerVisible) {
+    registeredApplicationPicker.disabled = true;
+    registeredApplicationPicker.value = REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE;
+    return;
+  }
+
+  const options = Array.isArray(authenticatedDataContext?.registeredApplicationOptions)
+    ? authenticatedDataContext.registeredApplicationOptions
+    : [];
+  const nextValue = firstNonEmptyString([
+    authenticatedDataContext?.selectedRegisteredApplication?.key,
+    authenticatedDataContext?.selectedRegisteredApplication?.id,
+    options.length > 0 ? REGISTERED_APPLICATION_PICKER_PLACEHOLDER_VALUE : REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE
+  ]);
+  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+
+  if (registeredApplicationPicker.dataset.optionsSignature !== signature) {
+    registeredApplicationPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      const placeholderOption = document.createElement("option");
+      placeholderOption.value = REGISTERED_APPLICATION_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = "Choose a Registered Application";
+      registeredApplicationPicker.appendChild(placeholderOption);
+
+      options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.key;
+        optionElement.textContent = option.label;
+        registeredApplicationPicker.appendChild(optionElement);
+      });
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = authenticatedDataContext?.selectedProgrammer
+        ? authenticatedDataContext?.registeredApplicationLoading
+          ? "Loading Registered Applications…"
+          : "No Registered Applications returned"
+        : "Choose a Programmer first";
+      registeredApplicationPicker.appendChild(unavailableOption);
+    }
+
+    registeredApplicationPicker.dataset.optionsSignature = signature;
+  }
+
+  registeredApplicationPicker.value = nextValue;
+  registeredApplicationPicker.disabled =
+    state.busy ||
+    authenticatedDataContext?.registeredApplicationLoading === true ||
+    !authenticatedDataContext?.selectedProgrammer ||
+    options.length === 0;
+}
+
+function syncRequestorPicker(authenticatedDataContext = {}) {
+  if (!requestorPicker) {
+    return;
+  }
+
+  const pickerVisible = authenticatedDataContext?.requestorPickerVisible === true;
+  if (requestorPickerSection) {
+    requestorPickerSection.hidden = !pickerVisible;
+  }
+  if (!pickerVisible) {
+    requestorPicker.disabled = true;
+    requestorPicker.value = REQUESTOR_PICKER_UNAVAILABLE_VALUE;
+    return;
+  }
+
+  const options = Array.isArray(authenticatedDataContext?.requestorOptions) ? authenticatedDataContext.requestorOptions : [];
+  const nextValue = firstNonEmptyString([
+    authenticatedDataContext?.selectedRequestor?.key,
+    authenticatedDataContext?.selectedRequestor?.id,
+    options.length > 0 ? REQUESTOR_PICKER_PLACEHOLDER_VALUE : REQUESTOR_PICKER_UNAVAILABLE_VALUE
+  ]);
+  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+
+  if (requestorPicker.dataset.optionsSignature !== signature) {
+    requestorPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      const placeholderOption = document.createElement("option");
+      placeholderOption.value = REQUESTOR_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = "Choose a Content Provider";
+      requestorPicker.appendChild(placeholderOption);
+
+      options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.key;
+        optionElement.textContent = option.label;
+        requestorPicker.appendChild(optionElement);
+      });
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = REQUESTOR_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = authenticatedDataContext?.selectedProgrammer
+        ? "No Content Providers returned"
+        : "Choose a Programmer first";
+      requestorPicker.appendChild(unavailableOption);
+    }
+
+    requestorPicker.dataset.optionsSignature = signature;
+  }
+
+  requestorPicker.value = nextValue;
+  requestorPicker.disabled = state.busy || !authenticatedDataContext?.selectedProgrammer || options.length === 0;
+}
+
+function renderUserDataEntriesInto(container, entries = [], emptyMessage = "No enumerated user fields are available yet.") {
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    const emptyRow = document.createElement("div");
+    emptyRow.className = "user-dataRow user-dataRow--empty";
+    emptyRow.setAttribute("role", "listitem");
+
+    const emptyValue = document.createElement("p");
+    emptyValue.className = "spectrum-Body spectrum-Body--sizeS user-dataValue";
+    emptyValue.textContent = emptyMessage;
+
+    emptyRow.appendChild(emptyValue);
+    container.appendChild(emptyRow);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "user-dataRow";
+    row.setAttribute("role", "listitem");
+
+    const path = document.createElement("p");
+    path.className = "spectrum-Detail spectrum-Detail--sizeM user-dataPath";
+    path.textContent = firstNonEmptyString([entry?.path, "field"]);
+
+    const value = document.createElement("p");
+    value.className = "spectrum-Body spectrum-Body--sizeS user-dataValue";
+    value.textContent = firstNonEmptyString([entry?.value, ""]);
+    value.title = value.textContent;
+
+    row.append(path, value);
+    container.appendChild(row);
+  });
+}
+
+function syncUserDataList(entries = [], summaryText = "") {
+  if (userDataSummary) {
+    userDataSummary.textContent = summaryText || "Awaiting session.";
+  }
+  renderUserDataEntriesInto(userDataList, entries);
+}
+
+function syncAuthenticatedMainContentLayout(authenticatedDataContext = {}) {
+  const showHero = authenticatedDataContext?.showHero === true;
+  const showOrganizationMeta = authenticatedDataContext?.showOrganizationMeta === true;
+  const showDetectedOrganizationPicker = authenticatedDataContext?.workflowMode !== "adobe-pass";
+
+  if (authenticatedHero) {
+    authenticatedHero.hidden = !showHero;
+  }
+  if (detectedOrganizationPickerSection) {
+    detectedOrganizationPickerSection.hidden = !showDetectedOrganizationPicker;
+  }
+  if (organizationPickerMeta) {
+    organizationPickerMeta.hidden = !showOrganizationMeta;
+  }
+
+  if (authenticatedPanelHeader) {
+    authenticatedPanelHeader.hidden = true;
+  }
+  if (authenticatedSummarySection) {
+    authenticatedSummarySection.hidden = true;
+  }
+  if (authenticatedUserDataSection) {
+    authenticatedUserDataSection.hidden = true;
+  }
+}
+
+function syncAvatarMenuDetails(authenticatedDataContext = {}, statusLabel = "") {
+  if (avatarMenuOverview) {
+    avatarMenuOverview.textContent = [
+      firstNonEmptyString([authenticatedDataContext?.activeOrganization?.name, "Adobe organization unavailable"]),
+      `Build ${BUILD_VERSION}`,
+      statusLabel,
+      firstNonEmptyString([authenticatedDataContext?.panelMeta])
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  if (avatarMenuSummary) {
+    avatarMenuSummary.textContent = firstNonEmptyString([authenticatedDataContext?.cardSummary, "Awaiting session."]);
+  }
+  renderSummaryCardsInto(
+    avatarMenuCardList,
+    Array.isArray(authenticatedDataContext?.summaryCards) ? authenticatedDataContext.summaryCards : [],
+    "No enumerated summary cards yet",
+    "Login Button will mirror the authenticated summary cards here after Adobe user data is available."
+  );
+
+  if (avatarMenuUserDataSummary) {
+    avatarMenuUserDataSummary.textContent = firstNonEmptyString([authenticatedDataContext?.userDataSummary, "Awaiting session."]);
+  }
+  renderUserDataEntriesInto(
+    avatarMenuUserDataList,
+    Array.isArray(authenticatedDataContext?.userDataEntries) ? authenticatedDataContext.userDataEntries : []
+  );
 }
 
 function getStatusLabel(hasSession, expired, flow) {
@@ -999,9 +5425,11 @@ function getNextThemeStop(currentStop) {
 function isThemeActivityActive() {
   return Boolean(
     state.busy ||
+      state.postLoginHydrationInFlight ||
       state.silentAuthInFlight ||
       state.interactiveAuthInFlight ||
-      state.avatarAsset.loading
+      state.avatarAsset.loading ||
+      state.programmerApplicationsLoadingFor
   );
 }
 
@@ -1068,6 +5496,592 @@ function setTextOutput(element, value) {
   }
 
   element.textContent = nextValue;
+}
+
+function buildAuthenticatedOrganizationPickerContext(session = state.session) {
+  const detectedOrganizationContext = buildOrganizationContextFromSession(session);
+  const activeOrganization = detectedOrganizationContext.activeOrganization;
+  const allDetectedOptions = sortOrganizationOptionsForPicker(detectedOrganizationContext.options, activeOrganization);
+  const options = allDetectedOptions;
+  const verification =
+    session?.orgVerification && typeof session.orgVerification === "object" ? session.orgVerification : null;
+  const shouldOfferInteractiveSwitch = shouldOfferInteractiveOrgSwitch(
+    {
+      ...detectedOrganizationContext,
+      options,
+      allDetectedOptions
+    },
+    session
+  );
+  const otherOrgCount = allDetectedOptions.filter((option) => option.key !== activeOrganization.key).length;
+  const metaParts = [
+    activeOrganization.id ? `Current org ${activeOrganization.id}` : activeOrganization.meta,
+    verification?.status !== "not-applicable" ? verification?.message : "",
+    otherOrgCount > 1
+      ? `${otherOrgCount} other Adobe orgs detected.`
+      : otherOrgCount === 1
+        ? "1 other Adobe org detected."
+        : "No other detected Adobe orgs."
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return {
+    mode: "detected",
+    options,
+    allDetectedOptions,
+    activeOrganization,
+    displayOrganization: activeOrganization,
+    experienceOrganization: activeOrganization,
+    meta: Array.from(new Set(metaParts)).join(" | ") || activeOrganization.meta,
+    listSummary: buildOrganizationListSummary({
+      activeOrganization,
+      allDetectedOptions
+    }),
+    help: buildOrganizationPickerHelpText(
+      {
+        ...detectedOrganizationContext,
+        options,
+        allDetectedOptions
+      },
+      verification,
+      session
+    ),
+    shouldOfferInteractiveSwitch,
+    emptyLabel: "No detected Adobe orgs",
+    pickerValue: firstNonEmptyString([activeOrganization.key, options[0]?.key, ORG_PICKER_UNAVAILABLE_VALUE])
+  };
+}
+
+function buildOrganizationListSummary({ activeOrganization = null, allDetectedOptions = [] } = {}) {
+  const totalDetectedCount = Array.isArray(allDetectedOptions) ? allDetectedOptions.length : 0;
+  if (totalDetectedCount === 0) {
+    return "Adobe did not return a detected org list for this session.";
+  }
+
+  const activeKey = String(activeOrganization?.key || "").trim();
+  const otherOrgCount = allDetectedOptions.filter((option) => String(option?.key || "").trim() !== activeKey).length;
+  if (otherOrgCount === 0) {
+    return "Showing the current Adobe org only.";
+  }
+
+  return `Showing ${totalDetectedCount} detected Adobe orgs, including ${otherOrgCount} other org${otherOrgCount === 1 ? "" : "s"}.`;
+}
+
+function sortOrganizationOptionsForPicker(options = [], activeOrganization = null) {
+  const activeKey = String(activeOrganization?.key || "").trim();
+  return [...(Array.isArray(options) ? options : [])].sort((left, right) => {
+    const leftKey = String(left?.key || "").trim();
+    const rightKey = String(right?.key || "").trim();
+    if (leftKey === activeKey && rightKey !== activeKey) {
+      return -1;
+    }
+    if (rightKey === activeKey && leftKey !== activeKey) {
+      return 1;
+    }
+
+    return String(left?.label || left?.name || "").localeCompare(String(right?.label || right?.name || ""), undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
+function normalizeRequestedTargetOrganization(targetOrganization = null) {
+  if (!targetOrganization || typeof targetOrganization !== "object") {
+    return null;
+  }
+
+  const tenantId = firstNonEmptyString([
+    targetOrganization.tenantId,
+    targetOrganization.tenant_id,
+    extractTenantOrganizationId(targetOrganization)
+  ]);
+  const imsOrgId = firstNonEmptyString([
+    targetOrganization.imsOrgId,
+    targetOrganization.ims_org_id,
+    extractImsOrganizationId(targetOrganization)
+  ]);
+  const id = firstNonEmptyString([
+    targetOrganization.id,
+    targetOrganization.orgId,
+    targetOrganization.organizationId,
+    tenantId,
+    imsOrgId,
+    extractOrganizationId(targetOrganization)
+  ]);
+  const name =
+    firstNonEmptyString([
+      targetOrganization.name,
+      targetOrganization.orgName,
+      targetOrganization.organizationName,
+      targetOrganization.label,
+      extractOrganizationName(targetOrganization),
+      id ? `Adobe IMS Org ${id}` : ""
+    ]) || "Adobe organization";
+  const label = firstNonEmptyString([
+    targetOrganization.label,
+    buildOrganizationOptionLabel({ id, name }),
+    name
+  ]);
+  const key = firstNonEmptyString([targetOrganization.key, buildOrganizationOptionKey({ id, name: label })]);
+  if (!key) {
+    return null;
+  }
+
+  return {
+    key,
+    id,
+    tenantId: firstNonEmptyString([tenantId, id && !/@adobeorg$/i.test(id) ? id : ""]),
+    imsOrgId: firstNonEmptyString([imsOrgId, /@adobeorg$/i.test(id) ? id : ""]),
+    name,
+    label,
+    userId: firstNonEmptyString([targetOrganization.userId, targetOrganization.clusterUserId]),
+    clusterUserId: firstNonEmptyString([targetOrganization.clusterUserId, targetOrganization.userId]),
+    clusterUserType: firstNonEmptyString([targetOrganization.clusterUserType, targetOrganization.userType]),
+    hinted: targetOrganization.hinted === true,
+    isAdobePass: isAdobePassOrganization(targetOrganization),
+    source: firstNonEmptyString([targetOrganization.source, "session-picker"])
+  };
+}
+
+function attachTargetOrganizationToSession(session, targetOrganization) {
+  const nextSession = session && typeof session === "object" ? { ...session } : {};
+  const normalizedTargetOrganization = normalizeRequestedTargetOrganization(targetOrganization);
+  if (normalizedTargetOrganization) {
+    nextSession.targetOrganization = normalizedTargetOrganization;
+  } else {
+    delete nextSession.targetOrganization;
+  }
+  return nextSession;
+}
+
+function verifyTargetOrganizationSelection(session, targetOrganization) {
+  const normalizedTargetOrganization = normalizeRequestedTargetOrganization(targetOrganization);
+  if (!normalizedTargetOrganization?.key) {
+    return {
+      status: "not-applicable",
+      source: "n/a",
+      expectedOrgId: "",
+      expectedOrgKey: "",
+      verifiedOrgId: "",
+      resolvedOrgId: "",
+      resolvedOrgKey: "",
+      message: "No Adobe IMS org switch was requested before sign-in."
+    };
+  }
+
+  const requestedLabel = firstNonEmptyString([
+    normalizedTargetOrganization.label,
+    normalizedTargetOrganization.name,
+    normalizedTargetOrganization.id,
+    "selected Adobe IMS org"
+  ]);
+  const expectedOrgId = normalizeOrganizationIdentifier(
+    firstNonEmptyString([
+      normalizedTargetOrganization.imsOrgId,
+      normalizedTargetOrganization.tenantId,
+      normalizedTargetOrganization.id
+    ])
+  );
+  const expectedOrgKey = String(normalizedTargetOrganization.key || "").trim();
+  const expectedOrgIdentifiers = collectOrganizationIdentifierSet(normalizedTargetOrganization);
+  const verifiedClaim = extractVerifiedCustomerOrganizationClaim(session);
+  const resolvedActiveOrganization = buildOrganizationContextFromSession(session).activeOrganization;
+  const resolvedOrgIdentifiers = collectOrganizationIdentifierSet(resolvedActiveOrganization);
+  const resolvedOrgId = normalizeOrganizationIdentifier(resolvedActiveOrganization.id);
+  const resolvedOrgKey = String(resolvedActiveOrganization.key || "").trim();
+
+  if (verifiedClaim.id) {
+    const verifiedMatch = expectedOrgIdentifiers.has(verifiedClaim.id);
+    return {
+      status: verifiedMatch ? "verified-match" : "verified-mismatch",
+      source: verifiedClaim.source,
+      expectedOrgId,
+      expectedOrgKey,
+      verifiedOrgId: verifiedClaim.id,
+      resolvedOrgId,
+      resolvedOrgKey,
+      message:
+        verifiedMatch
+          ? `Adobe returned the requested Adobe IMS org ${requestedLabel} via ${verifiedClaim.source}.`
+          : `Adobe returned verified org ${firstNonEmptyString([verifiedClaim.rawId, verifiedClaim.id])} via ${verifiedClaim.source} instead of ${requestedLabel}.`
+    };
+  }
+
+  if (resolvedOrgKey) {
+    const resolvedMatch =
+      resolvedOrgIdentifiers.size > 0 && hasIdentifierIntersection(expectedOrgIdentifiers, resolvedOrgIdentifiers);
+    return {
+      status: resolvedMatch ? "derived-match" : "derived-mismatch",
+      source: "resolved-payload",
+      expectedOrgId,
+      expectedOrgKey,
+      verifiedOrgId: "",
+      resolvedOrgId,
+      resolvedOrgKey,
+      message:
+        resolvedMatch
+          ? `Resolved the requested Adobe IMS org ${requestedLabel} from the returned payloads.`
+          : `Adobe returned ${firstNonEmptyString([resolvedActiveOrganization.label, resolvedActiveOrganization.name, resolvedActiveOrganization.id, "another Adobe IMS org"])} instead of ${requestedLabel}.`
+    };
+  }
+
+  return {
+    status: "no-org-claim",
+    source: "unavailable",
+    expectedOrgId,
+    expectedOrgKey,
+    verifiedOrgId: "",
+    resolvedOrgId: "",
+    resolvedOrgKey: "",
+    message: `Adobe did not return enough org data to verify the requested Adobe IMS org ${requestedLabel}.`
+  };
+}
+
+function extractVerifiedCustomerOrganizationClaim(session) {
+  const idTokenClaims = session?.idTokenClaims && typeof session.idTokenClaims === "object" ? session.idTokenClaims : {};
+  const accessTokenClaims = session?.accessTokenClaims && typeof session.accessTokenClaims === "object" ? session.accessTokenClaims : {};
+  const candidatePairs = [
+    { value: idTokenClaims.org_id, source: "id_token.org_id" },
+    { value: idTokenClaims.orgId, source: "id_token.orgId" },
+    { value: idTokenClaims.organizationId, source: "id_token.organizationId" },
+    { value: idTokenClaims.organization_id, source: "id_token.organization_id" },
+    { value: accessTokenClaims.org_id, source: "access_token.org_id" },
+    { value: accessTokenClaims.orgId, source: "access_token.orgId" },
+    { value: accessTokenClaims.organizationId, source: "access_token.organizationId" },
+    { value: accessTokenClaims.organization_id, source: "access_token.organization_id" }
+  ];
+
+  for (const pair of candidatePairs) {
+    const normalized = normalizeOrganizationIdentifier(pair.value);
+    if (normalized) {
+      return {
+        id: normalized,
+        rawId: String(pair.value || "").trim(),
+        source: pair.source
+      };
+    }
+  }
+
+  return {
+    id: "",
+    rawId: "",
+    source: ""
+  };
+}
+
+function isSuccessfulTargetOrganizationVerification(verification = null) {
+  const status = String(verification?.status || "").trim();
+  return status === "verified-match" || status === "derived-match";
+}
+
+function syncDetectedOrganizationList(organizationContext) {
+  if (!organizationCardList || !organizationListSummary || !organizationReauthButton) {
+    return;
+  }
+
+  const activeOrganization = organizationContext?.activeOrganization || null;
+  const allDetectedOptions = Array.isArray(organizationContext?.allDetectedOptions) ? organizationContext.allDetectedOptions : [];
+  const switchableKeys = new Set(
+    (Array.isArray(organizationContext?.options) ? organizationContext.options : []).map((option) => String(option?.key || "").trim())
+  );
+  const activeKey = String(activeOrganization?.key || "").trim();
+
+  organizationListSummary.textContent = firstNonEmptyString([
+    organizationContext?.listSummary,
+    "Adobe did not return a detected org list for this session."
+  ]);
+  organizationCardList.innerHTML = "";
+
+  if (allDetectedOptions.length === 0) {
+    const emptyCard = document.createElement("article");
+    emptyCard.className = "org-card org-card--empty";
+    emptyCard.setAttribute("role", "listitem");
+
+    const emptyTitle = document.createElement("p");
+    emptyTitle.className = "spectrum-Heading spectrum-Heading--sizeS org-cardEmptyTitle";
+    emptyTitle.textContent = "No detected orgs returned";
+
+    const emptyBody = document.createElement("p");
+    emptyBody.className = "spectrum-Body spectrum-Body--sizeS org-cardEmptyBody";
+    emptyBody.textContent = firstNonEmptyString([
+      organizationContext?.help,
+      "Adobe did not return any org memberships in the current session payloads."
+    ]);
+
+    emptyCard.append(emptyTitle, emptyBody);
+    organizationCardList.appendChild(emptyCard);
+  } else {
+    allDetectedOptions.forEach((option) => {
+      const isActive = String(option?.key || "").trim() === activeKey;
+      const isSwitchable = switchableKeys.has(String(option?.key || "").trim());
+      const card = document.createElement("article");
+      card.className = `org-card${isActive ? " is-active" : ""}`;
+      card.setAttribute("role", "listitem");
+      if (isActive) {
+        card.setAttribute("aria-current", "true");
+      }
+
+      const header = document.createElement("div");
+      header.className = "org-cardHeader";
+
+      const identity = document.createElement("div");
+      identity.className = "org-cardIdentity";
+
+      const name = document.createElement("p");
+      name.className = "spectrum-Heading spectrum-Heading--sizeS org-cardName";
+      name.textContent = firstNonEmptyString([option?.name, option?.label, "Adobe organization"]);
+
+      const caption = document.createElement("p");
+      caption.className = "spectrum-Body spectrum-Body--sizeS org-cardCaption";
+      caption.textContent = isActive ? "Active in the current Adobe IMS session." : "Detected in Adobe session data.";
+
+      identity.append(name, caption);
+
+      const status = document.createElement("span");
+      status.className = `spectrum-Detail spectrum-Detail--sizeS org-cardStatus${isActive ? " is-active" : ""}`;
+      status.textContent = isActive ? "Current org" : "Detected org";
+
+      header.append(identity, status);
+
+      const meta = document.createElement("div");
+      meta.className = "org-cardMeta";
+
+      const idField = document.createElement("div");
+      idField.className = "org-cardField";
+
+      const idLabel = document.createElement("p");
+      idLabel.className = "spectrum-Detail spectrum-Detail--sizeM org-cardFieldLabel";
+      idLabel.textContent = "Org ID";
+
+      const idValue = document.createElement("p");
+      idValue.className = "spectrum-Body spectrum-Body--sizeS org-cardFieldValue";
+      idValue.textContent = firstNonEmptyString([option?.id, "Not returned"]);
+
+      idField.append(idLabel, idValue);
+
+      const sourceField = document.createElement("div");
+      sourceField.className = "org-cardField";
+
+      const sourceLabel = document.createElement("p");
+      sourceLabel.className = "spectrum-Detail spectrum-Detail--sizeM org-cardFieldLabel";
+      sourceLabel.textContent = "Detected from";
+
+      const sourceValue = document.createElement("p");
+      sourceValue.className = "spectrum-Body spectrum-Body--sizeS org-cardFieldValue";
+      const sourceLabels = normalizeOrganizationSourceLabels(option);
+      sourceValue.textContent = sourceLabels[0] || "Unavailable";
+      if (sourceLabels.length > 1) {
+        sourceValue.textContent = `${sourceLabels[0]} + ${sourceLabels.length - 1} more`;
+        sourceValue.title = sourceLabels.join(" | ");
+      }
+
+      sourceField.append(sourceLabel, sourceValue);
+      meta.append(idField, sourceField);
+      card.append(header, meta);
+
+      if (!isActive && isSwitchable) {
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM org-cardAction";
+        action.disabled = state.busy;
+
+        const label = document.createElement("span");
+        label.className = "spectrum-Button-label";
+        label.textContent = "SWITCH TO THIS ORG";
+
+        action.appendChild(label);
+        action.addEventListener("click", async () => {
+          await requestOrganizationSwitch(option.key);
+        });
+        card.appendChild(action);
+      }
+
+      organizationCardList.appendChild(card);
+    });
+  }
+
+  organizationReauthButton.hidden = !Boolean(organizationContext?.shouldOfferInteractiveSwitch);
+  organizationReauthButton.disabled = state.busy || !state.session?.accessToken;
+}
+
+function normalizeOrganizationSourceLabels(option = {}) {
+  const rawSources = Array.isArray(option?.sources) ? option.sources : [];
+  const primarySource = firstNonEmptyString([option?.source]);
+  const orderedSources = [];
+
+  [primarySource, ...rawSources].forEach((source) => {
+    const normalized = String(source || "").trim();
+    if (normalized && !orderedSources.includes(normalized)) {
+      orderedSources.push(normalized);
+    }
+  });
+
+  return orderedSources.map((source) => formatOrganizationSourceLabel(source));
+}
+
+function formatOrganizationSourceLabel(source = "") {
+  const normalizedSource = String(source || "").trim();
+  if (!normalizedSource) {
+    return "";
+  }
+  if (/^unifiedShell\.imsExtendedAccountClusterData\[\d+\]\.owningOrg/.test(normalizedSource)) {
+    return "Unified Shell owning org";
+  }
+  if (/^unifiedShell\.imsExtendedAccountClusterData\[\d+\]\.orgs\[\d+\]/.test(normalizedSource)) {
+    return "Unified Shell org cluster";
+  }
+  if (/^unifiedShell\.organizations\[\d+\]/.test(normalizedSource)) {
+    return "Unified Shell organizations";
+  }
+  if (/^organizations\[\d+\]/.test(normalizedSource)) {
+    return "Adobe organizations endpoint";
+  }
+  if (/^profile\.additional_info\.projectedProductContext/i.test(normalizedSource)) {
+    return "IMS profile projected product context";
+  }
+  if (/^profile\.projectedProductContext/i.test(normalizedSource)) {
+    return "Profile projected product context";
+  }
+  if (/^profile\.additional_info/i.test(normalizedSource)) {
+    return "IMS profile additional info";
+  }
+  if (/^profile/i.test(normalizedSource)) {
+    return "Adobe profile";
+  }
+  if (/^idClaims/i.test(normalizedSource)) {
+    return "ID token claims";
+  }
+  if (/^accessClaims/i.test(normalizedSource)) {
+    return "Access token claims";
+  }
+  if (/^session\.organizations\[\d+\]/.test(normalizedSource)) {
+    return "Stored session organizations";
+  }
+  if (/^session\.detectedOrganizations\[\d+\]/.test(normalizedSource)) {
+    return "Stored detected organizations";
+  }
+
+  return normalizedSource;
+}
+
+function syncOrganizationPicker(organizationContext) {
+  if (!organizationPicker) {
+    return;
+  }
+
+  const options = Array.isArray(organizationContext?.options) ? organizationContext.options : [];
+  const shouldOfferInteractiveSwitch = organizationContext?.shouldOfferInteractiveSwitch === true;
+  const optionsSignature = buildOrganizationPickerOptionsSignature({
+    mode: organizationContext?.mode,
+    options,
+    includeUnavailablePlaceholder: options.length === 0,
+    includeInteractiveSwitch: shouldOfferInteractiveSwitch
+  });
+  const nextValue = firstNonEmptyString([
+    organizationContext?.pickerValue,
+    options.length > 0 ? ORG_PICKER_PLACEHOLDER_VALUE : "",
+    ORG_PICKER_UNAVAILABLE_VALUE
+  ]);
+
+  if (organizationPicker.dataset.optionsSignature !== optionsSignature) {
+    organizationPicker.innerHTML = "";
+
+    if (options.length > 0) {
+      const placeholderOption = document.createElement("option");
+      placeholderOption.value = ORG_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = firstNonEmptyString([organizationContext?.placeholderLabel, "Choose another Adobe org"]);
+      organizationPicker.appendChild(placeholderOption);
+    } else {
+      const unavailableOption = document.createElement("option");
+      unavailableOption.value = ORG_PICKER_UNAVAILABLE_VALUE;
+      unavailableOption.textContent = firstNonEmptyString([organizationContext?.emptyLabel, "No other detected Adobe orgs"]);
+      organizationPicker.appendChild(unavailableOption);
+    }
+
+    options.forEach((option) => {
+      const optionElement = document.createElement("option");
+      optionElement.value = option.key;
+      optionElement.textContent = option.label;
+      organizationPicker.appendChild(optionElement);
+    });
+
+    if (shouldOfferInteractiveSwitch) {
+      const reauthOption = document.createElement("option");
+      reauthOption.value = ORG_PICKER_REAUTH_VALUE;
+      reauthOption.textContent = "Sign in again to discover more Adobe orgs";
+      organizationPicker.appendChild(reauthOption);
+    }
+
+    organizationPicker.dataset.optionsSignature = optionsSignature;
+  }
+
+  organizationPicker.value = nextValue;
+  organizationPicker.disabled = state.busy || (options.length === 0 && !shouldOfferInteractiveSwitch);
+}
+
+function buildOrganizationPickerOptionsSignature({
+  mode = "detected",
+  options = [],
+  includeUnavailablePlaceholder = false,
+  includeInteractiveSwitch = false
+} = {}) {
+  if (!Array.isArray(options) || options.length === 0) {
+    return `${mode}|unavailable=${includeUnavailablePlaceholder ? "yes" : "no"}|interactive=${includeInteractiveSwitch ? "yes" : "no"}|empty`;
+  }
+
+  return `${mode}|unavailable=${includeUnavailablePlaceholder ? "yes" : "no"}|interactive=${includeInteractiveSwitch ? "yes" : "no"}|${options.map((option) => `${option.key}:${option.label}`).join("|")}`;
+}
+
+async function requestOrganizationSwitch(nextKey = "") {
+  const normalizedKey = String(nextKey || "").trim();
+  if (!normalizedKey || normalizedKey === ORG_PICKER_PLACEHOLDER_VALUE || state.busy) {
+    render();
+    return;
+  }
+
+  const organizationPickerContext = buildAuthenticatedOrganizationPickerContext(state.session);
+  const nextOrganization = organizationPickerContext.options.find((option) => option.key === normalizedKey) || null;
+  if (!nextOrganization) {
+    render();
+    return;
+  }
+
+  if (nextOrganization.key === organizationPickerContext.activeOrganization.key) {
+    render();
+    return;
+  }
+
+  log(
+    `Switching Adobe IMS org to ${nextOrganization.label}. Login Button will reset the current Adobe sign-in session, reopen Adobe sign-in, and verify the returned org.`
+  );
+  await switchAdobeOrganization(nextOrganization);
+}
+
+async function switchAdobeOrganization(targetOrganization = null) {
+  if (!state.session?.accessToken || state.busy) {
+    return;
+  }
+
+  await login({
+    forceInteractive: true,
+    forceBrowserLogout: true,
+    prompt: "login",
+    intent: "org-switch",
+    targetOrganization
+  });
+}
+
+function getCurrentOrganizationScope(session = state.session) {
+  return normalizeScopeList(
+    firstNonEmptyString([session?.scope, state.runtimeConfig?.scope, IMS_SCOPE]),
+    IMS_SCOPE
+  );
+}
+
+function shouldOfferInteractiveOrgSwitch(organizationContext, session = state.session) {
+  const optionCount = Array.isArray(organizationContext?.options) ? organizationContext.options.length : 0;
+  return Boolean(session?.accessToken) && (optionCount === 0 || !scopeIncludes(getCurrentOrganizationScope(session), IMS_ORG_DISCOVERY_SCOPE));
 }
 
 function initializeThemeSwatchGrid() {
@@ -1171,15 +6185,30 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
   const hasRuntimeConfig = Boolean(firstNonEmptyString([state.runtimeConfig?.clientId]));
   const currentView = getCurrentView({ ready, hasSession, hasRuntimeConfig });
   const profile = session?.profile && typeof session.profile === "object" ? session.profile : null;
-  const accessClaims = session?.accessTokenClaims || null;
   const idClaims = session?.idTokenClaims || null;
-  const organizations = flattenOrganizations(session?.organizations);
-  const activeOrganization = resolveActiveOrganization({
-    profile,
-    accessClaims,
-    idClaims,
-    organizations
-  });
+  const organizationContext = buildOrganizationContextFromSession(session);
+  const authenticatedDataContext = buildAuthenticatedUserDataContext(session);
+  const consoleContext =
+    authenticatedDataContext?.consoleContext && typeof authenticatedDataContext.consoleContext === "object"
+      ? authenticatedDataContext.consoleContext
+      : {};
+  const unifiedShellContext =
+    authenticatedDataContext?.unifiedShellContext && typeof authenticatedDataContext.unifiedShellContext === "object"
+      ? authenticatedDataContext.unifiedShellContext
+      : {};
+  const cmContext =
+    authenticatedDataContext?.cmContext && typeof authenticatedDataContext.cmContext === "object"
+      ? authenticatedDataContext.cmContext
+      : {};
+  const programmerAccess =
+    consoleContext?.programmerAccess && typeof consoleContext.programmerAccess === "object"
+      ? consoleContext.programmerAccess
+      : resolveProgrammerAccessContext(session);
+  const selectedCmTenant = authenticatedDataContext?.selectedCmTenant || null;
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+  const selectedRegisteredApplication = authenticatedDataContext?.selectedRegisteredApplication || null;
+  const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const activeOrganization = organizationContext.activeOrganization;
   const name =
     firstNonEmptyString([
       profile?.name,
@@ -1240,6 +6269,27 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `resolved_org_name=${firstNonEmptyString([activeOrganization.name, "n/a"])}`,
     `resolved_org_id=${firstNonEmptyString([activeOrganization.id, "n/a"])}`,
     `resolved_org_source=${firstNonEmptyString([activeOrganization.source, "n/a"])}`,
+    `programmer_count=${Array.isArray(consoleContext?.programmers) ? consoleContext.programmers.length : 0}`,
+    `requestor_count=${Array.isArray(authenticatedDataContext?.requestorOptions) ? authenticatedDataContext.requestorOptions.length : 0}`,
+    `registered_application_count=${Array.isArray(authenticatedDataContext?.registeredApplicationOptions) ? authenticatedDataContext.registeredApplicationOptions.length : 0}`,
+    `programmer_gate=${programmerAccess?.eligible ? "adobepass-active" : "adobepass-required"}`,
+    `cm_tenant_count=${Array.isArray(cmContext?.tenants) ? cmContext.tenants.length : 0}`,
+    `selected_cm_tenant=${firstNonEmptyString([selectedCmTenant?.label, "n/a"])}`,
+    `selected_cm_tenant_id=${firstNonEmptyString([selectedCmTenant?.id, "n/a"])}`,
+    `selected_programmer=${firstNonEmptyString([selectedProgrammer?.label, "n/a"])}`,
+    `selected_programmer_id=${firstNonEmptyString([selectedProgrammer?.id, "n/a"])}`,
+    `selected_registered_application=${firstNonEmptyString([selectedRegisteredApplication?.label, "n/a"])}`,
+    `selected_registered_application_id=${firstNonEmptyString([selectedRegisteredApplication?.id, "n/a"])}`,
+    `selected_requestor=${firstNonEmptyString([selectedRequestor?.label, "n/a"])}`,
+    `selected_requestor_id=${firstNonEmptyString([selectedRequestor?.id, "n/a"])}`,
+    `stored_detected_org_count=${Array.isArray(session?.detectedOrganizations) ? session.detectedOrganizations.length : 0}`,
+    `raw_org_object_count=${flattenOrganizations(session?.organizations).length}`,
+    `detected_org_option_count=${organizationContext.options.length}`,
+    `unified_shell_org_count=${Array.isArray(unifiedShellContext?.organizations) ? unifiedShellContext.organizations.length : 0}`,
+    `active_org_key=${firstNonEmptyString([activeOrganization.key, "n/a"])}`,
+    `requested_org_label=${firstNonEmptyString([session?.targetOrganization?.label, "n/a"])}`,
+    `requested_org_id=${firstNonEmptyString([session?.targetOrganization?.id, "n/a"])}`,
+    `requested_org_key=${firstNonEmptyString([session?.targetOrganization?.key, "n/a"])}`,
     `experience_cloud_url=${buildExperienceOrgUrl(activeOrganization)}`,
     `avatar_mode=${firstNonEmptyString([state.avatarAsset?.mode, "fallback"])}`,
     `avatar_source_url=${firstNonEmptyString([state.avatarAsset?.sourceUrl, session?.avatarUrl, "n/a"])}`
@@ -1255,7 +6305,10 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `flow_scope=${firstNonEmptyString([session?.scope, flow?.scope, "n/a"])}`,
     `ims_user_id=${firstNonEmptyString([imsSession?.userId, "n/a"])}`,
     `ims_session_id=${firstNonEmptyString([imsSession?.sessionId, "n/a"])}`,
-    `ims_auth_id=${firstNonEmptyString([imsSession?.authId, "n/a"])}`
+    `ims_auth_id=${firstNonEmptyString([imsSession?.authId, "n/a"])}`,
+    `org_verification_status=${firstNonEmptyString([session?.orgVerification?.status, "n/a"])}`,
+    `org_verification_source=${firstNonEmptyString([session?.orgVerification?.source, "n/a"])}`,
+    `org_verification_message=${firstNonEmptyString([session?.orgVerification?.message, "n/a"])}`
   ]);
 
   pushDebugSection(lines, "auth", [
@@ -1296,15 +6349,96 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `zip_key_scope=${zipKeyScope}`,
     `zip_key_raw_scope=${firstNonEmptyString([state.runtimeConfig?.rawScope, "n/a"])}`,
     `zip_key_dropped_scopes=${droppedScopes}`,
+    `zip_key_console_environment=${firstNonEmptyString([state.runtimeConfig?.consoleEnvironment, "n/a"])}`,
+    `zip_key_console_base_url=${firstNonEmptyString([state.runtimeConfig?.consoleBaseUrl, "n/a"])}`,
     `zip_key_source=${firstNonEmptyString([state.runtimeConfig?.source, "defaults"])}`,
     `zip_key_imported_at=${firstNonEmptyString([state.runtimeConfig?.importedAt, "not-imported"])}`
+  ]);
+
+  pushDebugSection(lines, "console", [
+    `console_status=${firstNonEmptyString([consoleContext?.status, "n/a"])}`,
+    `console_environment=${firstNonEmptyString([consoleContext?.environmentId, "n/a"])}`,
+    `console_environment_label=${firstNonEmptyString([consoleContext?.environmentLabel, "n/a"])}`,
+    `console_expected_ims=${firstNonEmptyString([consoleContext?.expectedImsEnvironment, "n/a"])}`,
+    `console_base_url=${firstNonEmptyString([consoleContext?.baseUrl, "n/a"])}`,
+    `console_transport=${firstNonEmptyString([consoleContext?.transport, "n/a"])}`,
+    `console_page_context_origin=${firstNonEmptyString([consoleContext?.pageContextOrigin, "n/a"])}`,
+    `console_page_context_url=${firstNonEmptyString([consoleContext?.pageContextUrl, "n/a"])}`,
+    `console_configuration_version=${firstNonEmptyString([consoleContext?.configurationVersion, "n/a"])}`,
+    `console_role_count=${Array.isArray(consoleContext?.roles) ? consoleContext.roles.length : 0}`,
+    `console_roles=${Array.isArray(consoleContext?.roles) && consoleContext.roles.length > 0 ? consoleContext.roles.join(" ") : "n/a"}`,
+    `console_channel_count=${Array.isArray(consoleContext?.channels) ? consoleContext.channels.length : 0}`,
+    `console_programmer_count=${Array.isArray(consoleContext?.programmers) ? consoleContext.programmers.length : 0}`,
+    `console_registered_application_count=${Array.isArray(authenticatedDataContext?.registeredApplicationOptions) ? authenticatedDataContext.registeredApplicationOptions.length : 0}`,
+    `console_requestor_count=${Array.isArray(authenticatedDataContext?.requestorOptions) ? authenticatedDataContext.requestorOptions.length : 0}`,
+    `console_programmer_gate_reason=${firstNonEmptyString([programmerAccess?.reason, "n/a"])}`,
+    `console_extended_profile_error=${firstNonEmptyString([consoleContext?.errors?.extendedProfile, "n/a"])}`,
+    `console_channels_error=${firstNonEmptyString([consoleContext?.errors?.channels, "n/a"])}`,
+    `console_programmers_error=${firstNonEmptyString([consoleContext?.errors?.programmers, "n/a"])}`,
+    `console_registered_applications_error=${firstNonEmptyString([consoleContext?.applicationErrorsByProgrammer?.[selectedProgrammer?.id], "n/a"])}`,
+    `console_hydrated_at=${firstNonEmptyString([consoleContext?.hydratedAt, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "cm", [
+    `cm_status=${firstNonEmptyString([cmContext?.status, "n/a"])}`,
+    `cm_base_url=${firstNonEmptyString([cmContext?.baseUrl, "n/a"])}`,
+    `cm_reports_base_url=${firstNonEmptyString([cmContext?.reportsBaseUrl, "n/a"])}`,
+    `cm_check_token_endpoint=${firstNonEmptyString([cmContext?.checkTokenEndpoint, "n/a"])}`,
+    `cm_validate_token_endpoint=${firstNonEmptyString([cmContext?.validateTokenEndpoint, "n/a"])}`,
+    `cm_tenant_auth_model=${firstNonEmptyString([cmContext?.tenantAuthModel, "n/a"])}`,
+    `cm_cmu_auth_model=${firstNonEmptyString([cmContext?.cmuAuthModel, "n/a"])}`,
+    `cm_cmu_token_source=${firstNonEmptyString([cmContext?.cmuTokenSource, "n/a"])}`,
+    `cm_cmu_token_client_id=${firstNonEmptyString([cmContext?.cmuTokenClientId, "n/a"])}`,
+    `cm_cmu_token_scope=${firstNonEmptyString([cmContext?.cmuTokenScope, "n/a"])}`,
+    `cm_cmu_token_user_id=${firstNonEmptyString([cmContext?.cmuTokenUserId, "n/a"])}`,
+    `cm_cmu_token_expires_at=${firstNonEmptyString([cmContext?.cmuTokenExpiresAt, "n/a"])}`,
+    `cm_cmu_token_header=${firstNonEmptyString([cmContext?.cmuTokenHeaderName, "n/a"])}`,
+    `cm_cmu_token_present=${cmContext?.cmuTokenHeaderValue ? "yes" : "no"}`,
+    `cm_reports_status=${firstNonEmptyString([cmContext?.reportsStatus, "n/a"])}`,
+    `cm_tenant_count=${Array.isArray(cmContext?.tenants) ? cmContext.tenants.length : 0}`,
+    `cm_selected_tenant=${firstNonEmptyString([selectedCmTenant?.label, "n/a"])}`,
+    `cm_selected_tenant_id=${firstNonEmptyString([selectedCmTenant?.id, "n/a"])}`,
+    `cm_cmu_token_error=${firstNonEmptyString([cmContext?.errors?.cmuToken, "n/a"])}`,
+    `cm_reports_error=${firstNonEmptyString([cmContext?.errors?.reports, "n/a"])}`,
+    `cm_tenants_error=${firstNonEmptyString([cmContext?.errors?.tenants, "n/a"])}`,
+    `cm_hydrated_at=${firstNonEmptyString([cmContext?.hydratedAt, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "unified_shell", [
+    `unified_shell_status=${firstNonEmptyString([unifiedShellContext?.status, "n/a"])}`,
+    `unified_shell_selected_org=${firstNonEmptyString([unifiedShellContext?.selectedOrg, "n/a"])}`,
+    `unified_shell_cluster_count=${Number(unifiedShellContext?.clusterCount || 0)}`,
+    `unified_shell_organization_count=${Array.isArray(unifiedShellContext?.organizations) ? unifiedShellContext.organizations.length : 0}`,
+    `unified_shell_timestamp=${firstNonEmptyString([unifiedShellContext?.timestamp, "n/a"])}`,
+    `unified_shell_user_profile=${unifiedShellContext?.userProfile ? "returned" : "n/a"}`,
+    `unified_shell_error=${firstNonEmptyString([unifiedShellContext?.errors?.init, "n/a"])}`,
+    `unified_shell_hydrated_at=${firstNonEmptyString([unifiedShellContext?.hydratedAt, "n/a"])}`
   ]);
 
   pushDebugSection(lines, "endpoints", [
     `authorize_endpoint=${firstNonEmptyString([flow?.authorizationEndpoint, state.authConfiguration?.authorization_endpoint, "n/a"])}`,
     `token_endpoint=${firstNonEmptyString([flow?.tokenEndpoint, state.authConfiguration?.token_endpoint, "n/a"])}`,
     `userinfo_endpoint=${firstNonEmptyString([flow?.userInfoEndpoint, state.authConfiguration?.userinfo_endpoint, "n/a"])}`,
-    `organizations_endpoint=${firstNonEmptyString([flow?.organizationsEndpoint, IMS_ORGS_URL])}`
+    `organizations_endpoint=${firstNonEmptyString([flow?.organizationsEndpoint, IMS_ORGS_URL])}`,
+    `console_extended_profile_endpoint=${firstNonEmptyString([consoleContext?.baseUrl ? `${consoleContext.baseUrl}${CONSOLE_USER_EXTENDED_PROFILE_PATH}` : "", "n/a"])}`,
+    `console_channels_endpoint=${firstNonEmptyString([consoleContext?.baseUrl ? `${consoleContext.baseUrl}${CONSOLE_CHANNELS_PATH}` : "", "n/a"])}`,
+    `console_programmers_endpoint=${firstNonEmptyString([consoleContext?.baseUrl ? `${consoleContext.baseUrl}${CONSOLE_PROGRAMMERS_PATH}` : "", "n/a"])}`,
+    `console_registered_applications_endpoint=${firstNonEmptyString([
+      consoleContext?.baseUrl && consoleContext?.configurationVersion && selectedProgrammer?.id
+        ? `${consoleContext.baseUrl}${CONSOLE_APPLICATIONS_PATH}?programmer=${encodeURIComponent(selectedProgrammer.id)}&configurationVersion=${encodeURIComponent(consoleContext.configurationVersion)}`
+        : "",
+      "n/a"
+    ])}`,
+    `cmu_token_endpoint=${firstNonEmptyString([
+      cmContext?.checkTokenEndpoint
+        ? `${cmContext.checkTokenEndpoint}?client_id=${encodeURIComponent(CM_CONSOLE_IMS_CLIENT_ID)}&scope=${encodeURIComponent(CM_CONSOLE_IMS_SCOPE)}&user_id=${encodeURIComponent(firstNonEmptyString([cmContext?.cmuTokenUserId, session?.imsSession?.userId, ""]))}`
+        : "",
+      "n/a"
+    ])}`,
+    `cmu_validate_endpoint=${firstNonEmptyString([cmContext?.validateTokenEndpoint, "n/a"])}`,
+    `cmu_reports_endpoint=${CM_REPORTS_BASE_URL}${CM_REPORTS_SUMMARY_PATH}?format=json`,
+    `cm_tenants_endpoint=${CM_BASE_URL}${CM_TENANTS_PATH}?orgId=${CM_TENANTS_OWNER_ORG_ID}`,
+    `unified_shell_graphql_endpoint=${UNIFIED_SHELL_GRAPHQL_URL}`
   ]);
 
   const recentActivityEntries = compactRecentActivityEntries(state.logs, 10);
@@ -1421,6 +6555,9 @@ function buildAuthHintFromContext(errorMessage) {
   const popupTitle = String(state.interactivePopupSnapshot?.title || "").toLowerCase();
   const popupUrl = String(state.interactivePopupSnapshot?.url || "").toLowerCase();
 
+  if (/missing client_secret parameter|client_secret/i.test(message)) {
+    return "Adobe accepted the redirect but rejected the token exchange. This client ID looks like a confidential Web App credential, not a public PKCE credential for a Chrome extension.";
+  }
   if (
     /gain access|application developer|not entitled/.test(message) ||
     /enterprise id/.test(popupTitle) ||
@@ -1526,6 +6663,16 @@ function describeLoginError(error) {
     notes.push(
       "Common causes are an Adobe-side error page after sign-in, a credential/user access restriction, or another validation failure that prevented Adobe from redirecting back to the extension."
     );
+  } else if (/missing client_secret parameter|client_secret/i.test(message)) {
+    notes.push(
+      "Adobe already redirected back to the extension with an authorization code, so this is not a redirect-URI mismatch."
+    );
+    notes.push(
+      "The failure is at the token exchange step. Login Button is using a public authorization-code PKCE flow and does not send a client secret from the extension."
+    );
+    notes.push(
+      "This Adobe client ID is most likely an OAuth Web App credential. For this Chrome extension, use an OAuth Single Page App or other public-client-compatible Adobe credential, or move token exchange to a backend that can hold the client secret."
+    );
   } else if (/redirect|invalid_request/i.test(message)) {
     notes.push(`Verify this redirect URI is allowed in Adobe Developer Console: ${state.runtime.redirectUri || "unavailable"}.`);
   }
@@ -1545,11 +6692,6 @@ function describeLoginError(error) {
   );
 
   return [message, ...notes].filter(Boolean).join("\n\n");
-}
-
-function shouldRetryWithIdentityScope(error, configuredScope) {
-  const message = String(serializeError(error) || "");
-  return /invalid_scope/i.test(message) && normalizeScopeList(configuredScope, IMS_SCOPE) !== IMS_IDENTITY_SCOPE;
 }
 
 function buildDetailedAuthError(error, authContext, elapsedMs, phase) {
@@ -1787,83 +6929,500 @@ function resetAvatarAsset() {
   };
 }
 
-function resolveActiveOrganization({ profile, accessClaims, idClaims, organizations = [] }) {
-  const candidates = [];
+function buildOrganizationContextFromSession(session) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const storedOrganizations = hasCanonicalStoredOrganizations(currentSession?.detectedOrganizations)
+    ? normalizeStoredOrganizationCandidates(currentSession?.detectedOrganizations)
+    : hasCanonicalStoredOrganizations(currentSession?.organizations)
+      ? normalizeStoredOrganizationCandidates(currentSession?.organizations)
+    : [];
+  if (storedOrganizations.length > 0) {
+    return {
+      options: storedOrganizations,
+      activeOrganization: resolveActiveOrganization({
+        organizationCandidates: storedOrganizations,
+        session: currentSession
+      })
+    };
+  }
+
+  return buildOrganizationContext({
+    session: currentSession,
+    profile: currentSession?.profile && typeof currentSession.profile === "object" ? currentSession.profile : null,
+    accessClaims: currentSession?.accessTokenClaims || null,
+    idClaims: currentSession?.idTokenClaims || null,
+    organizations: flattenOrganizations(currentSession?.organizations)
+  });
+}
+
+function hasCanonicalStoredOrganizations(organizations = []) {
+  return Array.isArray(organizations) && organizations.some((organization) => {
+    if (!organization || typeof organization !== "object") {
+      return false;
+    }
+
+    return ["key", "label", "source", "sources", "hinted"].some((field) =>
+      Object.prototype.hasOwnProperty.call(organization, field)
+    );
+  });
+}
+
+function normalizeStoredOrganizationCandidates(organizations = []) {
+  if (!Array.isArray(organizations)) {
+    return [];
+  }
+
+  const normalizedOrganizations = [];
+  const seenKeys = new Set();
+
+  organizations.forEach((organization, index) => {
+    if (!organization || typeof organization !== "object") {
+      return;
+    }
+
+    const id = firstNonEmptyString([
+      organization.id,
+      organization.orgId,
+      organization.organizationId,
+      extractOrganizationId(organization)
+    ]);
+    const name =
+      firstNonEmptyString([
+        organization.name,
+        extractOrganizationName(organization),
+        organization.label,
+        id ? `Adobe IMS Org ${id}` : ""
+      ]) || "Adobe organization";
+    const key = firstNonEmptyString([organization.key, buildOrganizationOptionKey({ id, name })]);
+    if (!key || seenKeys.has(key)) {
+      return;
+    }
+
+    const source = firstNonEmptyString([
+      organization.source,
+      Array.isArray(organization.sources) ? organization.sources[0] : "",
+      `session.organizations[${index}]`
+    ]);
+    const sources = [];
+    [source, ...(Array.isArray(organization.sources) ? organization.sources : [])].forEach((value) => {
+      const normalizedSource = String(value || "").trim();
+      if (normalizedSource && !sources.includes(normalizedSource)) {
+        sources.push(normalizedSource);
+      }
+    });
+
+    seenKeys.add(key);
+    normalizedOrganizations.push({
+      key,
+      id,
+      tenantId: firstNonEmptyString([organization.tenantId, id]),
+      imsOrgId: firstNonEmptyString([organization.imsOrgId]),
+      name,
+      source,
+      sources,
+      hinted: organization.hinted === true,
+      label: firstNonEmptyString([organization.label, buildOrganizationOptionLabel({ id, name })]),
+      aepRegion: firstNonEmptyString([organization.aepRegion]),
+      hasAEP: organization.hasAEP === true,
+      aemInstances: Array.isArray(organization.aemInstances) ? organization.aemInstances : [],
+      clusterIndex: Number.isFinite(organization.clusterIndex) ? organization.clusterIndex : -1,
+      clusterUserId: firstNonEmptyString([organization.clusterUserId, organization.userId]),
+      clusterUserType: firstNonEmptyString([organization.clusterUserType, organization.userType]),
+      clusterRestricted: organization.clusterRestricted === true || organization.restricted === true,
+      consolidatedAccount: organization.consolidatedAccount === true
+    });
+  });
+
+  return normalizedOrganizations;
+}
+
+function buildOrganizationContext({
+  session = null,
+  profile,
+  accessClaims,
+  idClaims,
+  organizations = []
+}) {
+  const options = collectOrganizationCandidates({
+    profile,
+    accessClaims,
+    idClaims,
+    organizations
+  });
+  const activeOrganization = resolveActiveOrganization({
+    organizationCandidates: options,
+    session
+  });
+
+  return {
+    options,
+    activeOrganization
+  };
+}
+
+function collectOrganizationCandidates({ profile, accessClaims, idClaims, organizations = [] }) {
+  const candidateMap = new Map();
+  const idIndex = new Map();
+  const nameIndex = new Map();
   const orgIdHints = [];
 
-  const pushCandidate = (value, source) => {
+  const upsertCandidate = (value, source) => {
     if (!value || typeof value !== "object") {
       return;
     }
 
     const id = extractOrganizationId(value);
+    const tenantId = extractTenantOrganizationId(value);
+    const imsOrgId = extractImsOrganizationId(value);
     const name = extractOrganizationName(value);
     if (!id && !name) {
       return;
     }
 
-    const signature = JSON.stringify({ id, name, source });
-    if (candidates.some((candidate) => candidate.signature === signature)) {
+    const normalizedId = normalizeOrganizationIdentifier(id);
+    const normalizedName = normalizeOrganizationIdentifier(name);
+    let existingKey = normalizedId ? idIndex.get(normalizedId) : "";
+    if (!existingKey && normalizedName) {
+      existingKey = nameIndex.get(normalizedName) || "";
+    }
+
+    if (!existingKey) {
+      const key = buildOrganizationOptionKey({ id, name });
+      if (!key) {
+        return;
+      }
+
+      candidateMap.set(key, {
+        key,
+        id,
+        tenantId: firstNonEmptyString([tenantId, id && !/@adobeorg$/i.test(id) ? id : ""]),
+        imsOrgId: firstNonEmptyString([imsOrgId, /@adobeorg$/i.test(id) ? id : ""]),
+        name,
+        source,
+        sources: source ? [source] : []
+      });
+      if (normalizedId) {
+        idIndex.set(normalizedId, key);
+      }
+      if (normalizedName) {
+        nameIndex.set(normalizedName, key);
+      }
       return;
     }
 
-    candidates.push({
-      value,
-      id,
-      name,
-      source,
-      signature
+    const existingCandidate = candidateMap.get(existingKey);
+    if (!existingCandidate) {
+      return;
+    }
+
+    existingCandidate.id = firstNonEmptyString([existingCandidate.id, id]);
+    existingCandidate.tenantId = firstNonEmptyString([
+      existingCandidate.tenantId,
+      tenantId,
+      existingCandidate.id && !/@adobeorg$/i.test(existingCandidate.id) ? existingCandidate.id : ""
+    ]);
+    existingCandidate.imsOrgId = firstNonEmptyString([
+      existingCandidate.imsOrgId,
+      imsOrgId,
+      /@adobeorg$/i.test(existingCandidate.id) ? existingCandidate.id : ""
+    ]);
+    existingCandidate.name = choosePreferredOrganizationName(existingCandidate.name, name, existingCandidate.id || id);
+    if (source && !existingCandidate.sources.includes(source)) {
+      existingCandidate.sources.push(source);
+    }
+    if (!existingCandidate.source || rankOrganizationSource(source) < rankOrganizationSource(existingCandidate.source)) {
+      existingCandidate.source = source;
+    }
+
+    const nextKey = buildOrganizationOptionKey({
+      id: existingCandidate.id,
+      name: existingCandidate.name
     });
+    if (nextKey && nextKey !== existingCandidate.key) {
+      candidateMap.delete(existingCandidate.key);
+      existingCandidate.key = nextKey;
+      candidateMap.set(nextKey, existingCandidate);
+      existingKey = nextKey;
+    }
+
+    const mergedId = normalizeOrganizationIdentifier(existingCandidate.id);
+    const mergedName = normalizeOrganizationIdentifier(existingCandidate.name);
+    if (mergedId) {
+      idIndex.set(mergedId, existingCandidate.key);
+    }
+    if (mergedName) {
+      nameIndex.set(mergedName, existingCandidate.key);
+    }
   };
 
-  const pushOrgIdHints = (value) => {
-    collectOrganizationObjects(value).forEach((entry) => {
+  const collectCandidatesFromValue = (value, sourceRoot) => {
+    collectOrganizationObjects(value, sourceRoot).forEach((entry) => {
       const id = extractOrganizationId(entry.value);
       if (id) {
         orgIdHints.push(id);
       }
-      pushCandidate(entry.value, entry.source);
+      upsertCandidate(entry.value, entry.source);
     });
   };
 
-  organizations.forEach((organization, index) => pushCandidate(organization, `organizations[${index}]`));
-  pushOrgIdHints(profile);
-  pushOrgIdHints(profile?.additional_info);
-  pushOrgIdHints(profile?.projectedProductContext);
-  pushOrgIdHints(profile?.additional_info?.projectedProductContext);
-  pushOrgIdHints(accessClaims);
-  pushOrgIdHints(idClaims);
+  organizations.forEach((organization, index) => upsertCandidate(organization, `organizations[${index}]`));
+  collectCandidatesFromValue(profile, "profile");
+  collectCandidatesFromValue(profile?.additional_info, "profile.additional_info");
+  collectCandidatesFromValue(profile?.projectedProductContext, "profile.projectedProductContext");
+  collectCandidatesFromValue(profile?.additional_info?.projectedProductContext, "profile.additional_info.projectedProductContext");
+  collectCandidatesFromValue(accessClaims, "accessClaims");
+  collectCandidatesFromValue(idClaims, "idClaims");
 
-  const uniqueOrgIdHints = [...new Set(orgIdHints.map(normalizeOrganizationIdentifier).filter(Boolean))];
-  const matchedCandidate = uniqueOrgIdHints
-    .map((orgId) => candidates.find((candidate) => normalizeOrganizationIdentifier(candidate.id) === orgId))
-    .find(Boolean) || candidates[0];
+  const hintedOrgIds = new Set(orgIdHints.map(normalizeOrganizationIdentifier).filter(Boolean));
+  return Array.from(candidateMap.values()).map((candidate) => {
+    const displayName =
+      firstNonEmptyString([candidate.name, candidate.id ? `Adobe IMS Org ${candidate.id}` : ""]) || "Adobe organization";
+    return {
+      ...candidate,
+      name: displayName,
+      source: firstNonEmptyString([candidate.source, "returned-payload"]),
+      hinted: Boolean(candidate.id && hintedOrgIds.has(normalizeOrganizationIdentifier(candidate.id))),
+      label: buildOrganizationOptionLabel({
+        ...candidate,
+        name: displayName
+      })
+    };
+  });
+}
 
-  const resolvedId = firstNonEmptyString([
-    matchedCandidate?.id,
-    uniqueOrgIdHints[0]
-  ]);
-  const resolvedName = firstNonEmptyString([
-    matchedCandidate?.name,
-    resolvedId ? `Adobe IMS Org ${resolvedId}` : ""
-  ]) || "Adobe organization unavailable";
-  const resolvedSource = firstNonEmptyString([matchedCandidate?.source, uniqueOrgIdHints[0] ? "token-or-profile" : "not-resolved"]);
-  const metaParts = [];
-  if (resolvedId) {
-    metaParts.push(`Org ID ${resolvedId}`);
+function resolveActiveOrganization({ organizationCandidates = [], session = null }) {
+  const verifiedClaim = extractVerifiedCustomerOrganizationClaim(session);
+  const matchedCandidate =
+    findMatchingOrganizationCandidate(organizationCandidates, verifiedClaim.id ? [verifiedClaim.id] : []) ||
+    [...(Array.isArray(organizationCandidates) ? organizationCandidates : [])].sort(compareOrganizationCandidatePriority)[0] ||
+    null;
+  if (!matchedCandidate) {
+    return {
+      key: "",
+      name: "Adobe organization unavailable",
+      id: "",
+      source: "not-resolved",
+      meta: "Login Button could not resolve the current Adobe IMS org from the returned payloads."
+    };
   }
-  metaParts.push(
-    resolvedSource === "not-resolved"
-      ? "Login Button could not resolve the selected Adobe org from the returned payloads."
-      : `Resolved from ${resolvedSource}.`
-  );
+
+  const resolvedSource = firstNonEmptyString([matchedCandidate.source, "returned-payload"]);
+  const metaParts = [];
+  if (matchedCandidate.id) {
+    metaParts.push(`Org ID ${matchedCandidate.id}`);
+  }
+  if (verifiedClaim.id && organizationMatchesAnyIdentifier(matchedCandidate, [verifiedClaim.id])) {
+    metaParts.push(`Verified via ${verifiedClaim.source}.`);
+  } else {
+    metaParts.push(`Auto-resolved from ${resolvedSource}.`);
+  }
+  if (organizationCandidates.length > 1) {
+    metaParts.push(`${organizationCandidates.length} org options found.`);
+  }
 
   return {
-    name: resolvedName,
-    id: resolvedId,
-    source: resolvedSource,
+    ...matchedCandidate,
     meta: metaParts.join(" | ")
   };
+}
+
+function compareOrganizationCandidatePriority(left, right) {
+  const leftHintScore = left?.hinted === true ? 0 : 1;
+  const rightHintScore = right?.hinted === true ? 0 : 1;
+  if (leftHintScore !== rightHintScore) {
+    return leftHintScore - rightHintScore;
+  }
+
+  const leftSourceRank = rankOrganizationSource(left?.source);
+  const rightSourceRank = rankOrganizationSource(right?.source);
+  if (leftSourceRank !== rightSourceRank) {
+    return leftSourceRank - rightSourceRank;
+  }
+
+  const leftIdentifierCount = collectOrganizationIdentifierSet(left).size;
+  const rightIdentifierCount = collectOrganizationIdentifierSet(right).size;
+  if (leftIdentifierCount !== rightIdentifierCount) {
+    return rightIdentifierCount - leftIdentifierCount;
+  }
+
+  return String(left?.label || left?.name || "").localeCompare(String(right?.label || right?.name || ""), undefined, {
+    sensitivity: "base"
+  });
+}
+
+function findMatchingOrganizationCandidate(organizationCandidates = [], identifiers = []) {
+  const normalizedIdentifiers = Array.from(
+    new Set((Array.isArray(identifiers) ? identifiers : []).map((value) => normalizeOrganizationIdentifier(value)).filter(Boolean))
+  );
+  if (normalizedIdentifiers.length === 0) {
+    return null;
+  }
+
+  return [...(Array.isArray(organizationCandidates) ? organizationCandidates : [])]
+    .filter((candidate) => organizationMatchesAnyIdentifier(candidate, normalizedIdentifiers))
+    .sort(compareOrganizationCandidatePriority)[0] || null;
+}
+
+function collectOrganizationIdentifierSet(organization = null) {
+  if (!organization) {
+    return new Set();
+  }
+
+  const values =
+    typeof organization === "string"
+      ? [organization]
+      : [
+          organization.key,
+          organization.id,
+          organization.orgId,
+          organization.organizationId,
+          organization.tenantId,
+          organization.tenant_id,
+          organization.companyId,
+          organization.company_id,
+          organization.imsOrgId,
+          organization.ims_org_id,
+          organization.name,
+          organization.label,
+          organization.orgName,
+          organization.organizationName,
+          extractOrganizationId(organization),
+          extractTenantOrganizationId(organization),
+          extractImsOrganizationId(organization),
+          extractOrganizationName(organization)
+        ];
+
+  return new Set(values.map((value) => normalizeOrganizationIdentifier(value)).filter(Boolean));
+}
+
+function organizationMatchesAnyIdentifier(organization = null, identifiers = []) {
+  const candidateIdentifiers = collectOrganizationIdentifierSet(organization);
+  if (candidateIdentifiers.size === 0) {
+    return false;
+  }
+
+  return (Array.isArray(identifiers) ? identifiers : []).some((identifier) =>
+    candidateIdentifiers.has(normalizeOrganizationIdentifier(identifier))
+  );
+}
+
+function hasIdentifierIntersection(leftIdentifiers = new Set(), rightIdentifiers = new Set()) {
+  for (const identifier of leftIdentifiers) {
+    if (rightIdentifiers.has(identifier)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildOrganizationPickerHelpText(organizationContext, verification = null, session = state.session) {
+  const optionCount = Array.isArray(organizationContext?.options) ? organizationContext.options.length : 0;
+  const totalDetectedCount = Array.isArray(organizationContext?.allDetectedOptions)
+    ? organizationContext.allDetectedOptions.length
+    : optionCount;
+  const currentScope = getCurrentOrganizationScope(session);
+  const hasOrgDiscoveryScope = scopeIncludes(currentScope, IMS_ORG_DISCOVERY_SCOPE);
+  const shouldOfferInteractiveSwitch = shouldOfferInteractiveOrgSwitch(organizationContext, session);
+  if (verification?.status === "verified-mismatch" || verification?.status === "derived-mismatch") {
+    return "Adobe returned a different org than the one you selected. Pick the desired Adobe IMS org again to reopen Adobe sign-in.";
+  }
+  if (optionCount === 0) {
+    if (totalDetectedCount === 1) {
+      return "Login Button only detected the currently selected Adobe IMS org for this user. No other detected org is available to switch to.";
+    }
+    if (shouldOfferInteractiveSwitch || !hasOrgDiscoveryScope) {
+      return "This session cannot enumerate other Adobe IMS orgs yet. Use the menu to sign in again and let Adobe return a different org.";
+    }
+    return "Login Button did not find any other detected Adobe IMS orgs in the returned payloads.";
+  }
+  if (optionCount === 1) {
+    return hasOrgDiscoveryScope
+      ? "1 other detected Adobe IMS org is available for this user."
+      : "1 other detected Adobe IMS org is available, but this session is missing read_organizations so Adobe may still be hiding additional org memberships.";
+  }
+  return hasOrgDiscoveryScope
+    ? `${optionCount} other detected Adobe IMS orgs are available for this user.`
+    : `${optionCount} other detected Adobe IMS orgs are available, but this session is missing read_organizations so the full org set may still be incomplete.`;
+}
+
+function buildOrganizationOptionKey({ id, name }) {
+  const normalizedId = normalizeOrganizationIdentifier(id);
+  if (normalizedId) {
+    return `org:${normalizedId}`;
+  }
+
+  const normalizedName = normalizeOrganizationIdentifier(name);
+  return normalizedName ? `name:${normalizedName}` : "";
+}
+
+function buildOrganizationOptionLabel(candidate) {
+  const name =
+    firstNonEmptyString([candidate?.name, candidate?.id ? `Adobe IMS Org ${candidate.id}` : ""]) || "Adobe organization";
+  const id = firstNonEmptyString([candidate?.id]);
+  if (
+    !id ||
+    normalizeOrganizationIdentifier(name) === normalizeOrganizationIdentifier(id) ||
+    normalizeOrganizationIdentifier(name) === normalizeOrganizationIdentifier(`Adobe IMS Org ${id}`)
+  ) {
+    return name;
+  }
+
+  return `${name} | ${id}`;
+}
+
+function choosePreferredOrganizationName(currentName, nextName, organizationId = "") {
+  const current = firstNonEmptyString([currentName]);
+  const next = firstNonEmptyString([nextName]);
+  if (!current) {
+    return next;
+  }
+  if (!next) {
+    return current;
+  }
+  if (isGeneratedOrganizationName(current, organizationId) && !isGeneratedOrganizationName(next, organizationId)) {
+    return next;
+  }
+  if (isGeneratedOrganizationName(next, organizationId) && !isGeneratedOrganizationName(current, organizationId)) {
+    return current;
+  }
+
+  return next.length > current.length ? next : current;
+}
+
+function isGeneratedOrganizationName(name, organizationId = "") {
+  const normalizedId = String(organizationId || "").trim();
+  if (!normalizedId) {
+    return false;
+  }
+
+  return normalizeOrganizationIdentifier(name) === normalizeOrganizationIdentifier(`Adobe IMS Org ${normalizedId}`);
+}
+
+function rankOrganizationSource(source = "") {
+  const normalizedSource = String(source || "").trim();
+  if (!normalizedSource) {
+    return 99;
+  }
+  if (/^organizations\[\d+\]/.test(normalizedSource)) {
+    return 0;
+  }
+  if (/^unifiedShell\./.test(normalizedSource)) {
+    return 1;
+  }
+  if (/projectedProductContext/i.test(normalizedSource)) {
+    return 2;
+  }
+  if (/^profile/.test(normalizedSource)) {
+    return 3;
+  }
+  if (/^idClaims/.test(normalizedSource)) {
+    return 4;
+  }
+  if (/^accessClaims/.test(normalizedSource)) {
+    return 5;
+  }
+
+  return 6;
 }
 
 function buildExperienceOrgUrl(activeOrganization) {
@@ -1974,6 +7533,26 @@ function extractStrongOrganizationId(value) {
     value.tenant_id,
     value.companyId,
     value.company_id
+  ]);
+}
+
+function extractTenantOrganizationId(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([value.tenantId, value.tenant_id, value.companyId, value.company_id]);
+}
+
+function extractImsOrganizationId(value) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([
+    value.imsOrgId,
+    value.ims_org_id,
+    /@adobeorg$/i.test(String(value.id || "").trim()) ? String(value.id || "").trim() : ""
   ]);
 }
 
@@ -2215,7 +7794,29 @@ async function importZipKeyFiles(fileList) {
     if (clientChanged && state.session?.accessToken) {
       await chrome.storage.local.remove(SESSION_KEY);
       state.session = null;
+      state.postLoginHydrationInFlight = false;
+      state.selectedCmTenantId = "";
+      state.selectedProgrammerId = "";
+      state.selectedRegisteredApplicationId = "";
+      state.selectedRequestorId = "";
+      state.programmerApplicationsLoadingFor = "";
+      state.selectedOrganizationSwitchKey = "";
       log(`ZIP.KEY switched Adobe IMS client from ${previousClientId} to ${importedConfig.clientId}. Cleared the stored session.`);
+    } else if (hasActiveSession(state.session)) {
+      state.selectedCmTenantId = "";
+      state.selectedProgrammerId = "";
+      state.selectedRegisteredApplicationId = "";
+      state.selectedRequestorId = "";
+      state.programmerApplicationsLoadingFor = "";
+      state.selectedOrganizationSwitchKey = "";
+      void refreshSessionPostLoginContextInBackground(state.session, { reason: "zip-key-runtime-config-update" });
+      log(
+        `ZIP.KEY updated the post-login console target to ${firstNonEmptyString([
+          state.runtimeConfig?.consoleBaseUrl,
+          state.runtimeConfig?.consoleEnvironment,
+          "the default console endpoint"
+        ])}. Refreshed Adobe Pass user data for the active session.`
+      );
     } else {
       log(`ZIP.KEY loaded for Adobe IMS client ${importedConfig.clientId}.`);
     }

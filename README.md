@@ -7,7 +7,7 @@ Login Button is now a Chrome Manifest V3 Adobe IMS auth probe that runs in the C
 - Adobe authorization code flow with PKCE
 - Adobe OpenID discovery for auth, token, userinfo, and revocation endpoints
 
-After sign-in, the app renders the authenticated Adobe user's profile, avatar, token claims, organizations payload, and the stored session snapshot. A persistent debug console stays visible in the side panel for every state so test output can always be copied back into this thread.
+After sign-in, the app renders the authenticated Adobe user's profile, avatar image asset, token claims, IMS organizations payload, Unified Shell org roster, Adobe Pass `extendedProfile`, a programmer select loaded from the Adobe Pass console, and a flattened field inventory for the returned user data. A persistent debug console stays visible in the side panel for every state so test output can always be copied back into this thread.
 
 ## Local Adobe client ID
 
@@ -17,20 +17,23 @@ This project no longer hard-codes Adobe's debugger client ID, and it no longer r
 2. Set `adobe.ims.client_id=YOUR_OFFICIAL_ADOBE_CLIENT_ID`
 3. Open Login Button and drop that `ZIP.KEY` onto the setup gate
 4. Wait for the sign-in button to appear, then sign in with Adobe
+5. After login, inspect the enumerated user data and use the programmer select populated from Adobe Pass console
 
 Imported ZIP.KEY config is persisted in `chrome.storage.local`, so Login Button keeps using that client until you replace it with another ZIP.KEY drop.
-If `adobe.ims.scope` is omitted, Login Button now defaults to the scope set currently enabled for this Adobe Console credential:
-`openid profile offline_access additional_info.projectedProductContext`
+If `adobe.ims.scope` is omitted, Login Button now defaults to the broadest supported post-login inspection scope:
+`openid profile AdobeID read_organizations offline_access additional_info.projectedProductContext additional_info.job_function`
 
 ## Current auth design
 
 - Adobe client ID: imported from dropped `ZIP.KEY` and persisted in extension storage
-- Default scope: `openid profile offline_access additional_info.projectedProductContext`
+- Default scope: `openid profile AdobeID read_organizations offline_access additional_info.projectedProductContext additional_info.job_function`
 - Product-specific scopes should be added explicitly in `ZIP.KEY` only when that Adobe credential supports them
 - Auth endpoints come from Adobe discovery at:
   `https://ims-na1.adobelogin.com/ims/.well-known/openid-configuration`
 - Organizations are still fetched from:
   `https://ims-na1.adobelogin.com/ims/organizations/v5`
+- Adobe Pass post-login hydration defaults to production:
+  `https://console.auth.adobe.com/rest/api`
 
 ## Important operational note
 
@@ -49,4 +52,4 @@ This extension now relies on Chrome's `chromiumapp.org` callback URL. For a stab
 3. Drop a prepared `ZIP.KEY` onto the setup gate.
 4. Click **Sign In With Adobe** once the button appears.
 5. Complete Adobe sign-in.
-6. Inspect the returned profile, token metadata, endpoints, session snapshot, and the always-visible debug console.
+6. Inspect the returned profile, token metadata, Adobe Pass `extendedProfile`, programmer list, endpoints, session snapshot, and the always-visible debug console.

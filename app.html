@@ -14,23 +14,17 @@
           <div class="surface surface--setup">
             <input id="zipKeyFileInput" class="zip-key-file-input" type="file" accept=".key,.json,.txt,.inc" hidden>
 
-            <div id="zipKeyDropSurface" class="zip-key-dropSurface" aria-describedby="zipKeyStatus">
-              <div class="zip-key-dropSurfaceCopy">
-                <p class="spectrum-Heading spectrum-Heading--sizeXL">LOAD KEY</p>
-              </div>
-
+            <div id="zipKeyDropSurface" class="zip-key-dropSurface">
               <button
                 id="zipKeyBrowseButton"
                 class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeL"
                 type="button"
               >
-                <span class="spectrum-Button-label">CHOOSE KEY</span>
+                <span class="spectrum-Button-label">ZIP.KEY PLEASE</span>
               </button>
             </div>
 
-            <p id="zipKeyStatus" class="spectrum-Body spectrum-Body--sizeM zip-key-status">
-              Drop key.
-            </p>
+            <p id="zipKeyStatus" class="spectrum-Body spectrum-Body--sizeM zip-key-status" hidden aria-hidden="true"></p>
           </div>
         </section>
 
@@ -43,6 +37,8 @@
             >
               <span id="loginButtonLabel" class="spectrum-Button-label">SIGN IN</span>
             </button>
+
+            <p id="loginStatus" class="spectrum-Body spectrum-Body--sizeS login-status" hidden aria-hidden="true"></p>
           </div>
         </section>
 
@@ -52,7 +48,7 @@
           hidden
           aria-label="Authenticated view"
         >
-          <header class="surface surface--hero">
+          <header id="authenticatedHero" class="surface surface--hero">
             <div class="hero-header">
               <div class="identity-row">
                 <button
@@ -69,7 +65,10 @@
                   </div>
                 </button>
 
-                <div class="identity-copy">
+                <div id="mainIdentityCopy" class="identity-copy">
+                  <p id="identityHeadlineLabel" class="spectrum-Detail spectrum-Detail--sizeM profile-domainLabel">
+                    Logged in Adobe user
+                  </p>
                   <a
                     id="displayNameLink"
                     class="spectrum-Heading spectrum-Heading--sizeXL profile-name profile-nameLink"
@@ -79,7 +78,7 @@
                   >
                     Not signed in
                   </a>
-                  <p id="displayEmail" class="profile-email profile-email--hidden">Not signed in</p>
+                  <p id="displayEmail" class="spectrum-Body spectrum-Body--sizeS profile-email">Not signed in</p>
                 </div>
               </div>
 
@@ -103,25 +102,26 @@
 
               <div id="avatarMenu" class="surface avatar-menu" hidden>
                 <div class="avatar-menuCopy">
-                  <p class="spectrum-Detail spectrum-Detail--sizeM">Org</p>
-                  <p id="selectedOrganizationName" class="spectrum-Heading spectrum-Heading--sizeL hero-orgName">
-                    Awaiting session
+                  <p id="avatarMenuIdentityLabel" class="spectrum-Detail spectrum-Detail--sizeM profile-domainLabel">
+                    Logged in Adobe user
                   </p>
-                  <p id="selectedOrganizationMeta" class="spectrum-Body spectrum-Body--sizeS hero-orgMeta">
-                    Not signed in.
-                  </p>
+                  <a
+                    id="avatarMenuDisplayName"
+                    class="spectrum-Heading spectrum-Heading--sizeXL profile-name profile-nameLink"
+                    href="http://experience.adobe.com"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Not signed in
+                  </a>
+                  <p id="avatarMenuDisplayMeta" class="spectrum-Body spectrum-Body--sizeS profile-email">Not signed in</p>
                 </div>
 
-                <div class="avatar-menuMeta">
-                  <div class="meta-item">
-                    <p class="spectrum-Detail spectrum-Detail--sizeM">Build</p>
-                    <p id="buildBadge" class="spectrum-Body spectrum-Body--sizeM">0.0.0</p>
-                  </div>
-
-                  <div class="meta-item meta-item--wide">
-                    <p class="spectrum-Detail spectrum-Detail--sizeM">Status</p>
-                    <p id="statusBanner" class="spectrum-Body spectrum-Body--sizeM">Loading extension state…</p>
-                  </div>
+                <div class="avatar-menuOverview">
+                  <p class="spectrum-Detail spectrum-Detail--sizeM">Session summary</p>
+                  <p id="avatarMenuOverview" class="spectrum-Body spectrum-Body--sizeS avatar-menuOverviewValue">
+                    Awaiting session.
+                  </p>
                 </div>
 
                 <div class="avatar-menuActions">
@@ -144,6 +144,110 @@
               </div>
             </div>
           </header>
+
+          <section class="surface surface--org-picker" aria-label="Authenticated Adobe data">
+            <div id="detectedOrganizationPickerContainer" class="org-pickerCompact">
+              <label
+                for="detectedOrganizationPicker"
+                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+              >
+                Adobe Org
+              </label>
+
+              <div class="org-pickerControl">
+                <select
+                  id="detectedOrganizationPicker"
+                  class="org-pickerSelect"
+                  aria-describedby="organizationPickerMeta"
+                ></select>
+                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
+              <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
+
+              <div class="org-tokenSurface" aria-live="polite">
+                <input id="cmuTokenValue" class="org-tokenValue" type="text" readonly spellcheck="false">
+              </div>
+            </div>
+
+            <div id="cmTenantPickerContainer" class="org-pickerCompact" hidden>
+              <label
+                for="cmTenantPicker"
+                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+              >
+                CM Tenant
+              </label>
+
+              <div class="org-pickerControl">
+                <select
+                  id="cmTenantPicker"
+                  class="org-pickerSelect"
+                  aria-describedby="organizationPickerMeta"
+                ></select>
+                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <div id="programmerPickerContainer" class="org-pickerCompact" hidden>
+              <label
+                for="organizationPicker"
+                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+              >
+                Adobe Pass Programmer
+              </label>
+
+              <div class="org-pickerControl">
+                <select
+                  id="organizationPicker"
+                  class="org-pickerSelect"
+                  aria-describedby="organizationPickerMeta"
+                ></select>
+                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <div id="registeredApplicationPickerContainer" class="org-pickerCompact" hidden>
+              <label
+                for="registeredApplicationPicker"
+                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+              >
+                Registered Applications
+              </label>
+
+              <div class="org-pickerControl">
+                <select
+                  id="registeredApplicationPicker"
+                  class="org-pickerSelect"
+                  aria-describedby="organizationPickerMeta"
+                ></select>
+                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <div id="requestorPickerContainer" class="org-pickerCompact" hidden>
+              <label
+                for="requestorPicker"
+                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+              >
+                Content Providers (Requestor Ids)
+              </label>
+
+              <div class="org-pickerControl">
+                <select
+                  id="requestorPicker"
+                  class="org-pickerSelect"
+                  aria-describedby="organizationPickerMeta"
+                ></select>
+                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <p id="organizationPickerMeta" class="spectrum-Body spectrum-Body--sizeS org-pickerMeta" hidden>
+              Awaiting session.
+            </p>
+          </section>
         </section>
       </section>
 
