@@ -26,6 +26,23 @@ test("interactive auth chooses popup monitoring when the configured redirect dif
   assert.match(hydrationSection, /callbackUrl = await chrome\.identity\.launchWebAuthFlow\(launchDetails\);/);
 });
 
+test("popup-monitor auth captures redirects from webNavigation before Chrome swaps in an error page", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const popupSectionMatch = appSource.match(
+    /async function launchInteractiveAuthPopup\([\s\S]*?\n}\n\nasync function closeInteractiveAuthPopup/
+  );
+
+  assert.ok(popupSectionMatch, "launchInteractiveAuthPopup should exist");
+  const popupSection = popupSectionMatch[0];
+
+  assert.match(popupSection, /chrome\.webNavigation\?\.onBeforeNavigate/);
+  assert.match(popupSection, /chrome\.webNavigation\.onBeforeNavigate\.addListener\(handleBeforeNavigate\)/);
+  assert.match(popupSection, /chrome\.webNavigation\.onCommitted\.addListener\(handleCommitted\)/);
+  assert.match(popupSection, /chrome\.webNavigation\.onErrorOccurred\.addListener\(handleNavigationError\)/);
+  assert.match(popupSection, /Number\(details\?\.tabId \|\| 0\) !== popupTabId/);
+  assert.match(popupSection, /return maybeCaptureRedirect\(details\?\.url\);/);
+});
+
 test("runtime config accepts the Adobe project export redirect URI", () => {
   const sharedSource = fs.readFileSync(path.join(ROOT, "shared.js"), "utf8");
 
@@ -47,4 +64,11 @@ test("scope planning still prefers org discovery when the configured scope lacks
   assert.match(scopeSection, /scopeIncludes\(normalizedConfiguredScope, IMS_ORG_DISCOVERY_SCOPE\)/);
   assert.match(scopeSection, /return normalizeScopeList\(`\$\{normalizedConfiguredScope\} \$\{IMS_ORG_DISCOVERY_SCOPE\}`/);
   assert.match(scopeSection, /new Set\(\[preferredScope, normalizedConfiguredScope\]\)/);
+});
+
+test("manifest declares webNavigation for popup redirect capture", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
+
+  assert.ok(Array.isArray(manifest.permissions), "manifest permissions should be an array");
+  assert.ok(manifest.permissions.includes("webNavigation"));
 });

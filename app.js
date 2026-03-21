@@ -8973,6 +8973,10 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
   if (!chrome.windows?.create || !chrome.tabs?.query || !chrome.tabs?.onUpdated) {
     throw new Error("Chrome popup tab monitoring is unavailable. Add the tabs permission and reload the extension.");
   }
+  const popupRedirectNavigationAvailable =
+    Boolean(chrome.webNavigation?.onBeforeNavigate) &&
+    Boolean(chrome.webNavigation?.onCommitted) &&
+    Boolean(chrome.webNavigation?.onErrorOccurred);
 
   const popupWindow = await chrome.windows.create({
     url: authorizeUrl,
@@ -9018,6 +9022,11 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
       chrome.tabs.onUpdated.removeListener(handleUpdated);
       chrome.tabs.onRemoved.removeListener(handleTabRemoved);
       chrome.windows.onRemoved.removeListener(handleWindowRemoved);
+      if (popupRedirectNavigationAvailable) {
+        chrome.webNavigation.onBeforeNavigate.removeListener(handleBeforeNavigate);
+        chrome.webNavigation.onCommitted.removeListener(handleCommitted);
+        chrome.webNavigation.onErrorOccurred.removeListener(handleNavigationError);
+      }
     };
 
     const succeed = async (callbackUrl) => {
@@ -9048,6 +9057,13 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
 
       void succeed(normalizedCandidate);
       return true;
+    };
+
+    const maybeCaptureNavigationEvent = (details) => {
+      if (!details || Number(details?.tabId || 0) !== popupTabId || Number(details?.frameId || 0) !== 0) {
+        return false;
+      }
+      return maybeCaptureRedirect(details?.url);
     };
 
     const rememberPopupSnapshot = (tab) => {
@@ -9085,6 +9101,18 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
       );
     };
 
+    const handleBeforeNavigate = (details) => {
+      maybeCaptureNavigationEvent(details);
+    };
+
+    const handleCommitted = (details) => {
+      maybeCaptureNavigationEvent(details);
+    };
+
+    const handleNavigationError = (details) => {
+      maybeCaptureNavigationEvent(details);
+    };
+
     const handleTabRemoved = (tabId) => {
       if (tabId !== popupTabId) {
         return;
@@ -9104,6 +9132,11 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
     chrome.tabs.onUpdated.addListener(handleUpdated);
     chrome.tabs.onRemoved.addListener(handleTabRemoved);
     chrome.windows.onRemoved.addListener(handleWindowRemoved);
+    if (popupRedirectNavigationAvailable) {
+      chrome.webNavigation.onBeforeNavigate.addListener(handleBeforeNavigate);
+      chrome.webNavigation.onCommitted.addListener(handleCommitted);
+      chrome.webNavigation.onErrorOccurred.addListener(handleNavigationError);
+    }
 
     void chrome.tabs
       .get(popupTabId)
