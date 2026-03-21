@@ -434,7 +434,7 @@ body {
 
 .surface--org-picker {
   display: grid;
-  gap: var(--spectrum-spacing-200);
+  gap: var(--spectrum-spacing-250);
 }
 
 .org-pickerHeader {
@@ -458,8 +458,60 @@ body {
 .org-pickerListSection,
 .org-pickerListHeader,
 .org-pickerCompact,
+.field-cluster,
+.field-clusterHeader,
 .user-dataSection {
   gap: var(--spectrum-spacing-150);
+}
+
+.field-cluster {
+  padding: var(--spectrum-spacing-300);
+  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 40%, transparent);
+  border-radius: var(--spectrum-corner-radius-200);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 96%, white) 0%, var(--spectrum-background-base-color) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
+    0 12px 28px color-mix(in srgb, var(--spectrum-black) 7%, transparent);
+  position: relative;
+}
+
+.field-cluster::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 0.28rem;
+  border-radius: var(--spectrum-corner-radius-200) var(--spectrum-corner-radius-200) 0 0;
+  background: var(--field-cluster-accent, var(--spectrum-accent-visual-color));
+}
+
+.field-cluster--cm {
+  --field-cluster-accent: color-mix(in srgb, var(--spectrum-blue-visual-color) 78%, white);
+}
+
+.field-cluster--programmer {
+  --field-cluster-accent: color-mix(in srgb, var(--spectrum-seafoam-visual-color) 82%, white);
+}
+
+.field-clusterHeader {
+  padding-block-end: var(--spectrum-spacing-75);
+}
+
+.field-clusterEyebrow,
+.field-clusterTitle,
+.field-clusterMeta {
+  margin: 0;
+}
+
+.field-clusterEyebrow {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--field-cluster-accent, var(--spectrum-accent-content-color-default));
+}
+
+.field-clusterMeta {
+  color: var(--spectrum-neutral-subdued-content-color-default);
 }
 
 .org-pickerActionRow {
@@ -472,6 +524,11 @@ body {
 .org-pickerCompact {
   padding-top: var(--spectrum-spacing-250);
   border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 40%, transparent);
+}
+
+.field-cluster > .org-pickerCompact:first-of-type {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .org-tokenSurface {

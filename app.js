@@ -237,11 +237,13 @@ const avatarMenuUserDataSummary = document.getElementById("avatarMenuUserDataSum
 const avatarMenuUserDataList = document.getElementById("avatarMenuUserDataList");
 const detectedOrganizationPicker = document.getElementById("detectedOrganizationPicker");
 const detectedOrganizationPickerSection = document.getElementById("detectedOrganizationPickerContainer");
+const cmFieldGroup = document.getElementById("cmFieldGroup");
 const cmuTokenSection = document.getElementById("cmuTokenContainer");
 const cmuTokenHeaderValue = document.getElementById("cmuTokenValue");
 const cmTenantPicker = document.getElementById("cmTenantPicker");
 const cmTenantPickerSection = document.getElementById("cmTenantPickerContainer");
 const organizationPicker = document.getElementById("organizationPicker");
+const programmerFieldGroup = document.getElementById("programmerFieldGroup");
 const programmerPickerSection = document.getElementById("programmerPickerContainer");
 const premiumServicesSection = document.getElementById("premiumServicesContainer");
 const premiumServicesList = document.getElementById("premiumServicesList");
@@ -5208,6 +5210,7 @@ function render() {
   syncRegisteredApplicationPicker(authenticatedDataContext);
   syncRequestorPicker(authenticatedDataContext);
   syncPremiumServicesSummary(authenticatedDataContext);
+  syncAuthenticatedFieldGroups();
   syncUserDataList(authenticatedDataContext.userDataEntries, authenticatedDataContext.userDataSummary);
   syncAvatarMenuDetails(authenticatedDataContext, statusLabel);
 
@@ -6688,6 +6691,18 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
     card.append(toggle, body);
     premiumServicesList.appendChild(card);
   });
+}
+
+function syncAuthenticatedFieldGroups() {
+  if (cmFieldGroup) {
+    cmFieldGroup.hidden = [cmuTokenSection, cmTenantPickerSection].every((section) => section?.hidden !== false);
+  }
+
+  if (programmerFieldGroup) {
+    programmerFieldGroup.hidden = [programmerPickerSection, registeredApplicationPickerSection, requestorPickerSection, premiumServicesSection].every(
+      (section) => section?.hidden !== false
+    );
+  }
 }
 
 function syncRequestorPicker(authenticatedDataContext = {}) {

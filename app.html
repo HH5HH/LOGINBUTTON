@@ -203,93 +203,118 @@
               </div>
             </div>
 
-            <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
-              <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
-
-              <div class="org-tokenSurface" aria-live="polite">
-                <input id="cmuTokenValue" class="org-tokenValue" type="text" readonly spellcheck="false">
+            <section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">
+              <div class="field-clusterHeader">
+                <p class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">CM</p>
+                <p class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">CM Access</p>
+                <p class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
+                  CMU token and tenant fields live here only.
+                </p>
               </div>
-            </div>
 
-            <div id="cmTenantPickerContainer" class="org-pickerCompact" hidden>
-              <label
-                for="cmTenantPicker"
-                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-              >
-                CM Tenant
-              </label>
+              <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
+                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
 
-              <div class="org-pickerControl">
-                <select
-                  id="cmTenantPicker"
-                  class="org-pickerSelect"
-                  aria-describedby="organizationPickerMeta"
-                ></select>
-                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                <div class="org-tokenSurface" aria-live="polite">
+                  <input id="cmuTokenValue" class="org-tokenValue" type="text" readonly spellcheck="false">
+                </div>
               </div>
-            </div>
 
-            <div id="programmerPickerContainer" class="org-pickerCompact" hidden>
-              <label
-                for="organizationPicker"
-                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-              >
-                Adobe Pass Programmer
-              </label>
+              <div id="cmTenantPickerContainer" class="org-pickerCompact" hidden>
+                <label
+                  for="cmTenantPicker"
+                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                >
+                  CM Tenant
+                </label>
 
-              <div class="org-pickerControl">
-                <select
-                  id="organizationPicker"
-                  class="org-pickerSelect"
-                  aria-describedby="organizationPickerMeta"
-                ></select>
-                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                <div class="org-pickerControl">
+                  <select
+                    id="cmTenantPicker"
+                    class="org-pickerSelect"
+                    aria-describedby="organizationPickerMeta"
+                  ></select>
+                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                </div>
               </div>
-            </div>
+            </section>
 
-            <div id="registeredApplicationPickerContainer" class="org-pickerCompact" hidden>
-              <label
-                for="registeredApplicationPicker"
-                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-              >
-                Registered Applications
-              </label>
-
-              <div class="org-pickerControl">
-                <select
-                  id="registeredApplicationPicker"
-                  class="org-pickerSelect"
-                  aria-describedby="organizationPickerMeta"
-                ></select>
-                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+            <section
+              id="programmerFieldGroup"
+              class="field-cluster field-cluster--programmer"
+              hidden
+              aria-label="Programmer controls"
+            >
+              <div class="field-clusterHeader">
+                <p class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">Programmer</p>
+                <p class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Adobe Pass Programmer</p>
+                <p class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
+                  Programmer, application, and requestor fields stay grouped here.
+                </p>
               </div>
-            </div>
 
-            <div id="requestorPickerContainer" class="org-pickerCompact" hidden>
-              <label
-                for="requestorPicker"
-                class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-              >
-                Content Providers (Requestor Ids)
-              </label>
+              <div id="programmerPickerContainer" class="org-pickerCompact" hidden>
+                <label
+                  for="organizationPicker"
+                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                >
+                  Adobe Pass Programmer
+                </label>
 
-              <div class="org-pickerControl">
-                <select
-                  id="requestorPicker"
-                  class="org-pickerSelect"
-                  aria-describedby="organizationPickerMeta"
-                ></select>
-                <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                <div class="org-pickerControl">
+                  <select
+                    id="organizationPicker"
+                    class="org-pickerSelect"
+                    aria-describedby="organizationPickerMeta"
+                  ></select>
+                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                </div>
               </div>
-            </div>
 
-            <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
-              <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
+              <div id="registeredApplicationPickerContainer" class="org-pickerCompact" hidden>
+                <label
+                  for="registeredApplicationPicker"
+                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                >
+                  Registered Applications
+                </label>
 
-              <div class="premium-servicesSurface" aria-live="polite">
-                <div id="premiumServicesList" class="premium-servicesList" hidden></div>
+                <div class="org-pickerControl">
+                  <select
+                    id="registeredApplicationPicker"
+                    class="org-pickerSelect"
+                    aria-describedby="organizationPickerMeta"
+                  ></select>
+                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                </div>
               </div>
-            </div>
+
+              <div id="requestorPickerContainer" class="org-pickerCompact" hidden>
+                <label
+                  for="requestorPicker"
+                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                >
+                  Content Providers (Requestor Ids)
+                </label>
+
+                <div class="org-pickerControl">
+                  <select
+                    id="requestorPicker"
+                    class="org-pickerSelect"
+                    aria-describedby="organizationPickerMeta"
+                  ></select>
+                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                </div>
+              </div>
+
+              <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
+                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
+
+                <div class="premium-servicesSurface" aria-live="polite">
+                  <div id="premiumServicesList" class="premium-servicesList" hidden></div>
+                </div>
+              </div>
+            </section>
 
             <p id="organizationPickerMeta" class="spectrum-Body spectrum-Body--sizeS org-pickerMeta" hidden>
               Awaiting session.

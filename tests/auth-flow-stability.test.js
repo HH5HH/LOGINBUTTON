@@ -140,6 +140,26 @@ test("authenticated sessions keep the hero avatar menu visible for recovery and 
   assert.match(appSource, /showHero: true,/);
 });
 
+test("authenticated CM and Programmer controls live in separate field containers", () => {
+  const appMarkup = fs.readFileSync(path.join(ROOT, "app.html"), "utf8");
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appMarkup, /<section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">/);
+  assert.match(appMarkup, /<section[\s\S]*id="programmerFieldGroup"[\s\S]*class="field-cluster field-cluster--programmer"/);
+  assert.match(appMarkup, /id="cmuTokenContainer"/);
+  assert.match(appMarkup, /id="cmTenantPickerContainer"/);
+  assert.match(appMarkup, /id="programmerPickerContainer"/);
+  assert.match(appMarkup, /id="registeredApplicationPickerContainer"/);
+  assert.match(appMarkup, /id="requestorPickerContainer"/);
+  assert.match(appMarkup, /id="premiumServicesContainer"/);
+  assert.match(appSource, /function syncAuthenticatedFieldGroups\(\)/);
+  assert.match(appSource, /cmFieldGroup\.hidden = \[cmuTokenSection, cmTenantPickerSection\]/);
+  assert.match(
+    appSource,
+    /programmerFieldGroup\.hidden = \[programmerPickerSection, registeredApplicationPickerSection, requestorPickerSection, premiumServicesSection\]/
+  );
+});
+
 test("post-login Adobe Pass hydration auto-activates the selected or sole programmer context", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
 
