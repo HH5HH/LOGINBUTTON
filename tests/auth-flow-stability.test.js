@@ -185,6 +185,23 @@ test("setup view asks for loginbutton.KEY in the visible import copy", () => {
   assert.match(appHtml, /Drop loginbutton\.KEY to configure Login Button/);
 });
 
+test("avatar menu identity meta shows only the active Adobe organization", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const authenticatedContextSectionMatch = appSource.match(
+    /function buildAuthenticatedUserDataContext\([\s\S]*?\n}\n\nfunction buildAuthenticatedSummaryCards/
+  );
+
+  assert.ok(authenticatedContextSectionMatch, "buildAuthenticatedUserDataContext should exist");
+  assert.match(
+    authenticatedContextSectionMatch[0],
+    /const identityMeta = firstNonEmptyString\(\[activeOrganization\.name, "Adobe organization unavailable"\]\);/
+  );
+  assert.doesNotMatch(
+    authenticatedContextSectionMatch[0],
+    /const identityMeta = \[\s*email,\s*firstNonEmptyString\(\[activeOrganization\.name\]\),/
+  );
+});
+
 test("post-login Adobe Pass hydration auto-activates the selected or sole programmer context", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
 

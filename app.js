@@ -5305,13 +5305,7 @@ function buildAuthenticatedUserDataContext(session = state.session) {
       profile?.additional_info?.email,
       idClaims?.email
     ]) || "Email not returned";
-  const identityMeta = [
-    email,
-    firstNonEmptyString([activeOrganization.name]),
-    roles.length > 0 ? `${roles.length} console role${roles.length === 1 ? "" : "s"}` : ""
-  ]
-    .filter(Boolean)
-    .join(" | ");
+  const identityMeta = firstNonEmptyString([activeOrganization.name, "Adobe organization unavailable"]);
   const menuMeta = [
     activeOrganization.id ? `Org ID ${activeOrganization.id}` : firstNonEmptyString([activeOrganization.meta]),
     firstNonEmptyString([consoleContext.environmentLabel]),
