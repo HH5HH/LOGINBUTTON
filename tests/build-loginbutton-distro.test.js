@@ -19,7 +19,7 @@ function runCommand(command, args, cwd) {
   });
 }
 
-test("distribution build packages tracked source plus dependencies and injects the stable extension key", (t) => {
+test("distribution build packages tracked source plus dependencies without mutating the manifest", (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "loginbutton-distro-test-"));
   const repoDir = path.join(tempRoot, "repo");
   const scriptsDir = path.join(repoDir, "scripts");
@@ -48,6 +48,7 @@ test("distribution build packages tracked source plus dependencies and injects t
         manifest_version: 3,
         name: "Login Button",
         version: "1.0.0",
+        key: DISTRO_MANIFEST_KEY,
         background: {
           service_worker: "background.js",
           type: "module"
@@ -101,6 +102,9 @@ test("distribution build packages tracked source plus dependencies and injects t
       "vault.js",
       "app.css",
       "spectrum.css",
+      "node_modules/demo-spectrum/base.css",
+      "node_modules/demo-spectrum/theme.css",
+      "node_modules/demo-spectrum/icon.svg",
       "icons/icon_16.png",
       "README.md",
       "AGENTS.md",
