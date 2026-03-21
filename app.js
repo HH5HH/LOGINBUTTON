@@ -7806,13 +7806,10 @@ function applyThemePreferenceToDocument(themePreference) {
   body.style.setProperty(
     "--login-button-theme-ring",
     theme.stop === "light"
-      ? "color-mix(in srgb, var(--spectrum-gray-400) 55%, white)"
-      : "color-mix(in srgb, var(--spectrum-gray-700) 70%, black)"
+      ? "color-mix(in srgb, var(--spectrum-accent-color-400) 24%, var(--spectrum-gray-400) 76%)"
+      : "color-mix(in srgb, var(--spectrum-accent-color-900) 34%, var(--spectrum-gray-600) 66%)"
   );
-  body.style.setProperty(
-    "--login-button-theme-shell",
-    theme.stop === "light" ? "var(--spectrum-white)" : "var(--spectrum-gray-50)"
-  );
+  body.style.setProperty("--login-button-theme-shell", "var(--login-button-surface-background)");
 }
 
 function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {

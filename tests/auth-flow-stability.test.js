@@ -160,6 +160,23 @@ test("authenticated CM and Programmer controls live in separate field containers
   );
 });
 
+test("MODE x COLOR theming drives app surfaces beyond links and the sign-in button", () => {
+  const appCss = fs.readFileSync(path.join(ROOT, "app.css"), "utf8");
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appCss, /body\[data-theme-stop="light"\]/);
+  assert.match(appCss, /body\[data-theme-stop="dark"\]/);
+  assert.match(appCss, /--login-button-surface-background:/);
+  assert.match(appCss, /--login-button-control-border:/);
+  assert.match(appCss, /\.surface \{\s*background: var\(--login-button-surface-background\);/);
+  assert.match(appCss, /\.org-pickerSelect \{\s*[\s\S]*border: 1px solid var\(--login-button-control-border\);/);
+  assert.match(appCss, /\.field-cluster--cm \{\s*--field-cluster-accent: var\(--login-button-cm-accent\);/);
+  assert.match(appCss, /\.field-cluster--programmer \{\s*--field-cluster-accent: var\(--login-button-programmer-accent\);/);
+  assert.doesNotMatch(appCss, /field-cluster--cm \{\s*--field-cluster-accent: color-mix\(in srgb, var\(--spectrum-blue-visual-color\)/);
+  assert.doesNotMatch(appCss, /field-cluster--programmer \{\s*--field-cluster-accent: color-mix\(in srgb, var\(--spectrum-seafoam-visual-color\)/);
+  assert.match(appSource, /body\.style\.setProperty\("--login-button-theme-shell", "var\(--login-button-surface-background\)"\);/);
+});
+
 test("post-login Adobe Pass hydration auto-activates the selected or sole programmer context", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
 

@@ -9,8 +9,108 @@ body {
 }
 
 body {
-  background: var(--spectrum-background-pasteboard-color);
-  color: var(--spectrum-neutral-content-color-default);
+  --login-button-shell-background-start: var(--spectrum-background-layer-1-color);
+  --login-button-shell-background-end: var(--spectrum-background-pasteboard-color);
+  --login-button-shell-glow: color-mix(in srgb, var(--spectrum-accent-color-300) 30%, transparent);
+  --login-button-shell-glow-secondary: color-mix(in srgb, var(--spectrum-accent-color-500) 18%, transparent);
+  --login-button-surface-background: var(--spectrum-background-elevated-color);
+  --login-button-surface-background-strong: var(--spectrum-background-base-color);
+  --login-button-surface-border: color-mix(in srgb, var(--spectrum-gray-400) 72%, transparent);
+  --login-button-surface-shadow:
+    0 18px 36px color-mix(in srgb, var(--spectrum-black) 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 26%, transparent);
+  --login-button-floating-surface-background: color-mix(in srgb, var(--login-button-surface-background) 92%, transparent);
+  --login-button-floating-border: color-mix(in srgb, var(--spectrum-accent-color-500) 22%, var(--spectrum-gray-400) 78%);
+  --login-button-floating-shadow:
+    0 24px 48px color-mix(in srgb, var(--spectrum-black) 16%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent);
+  --login-button-control-background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--login-button-surface-background) 82%, white) 0%,
+      color-mix(in srgb, var(--login-button-surface-background-strong) 92%, transparent) 100%
+    );
+  --login-button-control-border: color-mix(in srgb, var(--spectrum-accent-color-500) 24%, var(--spectrum-gray-500) 76%);
+  --login-button-control-hover-border: color-mix(in srgb, var(--spectrum-accent-color-800) 44%, var(--spectrum-gray-500) 56%);
+  --login-button-control-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
+    0 10px 24px color-mix(in srgb, var(--spectrum-black) 8%, transparent);
+  --login-button-muted-background: color-mix(in srgb, var(--spectrum-background-layer-2-color) 82%, var(--login-button-surface-background) 18%);
+  --login-button-muted-border: color-mix(in srgb, var(--spectrum-accent-color-300) 16%, var(--spectrum-gray-300) 84%);
+  --login-button-divider-color: color-mix(in srgb, var(--spectrum-accent-color-300) 18%, var(--spectrum-gray-400) 82%);
+  --login-button-selection-fill: color-mix(in srgb, var(--spectrum-accent-background-color-default) 14%, transparent);
+  --login-button-selection-border: color-mix(in srgb, var(--spectrum-accent-color-800) 40%, transparent);
+  --login-button-overlay-background: color-mix(in srgb, var(--spectrum-black) 34%, transparent);
+  --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-200) 34%, var(--spectrum-background-layer-1-color) 66%);
+  --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-500) 76%, white);
+  --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-900) 82%, black);
+  background:
+    radial-gradient(circle at top left, var(--login-button-shell-glow) 0%, transparent 34%),
+    radial-gradient(circle at top right, var(--login-button-shell-glow-secondary) 0%, transparent 28%),
+    linear-gradient(180deg, var(--login-button-shell-background-start) 0%, var(--login-button-shell-background-end) 100%);
+  color: var(--spectrum-body-color);
+  transition: background 220ms ease, color 220ms ease;
+}
+
+body[data-theme-stop="light"] {
+  --login-button-shell-background-start: color-mix(in srgb, var(--spectrum-background-layer-1-color) 88%, white);
+  --login-button-shell-background-end: color-mix(in srgb, var(--spectrum-background-pasteboard-color) 94%, var(--spectrum-accent-color-100) 6%);
+  --login-button-shell-glow: color-mix(in srgb, var(--spectrum-accent-color-300) 38%, transparent);
+  --login-button-shell-glow-secondary: color-mix(in srgb, var(--spectrum-accent-color-500) 22%, transparent);
+  --login-button-surface-background: color-mix(in srgb, var(--spectrum-background-elevated-color) 90%, white);
+  --login-button-surface-background-strong: color-mix(in srgb, var(--spectrum-background-base-color) 86%, white);
+  --login-button-surface-border: color-mix(in srgb, var(--spectrum-accent-color-400) 18%, var(--spectrum-gray-400) 82%);
+  --login-button-floating-surface-background: color-mix(in srgb, var(--login-button-surface-background) 94%, white 6%);
+  --login-button-floating-border: color-mix(in srgb, var(--spectrum-accent-color-500) 26%, var(--spectrum-gray-400) 74%);
+  --login-button-control-border: color-mix(in srgb, var(--spectrum-accent-color-500) 24%, var(--spectrum-gray-500) 76%);
+  --login-button-control-hover-border: color-mix(in srgb, var(--spectrum-accent-color-800) 44%, var(--spectrum-gray-500) 56%);
+  --login-button-muted-background: color-mix(in srgb, var(--spectrum-background-layer-2-color) 80%, white);
+  --login-button-muted-border: color-mix(in srgb, var(--spectrum-accent-color-300) 14%, var(--spectrum-gray-300) 86%);
+  --login-button-divider-color: color-mix(in srgb, var(--spectrum-accent-color-300) 20%, var(--spectrum-gray-400) 80%);
+  --login-button-selection-fill: color-mix(in srgb, var(--spectrum-accent-background-color-default) 14%, white);
+  --login-button-selection-border: color-mix(in srgb, var(--spectrum-accent-color-800) 42%, transparent);
+  --login-button-overlay-background: color-mix(in srgb, var(--spectrum-accent-color-900) 18%, var(--spectrum-black) 24%);
+  --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-200) 38%, white);
+  --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-500) 70%, white);
+  --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-900) 84%, black);
+}
+
+body[data-theme-stop="dark"] {
+  --login-button-shell-background-start: color-mix(in srgb, var(--spectrum-background-pasteboard-color) 94%, black);
+  --login-button-shell-background-end: color-mix(in srgb, var(--spectrum-background-layer-1-color) 88%, var(--spectrum-accent-color-1200) 12%);
+  --login-button-shell-glow: color-mix(in srgb, var(--spectrum-accent-color-900) 26%, transparent);
+  --login-button-shell-glow-secondary: color-mix(in srgb, var(--spectrum-accent-color-1200) 34%, transparent);
+  --login-button-surface-background: color-mix(in srgb, var(--spectrum-background-layer-2-color) 88%, var(--spectrum-accent-color-1200) 12%);
+  --login-button-surface-background-strong: color-mix(in srgb, var(--spectrum-background-layer-1-color) 84%, var(--spectrum-accent-color-1000) 16%);
+  --login-button-surface-border: color-mix(in srgb, var(--spectrum-accent-color-900) 28%, var(--spectrum-gray-600) 72%);
+  --login-button-surface-shadow:
+    0 24px 42px color-mix(in srgb, var(--spectrum-black) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 8%, transparent);
+  --login-button-floating-surface-background: color-mix(in srgb, var(--login-button-surface-background) 92%, black 8%);
+  --login-button-floating-border: color-mix(in srgb, var(--spectrum-accent-color-900) 32%, var(--spectrum-gray-600) 68%);
+  --login-button-floating-shadow:
+    0 28px 52px color-mix(in srgb, var(--spectrum-black) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 8%, transparent);
+  --login-button-control-background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--login-button-surface-background-strong) 88%, var(--spectrum-accent-color-1200) 12%) 0%,
+      color-mix(in srgb, var(--login-button-surface-background) 92%, black 8%) 100%
+    );
+  --login-button-control-border: color-mix(in srgb, var(--spectrum-accent-color-900) 32%, var(--spectrum-gray-600) 68%);
+  --login-button-control-hover-border: color-mix(in srgb, var(--spectrum-accent-color-700) 58%, var(--spectrum-gray-600) 42%);
+  --login-button-control-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 8%, transparent),
+    0 12px 28px color-mix(in srgb, var(--spectrum-black) 18%, transparent);
+  --login-button-muted-background: color-mix(in srgb, var(--spectrum-background-layer-1-color) 88%, black 12%);
+  --login-button-muted-border: color-mix(in srgb, var(--spectrum-accent-color-1000) 18%, var(--spectrum-gray-600) 82%);
+  --login-button-divider-color: color-mix(in srgb, var(--spectrum-accent-color-1000) 18%, var(--spectrum-gray-600) 82%);
+  --login-button-selection-fill: color-mix(in srgb, var(--spectrum-accent-background-color-default) 20%, transparent);
+  --login-button-selection-border: color-mix(in srgb, var(--spectrum-accent-color-700) 52%, transparent);
+  --login-button-overlay-background: color-mix(in srgb, var(--spectrum-black) 54%, var(--spectrum-accent-color-1200) 46%);
+  --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-1100) 40%, var(--spectrum-background-layer-1-color) 60%);
+  --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-600) 74%, white);
+  --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-300) 78%, white);
 }
 
 [hidden] {
@@ -27,6 +127,7 @@ body {
   gap: var(--spectrum-spacing-300);
   min-width: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .view {
@@ -90,13 +191,10 @@ body {
   padding: 0;
   margin: 0;
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 45%, transparent);
+  border: 1px solid var(--login-button-control-border);
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
-  box-shadow:
-    0 8px 18px color-mix(in srgb, var(--spectrum-black) 10%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--spectrum-white) 24%, transparent);
+  background: var(--login-button-control-background);
+  box-shadow: var(--login-button-control-shadow);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -112,10 +210,8 @@ body {
 }
 
 .theme-pickerButton.is-open {
-  border-color: var(--spectrum-accent-border-color-default);
-  box-shadow:
-    0 10px 22px color-mix(in srgb, var(--spectrum-black) 14%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--spectrum-white) 24%, transparent);
+  border-color: var(--login-button-control-hover-border);
+  box-shadow: var(--login-button-floating-shadow);
 }
 
 .theme-pickerButton:focus-visible {
@@ -161,9 +257,8 @@ body {
   padding: var(--spectrum-spacing-250);
   display: grid;
   gap: var(--spectrum-spacing-200);
-  box-shadow:
-    0 16px 32px color-mix(in srgb, var(--spectrum-black) 16%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent);
+  box-shadow: var(--login-button-floating-shadow);
+  backdrop-filter: blur(16px);
 }
 
 .theme-pickerGrid {
@@ -204,7 +299,7 @@ body {
   background: var(--theme-swatch-color, var(--spectrum-blue-visual-color));
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--spectrum-black) 18%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--spectrum-gray-500) 20%, transparent);
+    0 0 0 1px var(--login-button-muted-border);
 }
 
 .theme-swatchButton.is-selected .theme-swatchCircle {
@@ -230,16 +325,17 @@ body {
   border: 2px dashed var(--spectrum-accent-border-color-default);
   border-radius: var(--spectrum-corner-radius-300);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-accent-background-color-default) 6%, white) 0%, transparent 100%),
-    var(--spectrum-background-base-color);
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 75%, transparent) 0%, transparent 100%),
+    var(--login-button-surface-background-strong);
+  box-shadow: var(--login-button-surface-shadow);
   text-align: center;
 }
 
 .zip-key-dropSurface.is-drag-active {
   border-color: var(--spectrum-accent-border-color-down);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-accent-background-color-default) 14%, white) 0%, transparent 100%),
-    var(--spectrum-background-base-color);
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 95%, transparent) 0%, transparent 100%),
+    var(--login-button-surface-background-strong);
 }
 
 .zip-key-dropSurfaceCopy {
@@ -285,11 +381,16 @@ body {
 }
 
 .surface {
-  background: var(--spectrum-background-elevated-color);
-  border: 1px solid var(--spectrum-gray-300);
+  background: var(--login-button-surface-background);
+  border: 1px solid var(--login-button-surface-border);
   border-radius: var(--spectrum-corner-radius-200);
+  box-shadow: var(--login-button-surface-shadow);
   inline-size: 100%;
   min-width: 0;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .surface--hero,
@@ -375,6 +476,10 @@ body {
   display: grid;
   gap: var(--spectrum-spacing-300);
   overflow: auto;
+  background: var(--login-button-floating-surface-background);
+  border-color: var(--login-button-floating-border);
+  box-shadow: var(--login-button-floating-shadow);
+  backdrop-filter: blur(18px);
 }
 
 .avatar-menuOverview,
@@ -466,13 +571,12 @@ body {
 
 .field-cluster {
   padding: var(--spectrum-spacing-300);
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 40%, transparent);
+  border: 1px solid var(--login-button-surface-border);
   border-radius: var(--spectrum-corner-radius-200);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 96%, white) 0%, var(--spectrum-background-base-color) 100%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
-    0 12px 28px color-mix(in srgb, var(--spectrum-black) 7%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 35%, transparent) 0%, transparent 100%),
+    var(--login-button-surface-background-strong);
+  box-shadow: var(--login-button-surface-shadow);
   position: relative;
 }
 
@@ -487,11 +591,11 @@ body {
 }
 
 .field-cluster--cm {
-  --field-cluster-accent: color-mix(in srgb, var(--spectrum-blue-visual-color) 78%, white);
+  --field-cluster-accent: var(--login-button-cm-accent);
 }
 
 .field-cluster--programmer {
-  --field-cluster-accent: color-mix(in srgb, var(--spectrum-seafoam-visual-color) 82%, white);
+  --field-cluster-accent: var(--login-button-programmer-accent);
 }
 
 .field-clusterHeader {
@@ -523,7 +627,7 @@ body {
 
 .org-pickerCompact {
   padding-top: var(--spectrum-spacing-250);
-  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 40%, transparent);
+  border-top: 1px solid var(--login-button-divider-color);
 }
 
 .field-cluster > .org-pickerCompact:first-of-type {
@@ -534,13 +638,10 @@ body {
 .org-tokenSurface {
   display: grid;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-125);
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 42%, transparent);
+  border: 1px solid var(--login-button-control-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 14%, transparent),
-    0 8px 18px color-mix(in srgb, var(--spectrum-black) 6%, transparent);
+  background: var(--login-button-control-background);
+  box-shadow: var(--login-button-control-shadow);
 }
 
 .org-tokenValue {
@@ -551,9 +652,9 @@ body {
   appearance: none;
   min-block-size: 2.25rem;
   padding: 0 var(--spectrum-spacing-150);
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 42%, transparent);
+  border: 1px solid var(--login-button-control-border);
   border-radius: var(--spectrum-corner-radius-100);
-  background: color-mix(in srgb, var(--spectrum-background-elevated-color) 92%, white);
+  background: color-mix(in srgb, var(--login-button-surface-background-strong) 90%, transparent);
   color: var(--spectrum-neutral-content-color-default);
   font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
   font-size: var(--spectrum-font-size-100);
@@ -591,13 +692,10 @@ body {
 }
 
 .premium-serviceCard {
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 48%, transparent);
+  border: 1px solid var(--login-button-surface-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
-    0 10px 24px color-mix(in srgb, var(--spectrum-black) 8%, transparent);
+  background: var(--login-button-surface-background-strong);
+  box-shadow: var(--login-button-surface-shadow);
   overflow: hidden;
   transition:
     border-color 140ms ease,
@@ -606,7 +704,10 @@ body {
 }
 
 .premium-serviceCard.is-selected-app {
-  border-color: color-mix(in srgb, var(--spectrum-accent-border-color-default) 40%, transparent);
+  border-color: var(--login-button-selection-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 70%, transparent) 0%, transparent 100%),
+    var(--login-button-surface-background-strong);
 }
 
 .premium-serviceToggle {
@@ -634,7 +735,7 @@ body {
 }
 
 .premium-serviceCard:hover {
-  border-color: var(--spectrum-accent-border-color-default);
+  border-color: var(--login-button-control-hover-border);
   transform: translateY(-1px);
 }
 
@@ -667,7 +768,7 @@ body {
   display: grid;
   gap: var(--spectrum-spacing-125);
   background: transparent;
-  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 20%, transparent);
+  border-top: 1px solid var(--login-button-divider-color);
 }
 
 .premium-serviceBody[hidden] {
@@ -686,7 +787,7 @@ body {
 
 .user-dataSection {
   padding-top: var(--spectrum-spacing-250);
-  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 40%, transparent);
+  border-top: 1px solid var(--login-button-divider-color);
 }
 
 .org-cardList {
@@ -698,26 +799,23 @@ body {
 .org-card {
   gap: var(--spectrum-spacing-200);
   padding: var(--spectrum-spacing-250);
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 42%, transparent);
+  border: 1px solid var(--login-button-surface-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 16%, transparent),
-    0 10px 20px color-mix(in srgb, var(--spectrum-black) 6%, transparent);
+  background: var(--login-button-surface-background-strong);
+  box-shadow: var(--login-button-surface-shadow);
 }
 
 .org-card.is-active {
-  border-color: color-mix(in srgb, var(--spectrum-accent-border-color-default) 62%, transparent);
+  border-color: var(--login-button-selection-border);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-accent-background-color-default) 10%, transparent) 0%, transparent 100%),
-    var(--spectrum-background-base-color);
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 76%, transparent) 0%, transparent 100%),
+    var(--login-button-surface-background-strong);
 }
 
 .org-card--empty {
   border-style: dashed;
   box-shadow: none;
-  background: var(--spectrum-background-base-color);
+  background: var(--login-button-muted-background);
 }
 
 .org-cardHeader {
@@ -774,13 +872,13 @@ body {
   align-self: start;
   padding: 0.25rem 0.625rem;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--spectrum-gray-300) 75%, transparent);
+  background: var(--login-button-muted-background);
   color: var(--spectrum-neutral-content-color-default);
   white-space: nowrap;
 }
 
 .org-cardStatus.is-active {
-  background: color-mix(in srgb, var(--spectrum-accent-background-color-default) 16%, transparent);
+  background: var(--login-button-selection-fill);
   color: var(--spectrum-accent-content-color-default);
 }
 
@@ -808,7 +906,7 @@ body {
 
 .data-cardItem {
   padding-top: var(--spectrum-spacing-125);
-  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 28%, transparent);
+  border-top: 1px solid var(--login-button-divider-color);
 }
 
 .data-cardItem:first-child {
@@ -842,13 +940,10 @@ body {
   padding-inline-start: var(--spectrum-spacing-200);
   padding-inline-end: calc(var(--spectrum-spacing-600) + 0.5rem);
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 48%, transparent);
+  border: 1px solid var(--login-button-control-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
-    0 10px 24px color-mix(in srgb, var(--spectrum-black) 8%, transparent);
+  background: var(--login-button-control-background);
+  box-shadow: var(--login-button-control-shadow);
   color: var(--spectrum-neutral-content-color-default);
   font: inherit;
   line-height: 1.35;
@@ -860,7 +955,7 @@ body {
 }
 
 .org-pickerSelect:hover:not(:disabled) {
-  border-color: var(--spectrum-accent-border-color-default);
+  border-color: var(--login-button-control-hover-border);
   transform: translateY(-1px);
 }
 
@@ -873,8 +968,9 @@ body {
 .org-pickerSelect:disabled {
   cursor: default;
   color: var(--spectrum-neutral-subdued-content-color-default);
-  background: var(--spectrum-gray-75);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 10%, transparent);
+  background: var(--login-button-muted-background);
+  border-color: var(--login-button-muted-border);
+  box-shadow: none;
 }
 
 .org-pickerChevron {
@@ -901,7 +997,7 @@ body {
 .profile-avatar {
   position: relative;
   overflow: hidden;
-  background: var(--spectrum-gray-100);
+  background: var(--login-button-avatar-background);
 }
 
 .profile-avatarFallback {
@@ -910,7 +1006,7 @@ body {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--spectrum-gray-100);
+  background: var(--login-button-avatar-background);
   color: var(--spectrum-neutral-content-color-default);
   font-size: var(--spectrum-font-size-300);
   font-weight: var(--spectrum-bold-font-weight);
@@ -958,9 +1054,9 @@ body {
 .user-dataList {
   max-block-size: min(32rem, 42vh);
   overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 38%, transparent);
+  border: 1px solid var(--login-button-surface-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background: var(--spectrum-background-base-color);
+  background: var(--login-button-surface-background-strong);
 }
 
 .user-dataRow {
@@ -968,7 +1064,7 @@ body {
   gap: var(--spectrum-spacing-150);
   align-items: start;
   padding: var(--spectrum-spacing-175) var(--spectrum-spacing-200);
-  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-300) 52%, transparent);
+  border-top: 1px solid var(--login-button-divider-color);
 }
 
 .user-dataRow:first-child {
@@ -981,9 +1077,9 @@ body {
 
 .meta-item {
   padding: var(--spectrum-spacing-300);
-  border: 1px solid var(--spectrum-gray-300);
+  border: 1px solid var(--login-button-muted-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background: var(--spectrum-gray-50);
+  background: var(--login-button-muted-background);
 }
 
 .surface--debug {
@@ -998,7 +1094,7 @@ body {
   position: sticky;
   inset-block-end: 0;
   z-index: 20;
-  box-shadow: 0 -10px 24px color-mix(in srgb, var(--spectrum-black) 10%, transparent);
+  box-shadow: var(--login-button-floating-shadow);
   max-block-size: min(48vh, 30rem);
   transition:
     inline-size 180ms ease,
@@ -1015,9 +1111,7 @@ body {
   justify-self: end;
   padding: var(--spectrum-spacing-150) var(--spectrum-spacing-200);
   border-radius: 999px;
-  box-shadow:
-    0 14px 30px color-mix(in srgb, var(--spectrum-black) 16%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent);
+  box-shadow: var(--login-button-floating-shadow);
 }
 
 .debug-header {
@@ -1067,7 +1161,7 @@ body {
   margin: 0;
   padding: 0.125rem 0.5rem;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--spectrum-accent-background-color-default) 14%, transparent);
+  background: var(--login-button-selection-fill);
   color: var(--spectrum-accent-content-color-default);
   white-space: nowrap;
 }
@@ -1136,7 +1230,7 @@ body {
   display: grid;
   place-items: center;
   padding: var(--spectrum-spacing-600);
-  background: color-mix(in srgb, var(--spectrum-black) 30%, transparent);
+  background: var(--login-button-overlay-background);
   backdrop-filter: blur(4px);
 }
 
@@ -1145,7 +1239,8 @@ body {
   padding: var(--spectrum-spacing-700);
   border: 2px dashed var(--spectrum-accent-border-color-default);
   border-radius: var(--spectrum-corner-radius-300);
-  background: var(--spectrum-background-elevated-color);
+  background: var(--login-button-floating-surface-background);
+  box-shadow: var(--login-button-floating-shadow);
   text-align: center;
 }
 
