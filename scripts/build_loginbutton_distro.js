@@ -2,8 +2,12 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const [, , repoRootArg, stagingRootArg] = process.argv;
+
+const DISTRO_MANIFEST_KEY =
+  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4ggRrOiQdavkh68HgTSj/bSdfBx2OtHqAKWA9iEeCua5/oEQ9I8to7L+Rx5rzFHEFYP62MtAyUBvIrssFeiWrYN1UPO1tQKScTSbzgm2axbtdPLs9emkRv2QeKDECROnzijV4M/48YV6u1VCXYYUU8cTyV5TwwxvtEV/4BSooFdv2NhMxeRJjUOeOLtB8vGPNM567i6WMYX86iVuuBzTRNfQEoDnKBCzjSCgXE/ncMGT26aqP0PwhjBwbUDjk5JEgYXrbsqlO4MD8mAUXT+DSdHH6F2HMCO9DC7jmuRJetgBbMYh6SBsEmjm73MPf/paG0FJtSPcKejv6hOD79vORQIDAQAB";
 
 if (!repoRootArg || !stagingRootArg) {
   console.error("Usage: build_loginbutton_distro.js <repo-root> <staging-root>");
@@ -12,224 +16,139 @@ if (!repoRootArg || !stagingRootArg) {
 
 const repoRoot = path.resolve(repoRootArg);
 const stagingRoot = path.resolve(stagingRootArg);
-const includedFiles = new Set();
-const queue = [];
+let copiedFileCount = 0;
 
-function isLocalAssetSpecifier(rawSpecifier) {
-  const specifier = String(rawSpecifier || "").trim();
-  if (!specifier) {
-    return false;
-  }
-
-  const normalized = specifier.toLowerCase();
-  if (
-    normalized.startsWith("http:") ||
-    normalized.startsWith("https:") ||
-    normalized.startsWith("data:") ||
-    normalized.startsWith("blob:") ||
-    normalized.startsWith("mailto:") ||
-    normalized.startsWith("tel:") ||
-    normalized.startsWith("javascript:") ||
-    normalized.startsWith("chrome:") ||
-    normalized.startsWith("chrome-extension:") ||
-    normalized.startsWith("about:")
-  ) {
-    return false;
-  }
-
-  if (specifier.startsWith("#")) {
-    return false;
-  }
-
-  return true;
-}
-
-function normalizeSpecifier(rawSpecifier) {
-  return String(rawSpecifier || "")
-    .trim()
-    .replace(/^url\(/i, "")
-    .replace(/\)$/u, "")
-    .replace(/^['"]|['"]$/g, "")
-    .split("#")[0]
-    .split("?")[0]
+function normalizeRelativePath(relativePath) {
+  return String(relativePath || "")
+    .split(path.sep)
+    .join("/")
+    .replace(/^\.\//u, "")
     .trim();
 }
 
-function resolveLocalPath(fromFile, rawSpecifier) {
-  const specifier = normalizeSpecifier(rawSpecifier);
-  if (!isLocalAssetSpecifier(specifier)) {
-    return null;
+function shouldExcludeRelativePath(relativePath) {
+  const normalizedPath = normalizeRelativePath(relativePath);
+  if (!normalizedPath) {
+    return false;
   }
 
-  let resolvedPath = "";
-  if (specifier.startsWith("/")) {
-    resolvedPath = path.resolve(repoRoot, `.${specifier}`);
-  } else if (specifier.startsWith("@")) {
-    resolvedPath = path.resolve(repoRoot, "node_modules", specifier);
-  } else {
-    resolvedPath = path.resolve(path.dirname(fromFile), specifier);
+  const segments = normalizedPath.split("/");
+  const basename = segments[segments.length - 1];
+
+  if (segments.includes(".git") || segments.includes(".githooks")) {
+    return true;
+  }
+  if (basename === ".DS_Store" || basename === "ZIP.KEY") {
+    return true;
+  }
+  if (segments.length === 1 && /\.zip$/iu.test(basename)) {
+    return true;
   }
 
-  const relativePath = path.relative(repoRoot, resolvedPath);
+  return false;
+}
+
+function resolveRelativePath(sourcePath) {
+  const relativePath = path.relative(repoRoot, sourcePath);
   if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     return null;
   }
 
-  if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-    return null;
-  }
-
-  return resolvedPath;
+  return normalizeRelativePath(relativePath);
 }
 
-function enqueue(filePath) {
-  const normalizedPath = path.resolve(filePath);
-  if (includedFiles.has(normalizedPath)) {
+function copyFileToStaging(sourcePath, relativePath) {
+  if (shouldExcludeRelativePath(relativePath)) {
     return;
   }
 
-  includedFiles.add(normalizedPath);
-  queue.push(normalizedPath);
-}
-
-function copyToStaging(sourcePath) {
-  const relativePath = path.relative(repoRoot, sourcePath);
-  const destinationPath = path.join(stagingRoot, relativePath);
+  const normalizedRelativePath = normalizeRelativePath(relativePath);
+  const destinationPath = path.join(stagingRoot, normalizedRelativePath);
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
   fs.copyFileSync(sourcePath, destinationPath);
+  fs.chmodSync(destinationPath, fs.statSync(sourcePath).mode);
+  copiedFileCount += 1;
 }
 
-function addManifestEntries(filePath) {
-  const manifest = JSON.parse(fs.readFileSync(filePath, "utf8"));
+function walkAndCopyDirectory(directoryPath, baseRelativePath = "") {
+  const directoryEntries = fs
+    .readdirSync(directoryPath, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name));
 
-  const addLiteral = (relativePath) => {
-    const resolvedPath = resolveLocalPath(filePath, relativePath);
-    if (resolvedPath) {
-      enqueue(resolvedPath);
-    }
-  };
-
-  const addMaybeArray = (value) => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        addLiteral(item);
-      }
-      return;
+  for (const directoryEntry of directoryEntries) {
+    const relativePath = normalizeRelativePath(path.join(baseRelativePath, directoryEntry.name));
+    if (shouldExcludeRelativePath(relativePath)) {
+      continue;
     }
 
-    addLiteral(value);
-  };
+    const absolutePath = path.join(directoryPath, directoryEntry.name);
+    if (directoryEntry.isDirectory()) {
+      walkAndCopyDirectory(absolutePath, relativePath);
+      continue;
+    }
 
-  addMaybeArray(Object.values(manifest.icons || {}));
-  addMaybeArray(Object.values(manifest.action?.default_icon || {}));
-  addMaybeArray(Object.values(manifest.side_panel?.default_icon || {}));
-  addMaybeArray(Object.values(manifest.options_ui?.icons || {}));
-  addMaybeArray(Object.values(manifest.chrome_url_overrides || {}));
-  addMaybeArray(manifest.background?.scripts);
-  addMaybeArray(manifest.background?.service_worker);
-  addMaybeArray(manifest.action?.default_popup);
-  addMaybeArray(manifest.devtools_page);
-  addMaybeArray(manifest.options_page);
-  addMaybeArray(manifest.options_ui?.page);
-  addMaybeArray(manifest.side_panel?.default_path);
-  addMaybeArray(manifest.sandbox?.pages);
-
-  for (const contentScript of manifest.content_scripts || []) {
-    addMaybeArray(contentScript.js);
-    addMaybeArray(contentScript.css);
-  }
-
-  for (const resourceBlock of manifest.web_accessible_resources || []) {
-    for (const resource of resourceBlock.resources || []) {
-      if (!String(resource || "").includes("*")) {
-        addLiteral(resource);
-      }
+    if (directoryEntry.isFile()) {
+      copyFileToStaging(absolutePath, relativePath);
     }
   }
 }
 
-function addHtmlDependencies(filePath, sourceText) {
-  const attributePattern = /\b(?:src|href)=["']([^"'#]+)["']/g;
-  for (const match of sourceText.matchAll(attributePattern)) {
-    const resolvedPath = resolveLocalPath(filePath, match[1]);
-    if (resolvedPath) {
-      enqueue(resolvedPath);
-    }
+function collectTrackedFiles() {
+  try {
+    const output = execFileSync("git", ["ls-files", "-z"], {
+      cwd: repoRoot,
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+
+    return output
+      .toString("utf8")
+      .split("\0")
+      .map((entry) => normalizeRelativePath(entry))
+      .filter(Boolean)
+      .filter((relativePath) => !shouldExcludeRelativePath(relativePath))
+      .filter((relativePath) => fs.existsSync(path.join(repoRoot, relativePath)))
+      .filter((relativePath) => fs.statSync(path.join(repoRoot, relativePath)).isFile());
+  } catch (error) {
+    return [];
   }
 }
 
-function addJsDependencies(filePath, sourceText) {
-  const staticImportPattern = /\b(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?["']([^"']+)["']/g;
-  const dynamicImportPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-  const importMetaUrlPattern = /new\s+URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g;
-
-  for (const pattern of [staticImportPattern, dynamicImportPattern, importMetaUrlPattern]) {
-    for (const match of sourceText.matchAll(pattern)) {
-      const resolvedPath = resolveLocalPath(filePath, match[1]);
-      if (resolvedPath) {
-        enqueue(resolvedPath);
-      }
-    }
-  }
-}
-
-function addCssDependencies(filePath, sourceText) {
-  const importPattern = /@import\s+(?:url\(\s*)?["']?([^"'()]+)["']?\s*\)?/g;
-  const urlPattern = /url\(\s*["']?([^"'()]+)["']?\s*\)/g;
-
-  for (const pattern of [importPattern, urlPattern]) {
-    for (const match of sourceText.matchAll(pattern)) {
-      const resolvedPath = resolveLocalPath(filePath, match[1]);
-      if (resolvedPath) {
-        enqueue(resolvedPath);
-      }
-    }
-  }
-}
-
-function processFile(filePath) {
-  copyToStaging(filePath);
-
-  const extension = path.extname(filePath).toLowerCase();
-  if (![".json", ".html", ".js", ".mjs", ".css"].includes(extension)) {
+function copyTrackedFilesAndDependencies() {
+  const trackedFiles = collectTrackedFiles();
+  if (trackedFiles.length === 0) {
+    walkAndCopyDirectory(repoRoot);
     return;
   }
 
-  const sourceText = fs.readFileSync(filePath, "utf8");
-  if (path.basename(filePath) === "manifest.json") {
-    addManifestEntries(filePath);
-    return;
-  }
+  trackedFiles
+    .sort((left, right) => left.localeCompare(right))
+    .forEach((relativePath) => {
+      copyFileToStaging(path.join(repoRoot, relativePath), relativePath);
+    });
 
-  if (extension === ".html") {
-    addHtmlDependencies(filePath, sourceText);
-    return;
-  }
-
-  if (extension === ".js" || extension === ".mjs") {
-    addJsDependencies(filePath, sourceText);
-    return;
-  }
-
-  if (extension === ".css") {
-    addCssDependencies(filePath, sourceText);
+  const nodeModulesPath = path.join(repoRoot, "node_modules");
+  if (fs.existsSync(nodeModulesPath) && fs.statSync(nodeModulesPath).isDirectory()) {
+    walkAndCopyDirectory(nodeModulesPath, "node_modules");
   }
 }
 
-const manifestPath = path.join(repoRoot, "manifest.json");
-if (!fs.existsSync(manifestPath)) {
-  console.error("manifest.json not found.");
-  process.exit(1);
+function injectPackagedManifestKey() {
+  const manifestPath = path.join(stagingRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    console.error("manifest.json not found.");
+    process.exit(1);
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.key = DISTRO_MANIFEST_KEY;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-enqueue(manifestPath);
+copyTrackedFilesAndDependencies();
+injectPackagedManifestKey();
 
-while (queue.length > 0) {
-  const nextFile = queue.shift();
-  processFile(nextFile);
-}
-
-if (includedFiles.size === 0) {
+if (copiedFileCount === 0) {
   console.error("No extension files available to package.");
   process.exit(1);
 }
