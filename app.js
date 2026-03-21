@@ -52,12 +52,25 @@ import {
   normalizeThemeAccent,
   normalizeThemePreference
 } from "./theme-palette.js";
+import {
+  exportLoginButtonVaultSnapshot,
+  importLoginButtonVaultSnapshot,
+  LOGINBUTTON_VAULT_PROGRAMMER_RECORD_TTL_MS,
+  assessProgrammerVaultRecord,
+  mergeProgrammerVaultSelections,
+  primeLoginButtonVault,
+  readProgrammerVaultRecord,
+  writeEnvironmentVaultGlobals,
+  writeProgrammerVaultRecord
+} from "./vault.js";
 
 const BUILD_VERSION = chrome.runtime.getManifest().version;
 const DEFAULT_CONFIG_STATUS_MESSAGE = "Drop key.";
 const DEFAULT_DEBUG_TOGGLE_LABEL = "DEBUG INFO";
 const DEFAULT_DEBUG_TOGGLE_META = "Click copies. Shift+click toggles details.";
 const DEFAULT_DEBUG_COPY_STATUS = "Copied to clipboard";
+const DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE =
+  "Export hydrated programmer records or import a VAULT from another Login Button user.";
 const ORG_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_other_org__";
 const ORG_PICKER_REAUTH_VALUE = "__loginbutton_reauth_org__";
 const ORG_PICKER_UNAVAILABLE_VALUE = "__loginbutton_unavailable_org__";
@@ -82,7 +95,10 @@ const UNIFIED_SHELL_API_KEY = "exc_app";
 const UNIFIED_SHELL_OPERATION_NAME = "loginButtonShellInitDataQuery";
 const CM_BASE_URL = "https://config.adobeprimetime.com";
 const CM_REPORTS_BASE_URL = "https://cm-reports.adobeprimetime.com";
+const ADOBE_SP_BASE_URL = "https://sp.auth.adobe.com";
 const CM_TENANTS_PATH = "/core/tenants";
+const DCR_REGISTER_PATH = "/o/client/register";
+const DCR_TOKEN_PATH = "/o/client/token";
 const CM_TENANTS_OWNER_ORG_ID = "adobe";
 const CM_CONSOLE_IMS_CHECK_TOKEN_ENDPOINT = "https://adobeid-na1.services.adobe.com/ims/check/v6/token";
 const CM_CONSOLE_IMS_VALIDATE_TOKEN_ENDPOINT = `${IMS_ISSUER_URL}/ims/validate_token/v1?jslVersion=loginbutton-cm`;
@@ -98,6 +114,18 @@ const CM_REPORTS_APP_ORIGIN = "https://cdn.experience.adobe.net";
 const CM_REPORTS_APP_REFERER = `${CM_REPORTS_APP_ORIGIN}/`;
 const CONSOLE_PAGE_CONTEXT_ALLOWED_ORIGINS = [ADOBE_PASS_CONSOLE_APP_ORIGIN];
 const CM_REPORTS_SUMMARY_PATH = "/v2/year/month";
+const PREMIUM_SERVICE_SCOPE_RULES = [
+  { label: "REST API V2", scope: "api:client:v2" },
+  { label: "ESM", scope: "analytics:client" },
+  { label: "degradation", scope: "decisions:owner" },
+  { label: "reset TempPass", scope: "temporary:passes:owner" }
+];
+const VAULT_DCR_SERVICE_DEFINITIONS = [
+  { serviceKey: "restV2", label: "REST API V2", requiredScope: "api:client:v2" },
+  { serviceKey: "esm", label: "ESM", requiredScope: "analytics:client" },
+  { serviceKey: "degradation", label: "degradation", requiredScope: "decisions:owner" }
+];
+const PREMIUM_SERVICE_CONCURRENCY_LABEL = "Concurrency Monitoring";
 const REGISTERED_APPLICATION_SCOPE_LABELS = {
   "api:client:v2": "REST API V2",
   "analytics:client": "ESM",
@@ -170,6 +198,7 @@ const themePickerPopover = document.getElementById("themePickerPopover");
 const themeSwatchGrid = document.getElementById("themeSwatchGrid");
 const setupView = document.getElementById("setupView");
 const zipKeyFileInput = document.getElementById("zipKeyFileInput");
+const vaultImportInput = document.getElementById("vaultImportInput");
 const zipKeyBrowseButton = document.getElementById("zipKeyBrowseButton");
 const zipKeyDropSurface = document.getElementById("zipKeyDropSurface");
 const zipKeyStatus = document.getElementById("zipKeyStatus");
@@ -180,6 +209,9 @@ const authenticatedView = document.getElementById("authenticatedView");
 const loginButton = document.getElementById("loginButton");
 const loadZipKeyButton = document.getElementById("loadZipKeyButton");
 const logoutButton = document.getElementById("logoutButton");
+const exportVaultButton = document.getElementById("exportVaultButton");
+const importVaultButton = document.getElementById("importVaultButton");
+const vaultTransferStatus = document.getElementById("vaultTransferStatus");
 const loginStatus = document.getElementById("loginStatus");
 const authenticatedHero = document.getElementById("authenticatedHero");
 const avatarMenuButton = document.getElementById("avatarMenuButton");
@@ -207,6 +239,8 @@ const cmTenantPicker = document.getElementById("cmTenantPicker");
 const cmTenantPickerSection = document.getElementById("cmTenantPickerContainer");
 const organizationPicker = document.getElementById("organizationPicker");
 const programmerPickerSection = document.getElementById("programmerPickerContainer");
+const premiumServicesSection = document.getElementById("premiumServicesContainer");
+const premiumServicesList = document.getElementById("premiumServicesList");
 const requestorPicker = document.getElementById("requestorPicker");
 const requestorPickerSection = document.getElementById("requestorPickerContainer");
 const registeredApplicationPicker = document.getElementById("registeredApplicationPicker");
@@ -276,13 +310,20 @@ const state = {
   lastSilentAuthAttemptAt: 0,
   dragActive: false,
   postLoginHydrationInFlight: false,
+  vaultTransferBusy: false,
   selectedCmTenantId: "",
   selectedProgrammerId: "",
   selectedRegisteredApplicationId: "",
   selectedRequestorId: "",
   programmerApplicationsLoadingFor: "",
+  selectedProgrammerVaultRecord: null,
+  premiumServiceExpandedKeys: [],
   configStatus: {
     message: DEFAULT_CONFIG_STATUS_MESSAGE,
+    tone: ""
+  },
+  vaultTransferStatus: {
+    message: DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE,
     tone: ""
   },
   selectedOrganizationSwitchKey: "",
@@ -331,6 +372,7 @@ organizationPicker.addEventListener("change", (event) => {
     state.selectedProgrammerId = "";
     state.selectedRegisteredApplicationId = "";
     state.selectedRequestorId = "";
+    state.selectedProgrammerVaultRecord = null;
     render();
     return;
   }
@@ -338,6 +380,7 @@ organizationPicker.addEventListener("change", (event) => {
   state.selectedProgrammerId = nextValue;
   state.selectedRegisteredApplicationId = "";
   state.selectedRequestorId = "";
+  state.selectedProgrammerVaultRecord = null;
   render();
   void ensureSelectedProgrammerApplicationsLoaded(nextValue);
 });
@@ -352,11 +395,13 @@ if (registeredApplicationPicker) {
     ) {
       state.selectedRegisteredApplicationId = "";
       render();
+      void persistSelectedProgrammerVaultSelections();
       return;
     }
 
     state.selectedRegisteredApplicationId = nextValue;
     render();
+    void persistSelectedProgrammerVaultSelections();
   });
 }
 
@@ -370,11 +415,13 @@ if (requestorPicker) {
     ) {
       state.selectedRequestorId = "";
       render();
+      void persistSelectedProgrammerVaultSelections();
       return;
     }
 
     state.selectedRequestorId = nextValue;
     render();
+    void persistSelectedProgrammerVaultSelections();
   });
 }
 
@@ -392,6 +439,7 @@ if (cmTenantPicker) {
 
     state.selectedCmTenantId = nextValue;
     render();
+    void persistSelectedProgrammerVaultSelections();
   });
 }
 
@@ -439,10 +487,32 @@ zipKeyFileInput.addEventListener("change", async (event) => {
   await importZipKeyFiles(event.currentTarget?.files);
 });
 
+if (vaultImportInput) {
+  vaultImportInput.addEventListener("change", async (event) => {
+    await importVaultFiles(event.currentTarget?.files);
+  });
+}
+
 logoutButton.addEventListener("click", async () => {
   setAvatarMenuOpen(false);
   await logout();
 });
+
+if (exportVaultButton) {
+  exportVaultButton.addEventListener("click", async () => {
+    await exportVaultFromContextMenu();
+  });
+}
+
+if (importVaultButton) {
+  importVaultButton.addEventListener("click", () => {
+    if (state.vaultTransferBusy || !vaultImportInput) {
+      return;
+    }
+
+    vaultImportInput.click();
+  });
+}
 
 avatarMenuButton.addEventListener("click", () => {
   if (avatarMenuButton.disabled) {
@@ -505,6 +575,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
       state.programmerApplicationsLoadingFor = "";
+      state.selectedProgrammerVaultRecord = null;
     }
   }
 
@@ -532,6 +603,9 @@ async function initialize() {
     state.session = stored[SESSION_KEY] || null;
     state.theme = normalizeThemePreference(stored[THEME_STORAGE_KEY] || DEFAULT_THEME);
     applyThemePreferenceToDocument(state.theme);
+    void primeLoginButtonVault().catch((error) => {
+      log(`LoginButton VAULT unavailable: ${serializeError(error)}`);
+    });
     await loadRuntimeConfig();
     await loadAuthConfiguration({ silent: true });
 
@@ -810,6 +884,7 @@ async function logout() {
     state.selectedRegisteredApplicationId = "";
     state.selectedRequestorId = "";
     state.programmerApplicationsLoadingFor = "";
+    state.selectedProgrammerVaultRecord = null;
     state.selectedOrganizationSwitchKey = "";
     log("Local Adobe IMS session cleared.");
   } catch (error) {
@@ -1056,7 +1131,7 @@ async function attemptSessionHydration({
     tokenEndpoint: firstNonEmptyString([authConfiguration?.token_endpoint, DEFAULT_AUTH_CONFIGURATION.token_endpoint]),
     extensionId: state.runtime.extensionId,
     hasManifestKey: state.runtime.hasManifestKey,
-    transport: interactive ? "browser-popup-monitor" : "chrome.identity.launchWebAuthFlow",
+    transport: "chrome.identity.launchWebAuthFlow",
     interactive,
     prompt,
     reason
@@ -1085,20 +1160,17 @@ async function attemptSessionHydration({
     if (interactive) {
       state.interactiveAuthInFlight = true;
       render();
-      callbackUrl = await launchInteractiveAuthPopup({
-        authorizeUrl,
-        redirectUri,
-        timeoutMs: INTERACTIVE_AUTH_TIMEOUT_MS
-      });
-    } else {
-      const launchDetails = {
-        url: authorizeUrl,
-        interactive
-      };
+    }
+
+    const launchDetails = {
+      url: authorizeUrl,
+      interactive
+    };
+    if (!interactive) {
       launchDetails.abortOnLoadForNonInteractive = false;
       launchDetails.timeoutMsForNonInteractive = 10000;
-      callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
     }
+    callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
       recordAuthOutcome({
@@ -1406,6 +1478,13 @@ async function hydratePostLoginSessionData(session, { reason = "post-login" } = 
     additionalOrganizations: nextUnifiedShellContext?.organizations,
     activeOrganizationHint: buildOrganizationContextFromSession(currentSession).activeOrganization
   });
+  void persistEnvironmentVaultGlobalsFromSession({
+    session: currentSession,
+    consoleContext: nextConsoleContext,
+    cmContext: nextCmContext
+  }).catch((error) => {
+    log(`LoginButton VAULT CM globals write failed: ${serializeError(error)}`);
+  });
 
   return {
     ...currentSession,
@@ -1414,6 +1493,66 @@ async function hydratePostLoginSessionData(session, { reason = "post-login" } = 
     unifiedShell: nextUnifiedShellContext,
     detectedOrganizations: mergedDetectedOrganizations
   };
+}
+
+function buildEnvironmentVaultGlobalsInput({ session = null, consoleContext = null, cmContext = null } = {}) {
+  const normalizedConsoleContext = consoleContext && typeof consoleContext === "object" ? consoleContext : {};
+  const normalizedCmContext = cmContext && typeof cmContext === "object" ? cmContext : {};
+  const environmentId = firstNonEmptyString([
+    normalizedConsoleContext.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  if (!environmentId) {
+    return null;
+  }
+
+  const environmentLabel = firstNonEmptyString([
+    normalizedConsoleContext.environmentLabel,
+    getConsoleEnvironmentMeta(environmentId).label
+  ]);
+  const tenants = Array.isArray(normalizedCmContext.tenants) ? normalizedCmContext.tenants : [];
+
+  return {
+    environmentId,
+    environmentLabel,
+    cmGlobal: {
+      status: firstNonEmptyString([normalizedCmContext.status]),
+      cmuTokenHeaderName: firstNonEmptyString([normalizedCmContext.cmuTokenHeaderName]),
+      cmuTokenClientId: firstNonEmptyString([normalizedCmContext.cmuTokenClientId]),
+      cmuTokenScope: firstNonEmptyString([normalizedCmContext.cmuTokenScope]),
+      cmuTokenUserId: firstNonEmptyString([
+        normalizedCmContext.cmuTokenUserId,
+        session?.imsSession?.userId
+      ]),
+      cmuTokenSource: firstNonEmptyString([normalizedCmContext.cmuTokenSource]),
+      cmuTokenExpiresAt: firstNonEmptyString([normalizedCmContext.cmuTokenExpiresAt]),
+      tokenPresent: Boolean(normalizedCmContext.cmuTokenHeaderValue)
+    },
+    cmTenants: {
+      fetchedAt: firstNonEmptyString([normalizedCmContext.hydratedAt]),
+      tenantCount: tenants.length,
+      tenants: tenants.map((tenant) => ({
+        key: firstNonEmptyString([tenant?.key, tenant?.id]),
+        id: firstNonEmptyString([tenant?.id, tenant?.key]),
+        name: firstNonEmptyString([tenant?.name]),
+        label: firstNonEmptyString([tenant?.label, tenant?.name, tenant?.id])
+      }))
+    }
+  };
+}
+
+async function persistEnvironmentVaultGlobalsFromSession({ session = null, consoleContext = null, cmContext = null } = {}) {
+  const input = buildEnvironmentVaultGlobalsInput({
+    session,
+    consoleContext,
+    cmContext
+  });
+  if (!input) {
+    return null;
+  }
+
+  return writeEnvironmentVaultGlobals(input);
 }
 
 async function buildConsoleContext(session, reason = "post-login") {
@@ -1632,6 +1771,7 @@ async function buildConsoleContext(session, reason = "post-login") {
     environmentLabel: environmentMeta.label,
     expectedImsEnvironment: environmentMeta.imsEnvironment,
     baseUrl,
+    csrfToken,
     transport,
     pageContextOrigin,
     pageContextUrl,
@@ -1875,10 +2015,12 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
   const applicationsByProgrammer =
     consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
       ? consoleContext.applicationsByProgrammer
-      : {};
+    : {};
   const existingApplications = Array.isArray(applicationsByProgrammer?.[normalizedProgrammerId])
     ? applicationsByProgrammer[normalizedProgrammerId]
     : null;
+  const vaultLookupContext = buildProgrammerVaultLookupContext(currentSession, normalizedProgrammerId);
+  let hydratedFromVault = false;
 
   if (!normalizedProgrammerId || !currentSession?.accessToken) {
     return;
@@ -1891,28 +2033,39 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
     return;
   }
 
-  state.programmerApplicationsLoadingFor = normalizedProgrammerId;
-  render();
-
-  const result = await settle(() => fetchProgrammerRegisteredApplications(currentSession, normalizedProgrammerId));
-  if (state.selectedProgrammerId !== normalizedProgrammerId) {
-    if (state.programmerApplicationsLoadingFor === normalizedProgrammerId) {
-      state.programmerApplicationsLoadingFor = "";
-      render();
+  if (vaultLookupContext) {
+    const vaultReadResult = await settle(() => readProgrammerVaultRecord(vaultLookupContext));
+    if (!vaultReadResult.ok) {
+      log(`LoginButton VAULT read failed for ${normalizedProgrammerId}: ${serializeError(vaultReadResult.error)}`);
+    } else if (vaultReadResult.value) {
+      const vaultAssessment = assessProgrammerVaultRecord(vaultReadResult.value, vaultLookupContext);
+      if (vaultAssessment.reusable) {
+        hydratedFromVault = hydrateSelectedProgrammerFromVaultRecord(vaultReadResult.value, normalizedProgrammerId, {
+          restoreSelections: true
+        });
+        log(
+          `LoginButton VAULT ${vaultAssessment.stale ? "stale hit" : "hit"} for ${normalizedProgrammerId} (${vaultAssessment.reason}).`
+        );
+        if (!vaultAssessment.needsRefresh) {
+          render();
+          return;
+        }
+      } else {
+        log(`LoginButton VAULT record for ${normalizedProgrammerId} requires refresh (${vaultAssessment.reason}).`);
+      }
+    } else {
+      log(`LoginButton VAULT miss for ${normalizedProgrammerId}.`);
     }
-    return;
   }
 
+  if (!hydratedFromVault) {
+    state.programmerApplicationsLoadingFor = normalizedProgrammerId;
+    render();
+  }
+
+  const result = await settle(() => fetchProgrammerRegisteredApplications(currentSession, normalizedProgrammerId));
+
   const liveSession = state.session && typeof state.session === "object" ? state.session : null;
-  const liveConsole = liveSession?.console && typeof liveSession.console === "object" ? liveSession.console : {};
-  const liveApplicationsByProgrammer =
-    liveConsole?.applicationsByProgrammer && typeof liveConsole.applicationsByProgrammer === "object"
-      ? liveConsole.applicationsByProgrammer
-      : {};
-  const liveApplicationErrorsByProgrammer =
-    liveConsole?.applicationErrorsByProgrammer && typeof liveConsole.applicationErrorsByProgrammer === "object"
-      ? liveConsole.applicationErrorsByProgrammer
-      : {};
 
   state.programmerApplicationsLoadingFor = "";
 
@@ -1923,42 +2076,26 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
 
   if (!result.ok) {
     log(`Adobe Pass registered applications fetch failed: ${serializeError(result.error)}`);
-    state.session = {
-      ...liveSession,
-      console: {
-        ...liveConsole,
-        applicationErrorsByProgrammer: {
-          ...liveApplicationErrorsByProgrammer,
-          [normalizedProgrammerId]: serializeError(result.error)
-        },
-        applicationsByProgrammer: {
-          ...liveApplicationsByProgrammer,
-          [normalizedProgrammerId]: []
-        }
-      }
-    };
+    state.session = mergeProgrammerApplicationsErrorIntoSession(liveSession, normalizedProgrammerId, result.error, {
+      preserveExistingApplications: hydratedFromVault
+    });
     render();
     return;
   }
 
-  state.session = {
-    ...liveSession,
-    console: {
-      ...liveConsole,
-      transport: firstNonEmptyString([result.value?.transport, liveConsole?.transport]),
-      csrfToken: firstNonEmptyString([result.value?.csrfToken, liveConsole?.csrfToken]),
-      pageContextOrigin: firstNonEmptyString([result.value?.pageContext?.origin, liveConsole?.pageContextOrigin]),
-      pageContextUrl: firstNonEmptyString([result.value?.pageContext?.url, liveConsole?.pageContextUrl]),
-      applicationsByProgrammer: {
-        ...liveApplicationsByProgrammer,
-        [normalizedProgrammerId]: Array.isArray(result.value?.applications) ? result.value.applications : []
-      },
-      applicationErrorsByProgrammer: {
-        ...liveApplicationErrorsByProgrammer,
-        [normalizedProgrammerId]: ""
-      }
-    }
-  };
+  const mergedSession = mergeProgrammerApplicationsIntoSession(liveSession, normalizedProgrammerId, result.value);
+  void persistProgrammerVaultSnapshot(mergedSession, normalizedProgrammerId, {
+    source: "network"
+  }).catch((error) => {
+    log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+  });
+
+  if (state.selectedProgrammerId !== normalizedProgrammerId) {
+    render();
+    return;
+  }
+
+  state.session = mergedSession;
   render();
 }
 
@@ -2886,7 +3023,7 @@ function buildConsoleFallbackError(directError, fallbackError) {
   const directMessage = serializeError(directError);
   const fallbackMessage = serializeError(fallbackError);
   if (directMessage && fallbackMessage) {
-    return new Error(`Direct IMS console request failed: ${directMessage}. Adobe page-context fallback failed: ${fallbackMessage}`);
+    return new Error(`Direct IMS console request failed: ${directMessage}. Existing Adobe page-context fallback failed: ${fallbackMessage}`);
   }
   return fallbackError || directError || new Error("Adobe Pass console request failed.");
 }
@@ -2900,11 +3037,28 @@ async function fetchConsoleJsonWithFallback({
   environmentId = CONSOLE_DEFAULT_ENVIRONMENT,
   pageContextTargetRef = null
 }) {
+  const directResult = await settle(() =>
+    fetchConsoleJson({
+      baseUrl,
+      path,
+      accessToken,
+      csrfToken,
+      queryParams
+    })
+  );
+  if (directResult.ok) {
+    return {
+      ...directResult.value,
+      transport: "ims-bearer:direct",
+      pageContext: null
+    };
+  }
+
   let consolePageContextTarget =
     pageContextTargetRef && typeof pageContextTargetRef === "object" ? pageContextTargetRef.target : null;
   if (Number(consolePageContextTarget?.tabId || 0) <= 0) {
     consolePageContextTarget = await resolveAdobeConsolePageContextTarget({
-      allowTemporaryTab: true,
+      allowTemporaryTab: false,
       environmentId
     });
     if (pageContextTargetRef && typeof pageContextTargetRef === "object") {
@@ -2914,7 +3068,9 @@ async function fetchConsoleJsonWithFallback({
 
   const consoleTabId = Number(consolePageContextTarget?.tabId || 0);
   let pageContextError =
-    consoleTabId > 0 ? null : new Error("Unable to open an Adobe Pass console page context for the live console hydration.");
+    consoleTabId > 0
+      ? null
+      : new Error("No existing Adobe Pass console page context is available for fallback.");
   if (consoleTabId > 0) {
     const pageContextResult = await settle(() =>
       fetchConsoleJsonViaAdobePageContext({
@@ -2934,23 +3090,6 @@ async function fetchConsoleJsonWithFallback({
       };
     }
     pageContextError = pageContextResult.error;
-  }
-
-  const directResult = await settle(() =>
-    fetchConsoleJson({
-      baseUrl,
-      path,
-      accessToken,
-      csrfToken,
-      queryParams
-    })
-  );
-  if (directResult.ok) {
-    return {
-      ...directResult.value,
-      transport: "ims-bearer:direct",
-      pageContext: null
-    };
   }
 
   throw buildConsoleFallbackError(directResult.error, pageContextError);
@@ -3977,6 +4116,506 @@ function normalizeConsoleChannels(payload) {
   });
 }
 
+function isProbablyJwtToken(value = "") {
+  const normalizedValue = String(value || "").trim();
+  if (normalizedValue.length < 60) {
+    return false;
+  }
+
+  const parts = normalizedValue.split(".");
+  return parts.length === 3 && /^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/.test(normalizedValue);
+}
+
+function extractSoftwareStatementFromApplicationData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return "";
+  }
+
+  const directCandidates = [
+    applicationData.softwareStatement,
+    applicationData.software_statement,
+    applicationData.softwarestatement,
+    applicationData.software?.statement,
+    applicationData.client?.softwareStatement,
+    applicationData.client?.software_statement,
+    applicationData.clientApplication?.softwareStatement,
+    applicationData.clientApplication?.software_statement,
+    applicationData.registeredClient?.softwareStatement,
+    applicationData.registeredClient?.software_statement,
+    applicationData.raw?.softwareStatement,
+    applicationData.raw?.software_statement,
+    applicationData.raw?.client?.softwareStatement,
+    applicationData.raw?.client?.software_statement
+  ];
+
+  for (const candidate of directCandidates) {
+    const normalizedCandidate = String(candidate || "").trim();
+    if (isProbablyJwtToken(normalizedCandidate)) {
+      return normalizedCandidate;
+    }
+  }
+
+  const seenObjects = new Set();
+  const stack = [applicationData];
+
+  while (stack.length > 0) {
+    const currentNode = stack.pop();
+    if (typeof currentNode === "string") {
+      const normalizedValue = currentNode.trim();
+      if (isProbablyJwtToken(normalizedValue)) {
+        return normalizedValue;
+      }
+      continue;
+    }
+
+    if (!currentNode || typeof currentNode !== "object" || seenObjects.has(currentNode)) {
+      continue;
+    }
+    seenObjects.add(currentNode);
+
+    if (Array.isArray(currentNode)) {
+      currentNode.forEach((value) => {
+        stack.push(value);
+      });
+      continue;
+    }
+
+    Object.values(currentNode).forEach((value) => {
+      stack.push(value);
+    });
+  }
+
+  return "";
+}
+
+function parseDcrResponsePayload(text = "") {
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) {
+    return null;
+  }
+
+  const parsedJson = parseJsonText(normalizedText, null);
+  if (parsedJson && typeof parsedJson === "object") {
+    return parsedJson;
+  }
+
+  const params = new URLSearchParams(normalizedText);
+  const entries = Array.from(params.entries());
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return Object.fromEntries(entries);
+}
+
+function buildVaultCompactRegisteredApplication(application = null) {
+  if (!application || typeof application !== "object") {
+    return null;
+  }
+
+  const normalizedApplication = {
+    key: firstNonEmptyString([application.key, application.id]),
+    id: firstNonEmptyString([application.id, application.key]),
+    name: firstNonEmptyString([application.name]),
+    label: firstNonEmptyString([application.label, application.name, application.id]),
+    clientId: firstNonEmptyString([application.clientId]),
+    scopes: Array.isArray(application.scopes) ? application.scopes.filter(Boolean) : [],
+    scopeLabels: Array.isArray(application.scopeLabels) ? application.scopeLabels.filter(Boolean) : [],
+    type: firstNonEmptyString([application.type]),
+    softwareStatement: extractSoftwareStatementFromApplicationData(application.raw || application)
+  };
+
+  return normalizedApplication.id || normalizedApplication.key ? normalizedApplication : null;
+}
+
+function matchProgrammerCmTenants(selectedProgrammer = null, cmTenants = []) {
+  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
+    return [];
+  }
+
+  const programmerIdentifiers = new Set(
+    [
+      selectedProgrammer.id,
+      selectedProgrammer.name,
+      selectedProgrammer.label,
+      selectedProgrammer.key,
+      selectedProgrammer?.raw?.displayName,
+      selectedProgrammer?.raw?.name
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+  );
+  if (programmerIdentifiers.size === 0) {
+    return [];
+  }
+
+  return (Array.isArray(cmTenants) ? cmTenants : []).filter((tenant) =>
+    [
+      tenant?.id,
+      tenant?.name,
+      tenant?.label,
+      tenant?.key,
+      tenant?.raw?.payload?.name,
+      tenant?.raw?.consoleId
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+      .some((identifier) => programmerIdentifiers.has(identifier))
+  );
+}
+
+function buildProgrammerCmVaultService(selectedProgrammer = null, cmTenants = []) {
+  const matchedTenants = matchProgrammerCmTenants(selectedProgrammer, cmTenants).map((tenant) => ({
+    key: firstNonEmptyString([tenant?.key, tenant?.id]),
+    id: firstNonEmptyString([tenant?.id, tenant?.key]),
+    name: firstNonEmptyString([tenant?.name]),
+    label: firstNonEmptyString([tenant?.label, tenant?.name, tenant?.id])
+  }));
+
+  return {
+    key: "cm",
+    label: PREMIUM_SERVICE_CONCURRENCY_LABEL,
+    available: matchedTenants.length > 0,
+    checked: Array.isArray(cmTenants),
+    matchedTenantCount: matchedTenants.length,
+    matchedTenants,
+    status: matchedTenants.length > 0 ? "ready" : Array.isArray(cmTenants) ? "checked" : "pending"
+  };
+}
+
+function buildProgrammerServiceVaultEntries({
+  registeredApplications = [],
+  selectedProgrammer = null,
+  cmTenants = [],
+  existingVaultRecord = null
+} = {}) {
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
+  const services = {};
+
+  VAULT_DCR_SERVICE_DEFINITIONS.forEach((definition) => {
+    const existingService = existingVaultRecord?.services?.[definition.serviceKey] || null;
+    const matchingApplication = normalizedApplications.find((application) =>
+      (Array.isArray(application?.scopes) ? application.scopes : [])
+        .map((scope) => String(scope || "").trim())
+        .includes(definition.requiredScope)
+    );
+    const registeredApplication = buildVaultCompactRegisteredApplication(
+      matchingApplication || existingService?.registeredApplication || null
+    );
+    const client = existingService?.client && typeof existingService.client === "object"
+      ? {
+          ...existingService.client
+        }
+      : null;
+
+    services[definition.serviceKey] = {
+      key: definition.serviceKey,
+      label: definition.label,
+      available: Boolean(registeredApplication),
+      requiredScope: definition.requiredScope,
+      registeredApplication,
+      client,
+      status: registeredApplication ? (client?.clientId && client?.clientSecret ? "ready" : "pending") : "unavailable"
+    };
+  });
+
+  services.cm = buildProgrammerCmVaultService(selectedProgrammer, cmTenants);
+  return services;
+}
+
+function deriveAccessTokenExpiresAt(accessToken = "", fallbackExpiresAt = "") {
+  const tokenClaims = accessToken ? decodeJwtPayload(accessToken) : null;
+  const expiresAtSeconds = Number(tokenClaims?.exp || 0);
+  if (Number.isFinite(expiresAtSeconds) && expiresAtSeconds > 0) {
+    return new Date(expiresAtSeconds * 1000).toISOString();
+  }
+
+  return firstNonEmptyString([fallbackExpiresAt]);
+}
+
+function serviceClientNeedsTokenRefresh(client = null, requiredScope = "") {
+  const currentClient = client && typeof client === "object" ? client : {};
+  const accessToken = firstNonEmptyString([currentClient.accessToken]);
+  if (!accessToken) {
+    return true;
+  }
+
+  const tokenExpiresAt = deriveAccessTokenExpiresAt(accessToken, currentClient.tokenExpiresAt);
+  const expiresAtMs = Date.parse(tokenExpiresAt);
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now() + 60 * 1000) {
+    return true;
+  }
+
+  const accessTokenClaims = decodeJwtPayload(accessToken) || null;
+  const grantedScope = firstNonEmptyString([currentClient.tokenScope, accessTokenClaims?.scope]);
+  return requiredScope ? !scopeIncludes(grantedScope, requiredScope) : false;
+}
+
+async function registerDcrClientWithSoftwareStatement(softwareStatement = "") {
+  const normalizedSoftwareStatement = String(softwareStatement || "").trim();
+  if (!normalizedSoftwareStatement) {
+    throw new Error("Registered application software statement is unavailable.");
+  }
+
+  const requestUrl = new URL(DCR_REGISTER_PATH, `${ADOBE_SP_BASE_URL.replace(/\/+$/, "")}/`).toString();
+  const attempts = [
+    {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        software_statement: normalizedSoftwareStatement,
+        grant_types: ["client_credentials"],
+        token_endpoint_auth_method: "client_secret_post"
+      })
+    },
+    {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        software_statement: normalizedSoftwareStatement
+      }).toString()
+    }
+  ];
+
+  let lastError = "DCR registration failed.";
+  for (const attempt of attempts) {
+    let response;
+    try {
+      response = await fetch(requestUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: attempt.headers,
+        body: attempt.body
+      });
+    } catch (error) {
+      lastError = serializeError(error);
+      continue;
+    }
+
+    const text = await response.text().catch(() => "");
+    const parsed = parseDcrResponsePayload(text);
+    if (!response.ok) {
+      lastError = extractConsoleErrorMessage(parsed, text) || `${response.status} ${response.statusText}`;
+      continue;
+    }
+
+    const clientId = firstNonEmptyString([
+      parsed?.client_id,
+      parsed?.clientId,
+      parsed?.client?.client_id,
+      parsed?.client?.clientId
+    ]);
+    const clientSecret = firstNonEmptyString([
+      parsed?.client_secret,
+      parsed?.clientSecret,
+      parsed?.client?.client_secret,
+      parsed?.client?.clientSecret
+    ]);
+    if (!clientId || !clientSecret) {
+      lastError = "DCR response did not return client_id and client_secret.";
+      continue;
+    }
+
+    return {
+      clientId,
+      clientSecret
+    };
+  }
+
+  throw new Error(lastError);
+}
+
+async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", requiredScope = "") {
+  const normalizedClientId = String(clientId || "").trim();
+  const normalizedClientSecret = String(clientSecret || "").trim();
+  if (!normalizedClientId || !normalizedClientSecret) {
+    throw new Error("DCR token request is missing client credentials.");
+  }
+
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: normalizedClientId,
+    client_secret: normalizedClientSecret
+  });
+  const normalizedRequiredScope = String(requiredScope || "").trim();
+  if (normalizedRequiredScope) {
+    body.set("scope", normalizedRequiredScope);
+  }
+
+  const requestUrl = new URL(DCR_TOKEN_PATH, `${ADOBE_SP_BASE_URL.replace(/\/+$/, "")}/`).toString();
+  const attempts = [
+    {
+      url: requestUrl,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    },
+    {
+      url: `${requestUrl}?${body.toString()}`,
+      headers: {
+        Accept: "application/json"
+      },
+      body: undefined
+    }
+  ];
+
+  let lastError = `Unable to reach ${DCR_TOKEN_PATH}.`;
+  for (const attempt of attempts) {
+    let response;
+    try {
+      response = await fetch(attempt.url, {
+        method: "POST",
+        mode: "cors",
+        headers: attempt.headers,
+        ...(attempt.body !== undefined ? { body: attempt.body } : {})
+      });
+    } catch (error) {
+      lastError = serializeError(error);
+      continue;
+    }
+
+    const text = await response.text().catch(() => "");
+    const parsed = parseDcrResponsePayload(text);
+    if (!response.ok) {
+      const message = extractConsoleErrorMessage(parsed, text);
+      lastError = `${DCR_TOKEN_PATH} returned ${response.status}${message ? `: ${message}` : ""}`;
+      continue;
+    }
+
+    const accessToken = firstNonEmptyString([parsed?.access_token, parsed?.accessToken]);
+    if (!accessToken) {
+      lastError = "DCR token response did not return an access_token.";
+      continue;
+    }
+
+    const tokenClaims = decodeJwtPayload(accessToken) || null;
+    const expiresInSeconds = Number(parsed?.expires_in || 0);
+    const fallbackExpiresAt =
+      Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+        ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
+        : "";
+
+    return {
+      accessToken,
+      tokenScope: firstNonEmptyString([parsed?.scope, tokenClaims?.scope, normalizedRequiredScope]),
+      tokenRequestedScope: normalizedRequiredScope,
+      tokenExpiresAt: deriveAccessTokenExpiresAt(accessToken, fallbackExpiresAt)
+    };
+  }
+
+  throw new Error(lastError);
+}
+
+async function ensureVaultServiceClientHydrated(serviceRecord = null, definition = null) {
+  const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
+  const currentRecord = serviceRecord && typeof serviceRecord === "object" ? serviceRecord : {};
+  const registeredApplication =
+    currentRecord.registeredApplication && typeof currentRecord.registeredApplication === "object"
+      ? currentRecord.registeredApplication
+      : null;
+  const nowIso = new Date().toISOString();
+  if (!normalizedDefinition || !registeredApplication) {
+    return {
+      ...currentRecord,
+      status: "unavailable"
+    };
+  }
+
+  const nextClient = currentRecord.client && typeof currentRecord.client === "object"
+    ? {
+        ...currentRecord.client
+      }
+    : {};
+
+  nextClient.serviceScope = normalizedDefinition.requiredScope;
+
+  if (!nextClient.clientId || !nextClient.clientSecret) {
+    const softwareStatement = firstNonEmptyString([registeredApplication.softwareStatement]);
+    if (!softwareStatement) {
+      return {
+        ...currentRecord,
+        status: "partial",
+        client: {
+          ...nextClient,
+          updatedAt: nowIso,
+          error: `${normalizedDefinition.label} software statement is unavailable.`
+        }
+      };
+    }
+
+    try {
+      const registeredClient = await registerDcrClientWithSoftwareStatement(softwareStatement);
+      nextClient.clientId = registeredClient.clientId;
+      nextClient.clientSecret = registeredClient.clientSecret;
+      nextClient.error = "";
+    } catch (error) {
+      return {
+        ...currentRecord,
+        status: "partial",
+        client: {
+          ...nextClient,
+          updatedAt: nowIso,
+          error: serializeError(error)
+        }
+      };
+    }
+  }
+
+  if (serviceClientNeedsTokenRefresh(nextClient, normalizedDefinition.requiredScope)) {
+    try {
+      const token = await requestDcrServiceAccessToken(
+        nextClient.clientId,
+        nextClient.clientSecret,
+        normalizedDefinition.requiredScope
+      );
+      Object.assign(nextClient, token, {
+        updatedAt: nowIso,
+        error: ""
+      });
+    } catch (error) {
+      return {
+        ...currentRecord,
+        status: "partial",
+        client: {
+          ...nextClient,
+          updatedAt: nowIso,
+          error: serializeError(error)
+        }
+      };
+    }
+  } else {
+    nextClient.updatedAt = firstNonEmptyString([nextClient.updatedAt, nowIso]);
+    nextClient.error = "";
+  }
+
+  return {
+    ...currentRecord,
+    status: "ready",
+    updatedAt: nowIso,
+    client: nextClient
+  };
+}
+
+async function hydrateProgrammerVaultServiceClients(services = {}) {
+  const nextServices = services && typeof services === "object" ? { ...services } : {};
+  const hydratedServices = await Promise.all(
+    VAULT_DCR_SERVICE_DEFINITIONS.map(async (definition) => [
+      definition.serviceKey,
+      await ensureVaultServiceClientHydrated(nextServices[definition.serviceKey], definition)
+    ])
+  );
+  hydratedServices.forEach(([serviceKey, serviceRecord]) => {
+    nextServices[serviceKey] = serviceRecord;
+  });
+  return nextServices;
+}
+
 function normalizeConsoleProgrammers(payload) {
   const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
   const seen = new Set();
@@ -4091,6 +4730,158 @@ function normalizeConsoleRegisteredApplications(payload) {
       sensitivity: "base"
     });
   });
+}
+
+function programmerMatchesCmTenant(selectedProgrammer = null, cmTenants = []) {
+  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
+    return false;
+  }
+
+  const programmerIdentifiers = new Set(
+    [
+      selectedProgrammer.id,
+      selectedProgrammer.name,
+      selectedProgrammer.label,
+      selectedProgrammer.key,
+      selectedProgrammer?.raw?.displayName,
+      selectedProgrammer?.raw?.name
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+  );
+
+  if (programmerIdentifiers.size === 0) {
+    return false;
+  }
+
+  return (Array.isArray(cmTenants) ? cmTenants : []).some((tenant) =>
+    [
+      tenant?.id,
+      tenant?.name,
+      tenant?.label,
+      tenant?.key,
+      tenant?.raw?.payload?.name,
+      tenant?.raw?.consoleId
+    ]
+      .map((value) => normalizeOrganizationIdentifier(value))
+      .filter(Boolean)
+      .some((identifier) => programmerIdentifiers.has(identifier))
+  );
+}
+
+function derivePremiumServicesSummary({
+  selectedProgrammer = null,
+  registeredApplications = [],
+  registeredApplicationLoading = false,
+  cmTenants = [],
+  selectedRegisteredApplication = null,
+  vaultRecord = null
+} = {}) {
+  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
+    return {
+      labels: [],
+      items: [],
+      loading: false,
+      summary: "Choose a Programmer first"
+    };
+  }
+
+  if (registeredApplicationLoading) {
+    return {
+      labels: [],
+      items: [],
+      loading: true,
+      summary: "Loading premium services…"
+    };
+  }
+
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
+  const items = [];
+  const labels = [];
+
+  PREMIUM_SERVICE_SCOPE_RULES.forEach((rule) => {
+    const vaultServiceDefinition = VAULT_DCR_SERVICE_DEFINITIONS.find(
+      (definition) => definition.requiredScope === rule.scope
+    );
+    const vaultServiceRecord = vaultServiceDefinition ? vaultRecord?.services?.[vaultServiceDefinition.serviceKey] : null;
+    const vaultRegisteredApplication =
+      vaultServiceRecord?.registeredApplication && typeof vaultServiceRecord.registeredApplication === "object"
+        ? vaultServiceRecord.registeredApplication
+        : null;
+    const matchingApplication = normalizedApplications.find((application) =>
+      (Array.isArray(application?.scopes) ? application.scopes : [])
+        .map((scope) => String(scope || "").trim())
+        .includes(rule.scope)
+    );
+    if (!matchingApplication && !vaultRegisteredApplication) {
+      return;
+    }
+
+    const selectedApplicationMatchesScope = Boolean(selectedRegisteredApplication) &&
+      (Array.isArray(selectedRegisteredApplication?.scopes) ? selectedRegisteredApplication.scopes : [])
+        .map((scope) => String(scope || "").trim())
+        .includes(rule.scope);
+    const effectiveApplication = matchingApplication || vaultRegisteredApplication;
+
+    const applicationName = firstNonEmptyString([
+      effectiveApplication?.name,
+      effectiveApplication?.label,
+      effectiveApplication?.id,
+      rule.label
+    ]);
+    const selectedApplicationName = selectedApplicationMatchesScope
+      ? firstNonEmptyString([
+          selectedRegisteredApplication?.name,
+          selectedRegisteredApplication?.label,
+          selectedRegisteredApplication?.id
+        ])
+      : firstNonEmptyString([
+          vaultRegisteredApplication?.name,
+          vaultRegisteredApplication?.label,
+          vaultRegisteredApplication?.id
+        ]);
+    labels.push(rule.label);
+    items.push({
+      key: `${rule.label}:${applicationName}`,
+      label: rule.label,
+      applicationName,
+      selectedApplicationName,
+      placeholderMessage: `Use ${applicationName} to show cheat sheet and real time result of cheat sheet sample`
+    });
+  });
+
+  const matchedCmTenants = matchProgrammerCmTenants(selectedProgrammer, cmTenants);
+  const vaultCmService = vaultRecord?.services?.cm && typeof vaultRecord.services.cm === "object" ? vaultRecord.services.cm : null;
+  if (matchedCmTenants.length > 0 || vaultCmService?.available === true) {
+    const fallbackApplicationName = firstNonEmptyString([
+      normalizedApplications[0]?.name,
+      normalizedApplications[0]?.label,
+      normalizedApplications[0]?.id,
+      selectedProgrammer?.name,
+      selectedProgrammer?.id,
+      PREMIUM_SERVICE_CONCURRENCY_LABEL
+    ]);
+    const selectedApplicationName = firstNonEmptyString([
+      selectedRegisteredApplication?.name,
+      selectedRegisteredApplication?.label,
+      selectedRegisteredApplication?.id
+    ]);
+    labels.push(PREMIUM_SERVICE_CONCURRENCY_LABEL);
+    items.push({
+      key: `${PREMIUM_SERVICE_CONCURRENCY_LABEL}:${fallbackApplicationName}`,
+      label: PREMIUM_SERVICE_CONCURRENCY_LABEL,
+      applicationName: fallbackApplicationName,
+      selectedApplicationName,
+      placeholderMessage: `Use ${fallbackApplicationName} to show cheat sheet and real time result of cheat sheet sample`
+    });
+  }
+
+  return {
+    labels,
+    items,
+    loading: false,
+    summary: labels.length > 0 ? labels.join(" | ") : "No premium services detected"
+  };
 }
 
 function normalizeCmTenants(payload) {
@@ -4212,21 +5003,30 @@ function render() {
       : "SIGNING IN…"
     : "SIGN IN";
   if (loginStatus) {
-    const nextLoginStatus = state.busy
-      ? state.silentAuthInFlight
-        ? "Refreshing the Adobe session in the background."
-        : "Completing Adobe sign-in. The session will appear here as soon as Adobe returns it."
-      : "";
-    loginStatus.textContent = state.busy
-      ? nextLoginStatus
-      : "";
-    loginStatus.hidden = !nextLoginStatus;
+    loginStatus.textContent = "";
+    loginStatus.hidden = true;
   }
   avatarMenuButton.disabled = !avatarMenuAvailable;
   avatarMenuButton.setAttribute("aria-expanded", isAvatarMenuVisible ? "true" : "false");
   avatarMenu.hidden = !isAvatarMenuVisible;
   loadZipKeyButton.disabled = state.busy;
   logoutButton.disabled = state.busy || !hasSession;
+  if (exportVaultButton) {
+    exportVaultButton.disabled = state.busy || state.vaultTransferBusy;
+    exportVaultButton.setAttribute("aria-busy", state.vaultTransferBusy ? "true" : "false");
+  }
+  if (importVaultButton) {
+    importVaultButton.disabled = state.busy || state.vaultTransferBusy;
+    importVaultButton.setAttribute("aria-busy", state.vaultTransferBusy ? "true" : "false");
+  }
+  if (vaultTransferStatus) {
+    vaultTransferStatus.textContent = firstNonEmptyString([
+      state.vaultTransferStatus?.message,
+      DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE
+    ]);
+    vaultTransferStatus.classList.toggle("is-ok", state.vaultTransferStatus?.tone === "ok");
+    vaultTransferStatus.classList.toggle("is-error", state.vaultTransferStatus?.tone === "error");
+  }
   debugConsole.classList.toggle("is-collapsed", state.debugConsoleCollapsed);
   debugConsoleBody.hidden = state.debugConsoleCollapsed;
   debugToggleButton.setAttribute("aria-expanded", state.debugConsoleCollapsed ? "false" : "true");
@@ -4282,6 +5082,7 @@ function render() {
   syncProgrammerPicker(authenticatedDataContext);
   syncRegisteredApplicationPicker(authenticatedDataContext);
   syncRequestorPicker(authenticatedDataContext);
+  syncPremiumServicesSummary(authenticatedDataContext);
   syncUserDataList(authenticatedDataContext.userDataEntries, authenticatedDataContext.userDataSummary);
   syncAvatarMenuDetails(authenticatedDataContext, statusLabel);
 
@@ -4336,12 +5137,29 @@ function buildAuthenticatedUserDataContext(session = state.session) {
   const selectedCmTenant = programmerAccess.eligible ? resolveSelectedCmTenant(cmTenants, state.selectedCmTenantId) : null;
   const programmers = programmerAccess.eligible && Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
   const selectedProgrammer = programmerAccess.eligible ? resolveSelectedProgrammer(programmers, state.selectedProgrammerId) : null;
+  const selectedProgrammerVaultRecord =
+    selectedProgrammer &&
+    String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === String(selectedProgrammer?.id || "").trim()
+      ? state.selectedProgrammerVaultRecord
+      : null;
   const registeredApplications = programmerAccess.eligible
     ? resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer)
     : [];
   const selectedRegisteredApplication = programmerAccess.eligible
     ? resolveSelectedRegisteredApplication(registeredApplications, state.selectedRegisteredApplicationId)
     : null;
+  const premiumServices = programmerAccess.eligible
+    ? derivePremiumServicesSummary({
+        selectedProgrammer,
+        registeredApplications,
+        registeredApplicationLoading:
+          Boolean(selectedProgrammer) &&
+          normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id),
+        cmTenants,
+        selectedRegisteredApplication,
+        vaultRecord: selectedProgrammerVaultRecord
+      })
+    : { labels: [], loading: false, summary: "" };
   const requestors = programmerAccess.eligible ? deriveProgrammerRequestorOptions(channels, selectedProgrammer) : [];
   const selectedRequestor = programmerAccess.eligible ? resolveSelectedRequestor(requestors, state.selectedRequestorId) : null;
   const name =
@@ -4420,6 +5238,9 @@ function buildAuthenticatedUserDataContext(session = state.session) {
     registeredApplicationLoading:
       Boolean(selectedProgrammer) &&
       normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id),
+    premiumServicesVisible: programmerAccess.eligible,
+    premiumServicesSummary: firstNonEmptyString([premiumServices?.summary]),
+    premiumServiceItems: Array.isArray(premiumServices?.items) ? premiumServices.items : [],
     requestorOptions: requestors,
     requestorPickerVisible: programmerAccess.eligible,
     workflowMode: adobePassWorkflowActive ? "adobe-pass" : "org-switch-only",
@@ -4735,6 +5556,420 @@ function resolveSelectedRequestor(requestors = [], selectedRequestorId = "") {
   const options = Array.isArray(requestors) ? requestors : [];
   const selectedId = String(selectedRequestorId || "").trim();
   return options.find((option) => option.key === selectedId || option.id === selectedId) || null;
+}
+
+function buildProgrammerVaultLookupContext(session = null, programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const programmers = Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
+  const selectedProgrammer = resolveSelectedProgrammer(programmers, normalizedProgrammerId);
+  const environmentId = firstNonEmptyString([
+    consoleContext.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  if (!selectedProgrammer || !environmentId || !normalizedProgrammerId) {
+    return null;
+  }
+
+  return {
+    environmentId,
+    programmerId: normalizedProgrammerId,
+    configurationVersion: firstNonEmptyString([consoleContext.configurationVersion]),
+    consoleBaseUrl: firstNonEmptyString([consoleContext.baseUrl]),
+    programmerFingerprint: buildProgrammerVaultFingerprint(selectedProgrammer)
+  };
+}
+
+function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", { registeredApplications = null } = {}) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const cmContext = currentSession?.cm && typeof currentSession.cm === "object" ? currentSession.cm : {};
+  const programmers = Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
+  const selectedProgrammer = resolveSelectedProgrammer(programmers, normalizedProgrammerId);
+  if (!selectedProgrammer) {
+    return null;
+  }
+
+  const applicationsByProgrammer =
+    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
+      ? consoleContext.applicationsByProgrammer
+      : {};
+  const hasHydratedApplications =
+    Array.isArray(registeredApplications)
+      || Object.prototype.hasOwnProperty.call(applicationsByProgrammer, normalizedProgrammerId);
+  const effectiveRegisteredApplications = Array.isArray(registeredApplications)
+    ? registeredApplications
+    : resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
+  const channels = Array.isArray(consoleContext.channels) ? consoleContext.channels : [];
+  const requestors = deriveProgrammerRequestorOptions(channels, selectedProgrammer);
+  const cmTenants = Array.isArray(cmContext.tenants) ? cmContext.tenants : [];
+  const selectedRegisteredApplication = resolveSelectedRegisteredApplication(
+    effectiveRegisteredApplications,
+    state.selectedRegisteredApplicationId
+  );
+  const premiumServices = derivePremiumServicesSummary({
+    selectedProgrammer,
+    registeredApplications: effectiveRegisteredApplications,
+    cmTenants,
+    selectedRegisteredApplication
+  });
+
+  return {
+    currentSession,
+    consoleContext,
+    cmContext,
+    selectedProgrammer,
+    registeredApplicationsHydrated: hasHydratedApplications,
+    registeredApplications: effectiveRegisteredApplications,
+    requestors,
+    premiumServices,
+    environmentId: firstNonEmptyString([
+      consoleContext.environmentId,
+      state.runtimeConfig?.consoleEnvironment,
+      CONSOLE_DEFAULT_ENVIRONMENT
+    ]),
+    environmentLabel: firstNonEmptyString([
+      consoleContext.environmentLabel,
+      getConsoleEnvironmentMeta(
+        firstNonEmptyString([
+          consoleContext.environmentId,
+          state.runtimeConfig?.consoleEnvironment,
+          CONSOLE_DEFAULT_ENVIRONMENT
+        ])
+      ).label
+    ])
+  };
+}
+
+function resolveVaultSelectedRegisteredApplicationId(applications = [], selectedApplicationId = "") {
+  const persistedSelection = resolvePersistedSelectionId(applications, selectedApplicationId);
+  if (persistedSelection) {
+    return persistedSelection;
+  }
+
+  const firstApplication = Array.isArray(applications) ? applications[0] : null;
+  return firstNonEmptyString([firstApplication?.key, firstApplication?.id]);
+}
+
+async function buildProgrammerVaultSnapshotInput(session = null, programmerId = "", { registeredApplications = null, source = "network" } = {}) {
+  const snapshotContext = buildProgrammerVaultSnapshotContext(session, programmerId, {
+    registeredApplications
+  });
+  if (!snapshotContext?.selectedProgrammer || !snapshotContext.environmentId || !snapshotContext.registeredApplicationsHydrated) {
+    return null;
+  }
+
+  const vaultLookupContext = buildProgrammerVaultLookupContext(snapshotContext.currentSession, programmerId);
+  const existingVaultRecord = vaultLookupContext ? await readProgrammerVaultRecord(vaultLookupContext) : null;
+  const services = await hydrateProgrammerVaultServiceClients(
+    buildProgrammerServiceVaultEntries({
+      registeredApplications: snapshotContext.registeredApplications,
+      selectedProgrammer: snapshotContext.selectedProgrammer,
+      cmTenants: Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+      existingVaultRecord
+    })
+  );
+  const selectedApplications = VAULT_DCR_SERVICE_DEFINITIONS.map((definition) => services?.[definition.serviceKey]?.registeredApplication)
+    .filter(Boolean);
+  const selectedCmTenantId = resolvePersistedSelectionId(
+    Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+    state.selectedCmTenantId
+  );
+
+  return {
+    environmentId: snapshotContext.environmentId,
+    environmentLabel: snapshotContext.environmentLabel,
+    programmerId: firstNonEmptyString([snapshotContext.selectedProgrammer.id, snapshotContext.selectedProgrammer.key]),
+    programmerKey: firstNonEmptyString([snapshotContext.selectedProgrammer.key, snapshotContext.selectedProgrammer.id]),
+    programmerName: firstNonEmptyString([snapshotContext.selectedProgrammer.name]),
+    programmerLabel: firstNonEmptyString([
+      snapshotContext.selectedProgrammer.label,
+      snapshotContext.selectedProgrammer.name,
+      snapshotContext.selectedProgrammer.id
+    ]),
+    consoleBaseUrl: firstNonEmptyString([snapshotContext.consoleContext.baseUrl]),
+    configurationVersion: firstNonEmptyString([snapshotContext.consoleContext.configurationVersion]),
+    programmerFingerprint: buildProgrammerVaultFingerprint(snapshotContext.selectedProgrammer),
+    source,
+    maxAgeMs: LOGINBUTTON_VAULT_PROGRAMMER_RECORD_TTL_MS,
+    selectedRegisteredApplicationId: resolveVaultSelectedRegisteredApplicationId(
+      selectedApplications,
+      state.selectedRegisteredApplicationId
+    ),
+    selectedRequestorId: resolvePersistedSelectionId(snapshotContext.requestors, state.selectedRequestorId),
+    selectedCmTenantId,
+    selectedApplications,
+    services
+  };
+}
+
+async function persistProgrammerVaultSnapshot(session = null, programmerId = "", { registeredApplications = null, source = "network" } = {}) {
+  const snapshotInput = await buildProgrammerVaultSnapshotInput(session, programmerId, {
+    registeredApplications,
+    source
+  });
+  if (!snapshotInput) {
+    return null;
+  }
+
+  const writtenRecord = await writeProgrammerVaultRecord(snapshotInput);
+  if (String(state.selectedProgrammerId || "").trim() === String(writtenRecord?.programmerId || "").trim()) {
+    state.selectedProgrammerVaultRecord = writtenRecord;
+  }
+  return writtenRecord;
+}
+
+async function persistSelectedProgrammerVaultSelections(programmerId = state.selectedProgrammerId) {
+  const snapshotContext = buildProgrammerVaultSnapshotContext(state.session, programmerId);
+  if (!snapshotContext?.selectedProgrammer || !snapshotContext.environmentId) {
+    return null;
+  }
+
+  const nextSelections = {
+    environmentId: snapshotContext.environmentId,
+    programmerId: firstNonEmptyString([snapshotContext.selectedProgrammer.id, snapshotContext.selectedProgrammer.key]),
+    selectedRegisteredApplicationId: resolvePersistedSelectionId(
+      snapshotContext.registeredApplications,
+      state.selectedRegisteredApplicationId
+    ),
+    selectedRequestorId: resolvePersistedSelectionId(snapshotContext.requestors, state.selectedRequestorId),
+    selectedCmTenantId: resolvePersistedSelectionId(
+      Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+      state.selectedCmTenantId
+    )
+  };
+
+  const mergedSelections = await mergeProgrammerVaultSelections(nextSelections);
+  if (mergedSelections && String(state.selectedProgrammerId || "").trim() === String(mergedSelections?.programmerId || "").trim()) {
+    state.selectedProgrammerVaultRecord = mergedSelections;
+  }
+  if (mergedSelections || !snapshotContext.registeredApplicationsHydrated) {
+    return mergedSelections;
+  }
+
+  return persistProgrammerVaultSnapshot(state.session, programmerId, {
+    source: "selection"
+  });
+}
+
+function hydrateSelectedProgrammerFromVaultRecord(vaultRecord = null, programmerId = "", { restoreSelections = false } = {}) {
+  const normalizedProgrammerId = String(programmerId || vaultRecord?.programmerId || "").trim();
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  if (!currentSession || !normalizedProgrammerId || !vaultRecord) {
+    return false;
+  }
+
+  const mergedSession = mergeProgrammerApplicationsIntoSession(currentSession, normalizedProgrammerId, {
+    applications: hydrateProgrammerApplicationsFromVault(vaultRecord)
+  });
+  state.session = mergedSession;
+  state.selectedProgrammerVaultRecord = vaultRecord;
+
+  if (restoreSelections) {
+    applyPersistedProgrammerSelections(vaultRecord, normalizedProgrammerId);
+  }
+
+  render();
+  return true;
+}
+
+function applyPersistedProgrammerSelections(vaultRecord = null, programmerId = "") {
+  const snapshotContext = buildProgrammerVaultSnapshotContext(state.session, programmerId);
+  if (!snapshotContext?.selectedProgrammer) {
+    return;
+  }
+
+  const hydratedApplications = hydrateProgrammerApplicationsFromVault(vaultRecord);
+  state.selectedRegisteredApplicationId = resolvePersistedSelectionId(
+    snapshotContext.registeredApplications,
+    firstNonEmptyString([
+      vaultRecord?.selectedRegisteredApplicationId,
+      hydratedApplications[0]?.key,
+      hydratedApplications[0]?.id
+    ])
+  );
+  state.selectedRequestorId = resolvePersistedSelectionId(
+    snapshotContext.requestors,
+    firstNonEmptyString([vaultRecord?.selectedRequestorId])
+  );
+  state.selectedCmTenantId = resolvePersistedSelectionId(
+    Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+    firstNonEmptyString([vaultRecord?.selectedCmTenantId])
+  );
+}
+
+function mergeProgrammerApplicationsIntoSession(session = null, programmerId = "", resultValue = {}) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!currentSession || !normalizedProgrammerId) {
+    return currentSession;
+  }
+
+  const liveConsole = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const liveApplicationsByProgrammer =
+    liveConsole?.applicationsByProgrammer && typeof liveConsole.applicationsByProgrammer === "object"
+      ? liveConsole.applicationsByProgrammer
+      : {};
+  const liveApplicationErrorsByProgrammer =
+    liveConsole?.applicationErrorsByProgrammer && typeof liveConsole.applicationErrorsByProgrammer === "object"
+      ? liveConsole.applicationErrorsByProgrammer
+      : {};
+
+  return {
+    ...currentSession,
+    console: {
+      ...liveConsole,
+      transport: firstNonEmptyString([resultValue?.transport, liveConsole?.transport]),
+      csrfToken: firstNonEmptyString([resultValue?.csrfToken, liveConsole?.csrfToken]),
+      pageContextOrigin: firstNonEmptyString([resultValue?.pageContext?.origin, liveConsole?.pageContextOrigin]),
+      pageContextUrl: firstNonEmptyString([resultValue?.pageContext?.url, liveConsole?.pageContextUrl]),
+      applicationsByProgrammer: {
+        ...liveApplicationsByProgrammer,
+        [normalizedProgrammerId]: Array.isArray(resultValue?.applications) ? resultValue.applications : []
+      },
+      applicationErrorsByProgrammer: {
+        ...liveApplicationErrorsByProgrammer,
+        [normalizedProgrammerId]: ""
+      }
+    }
+  };
+}
+
+function mergeProgrammerApplicationsErrorIntoSession(
+  session = null,
+  programmerId = "",
+  error = null,
+  { preserveExistingApplications = false } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!currentSession || !normalizedProgrammerId) {
+    return currentSession;
+  }
+
+  const liveConsole = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const liveApplicationsByProgrammer =
+    liveConsole?.applicationsByProgrammer && typeof liveConsole.applicationsByProgrammer === "object"
+      ? liveConsole.applicationsByProgrammer
+      : {};
+  const liveApplicationErrorsByProgrammer =
+    liveConsole?.applicationErrorsByProgrammer && typeof liveConsole.applicationErrorsByProgrammer === "object"
+      ? liveConsole.applicationErrorsByProgrammer
+      : {};
+
+  return {
+    ...currentSession,
+    console: {
+      ...liveConsole,
+      applicationErrorsByProgrammer: {
+        ...liveApplicationErrorsByProgrammer,
+        [normalizedProgrammerId]: serializeError(error)
+      },
+      applicationsByProgrammer: preserveExistingApplications
+        ? liveApplicationsByProgrammer
+        : {
+            ...liveApplicationsByProgrammer,
+            [normalizedProgrammerId]: []
+          }
+    }
+  };
+}
+
+function buildProgrammerVaultFingerprint(programmer = null) {
+  if (!programmer || typeof programmer !== "object") {
+    return "";
+  }
+
+  return JSON.stringify({
+    id: firstNonEmptyString([programmer.id, programmer.key]),
+    owner: firstNonEmptyString([programmer.owner]),
+    requestorIds: Array.isArray(programmer.requestorIds) ? [...programmer.requestorIds].filter(Boolean).sort() : []
+  });
+}
+
+function buildPersistableProgrammer(programmer = null) {
+  if (!programmer || typeof programmer !== "object") {
+    return null;
+  }
+
+  return {
+    key: firstNonEmptyString([programmer.key, programmer.id]),
+    id: firstNonEmptyString([programmer.id, programmer.key]),
+    name: firstNonEmptyString([programmer.name]),
+    label: firstNonEmptyString([programmer.label, programmer.name, programmer.id]),
+    owner: firstNonEmptyString([programmer.owner]),
+    requestorIds: Array.isArray(programmer.requestorIds) ? programmer.requestorIds.filter(Boolean) : [],
+    requestorCount: Number(programmer.requestorCount || 0)
+  };
+}
+
+function buildPersistableRegisteredApplications(applications = []) {
+  return (Array.isArray(applications) ? applications : []).map((application) => ({
+    key: firstNonEmptyString([application?.key, application?.id]),
+    id: firstNonEmptyString([application?.id, application?.key]),
+    name: firstNonEmptyString([application?.name]),
+    label: firstNonEmptyString([application?.label, application?.name, application?.id]),
+    clientId: firstNonEmptyString([application?.clientId]),
+    scopes: Array.isArray(application?.scopes) ? application.scopes.filter(Boolean) : [],
+    scopeLabels: Array.isArray(application?.scopeLabels) ? application.scopeLabels.filter(Boolean) : [],
+    type: firstNonEmptyString([application?.type]),
+    softwareStatement: firstNonEmptyString([application?.softwareStatement])
+  }));
+}
+
+function buildPersistableRequestors(requestors = []) {
+  return (Array.isArray(requestors) ? requestors : []).map((requestor) => ({
+    key: firstNonEmptyString([requestor?.key, requestor?.id]),
+    id: firstNonEmptyString([requestor?.id, requestor?.key]),
+    name: firstNonEmptyString([requestor?.name, requestor?.label, requestor?.id]),
+    label: firstNonEmptyString([requestor?.label, requestor?.name, requestor?.id]),
+    programmerId: firstNonEmptyString([requestor?.programmerId])
+  }));
+}
+
+function buildPersistablePremiumServiceItems(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    key: firstNonEmptyString([item?.key]),
+    label: firstNonEmptyString([item?.label]),
+    applicationName: firstNonEmptyString([item?.applicationName]),
+    selectedApplicationName: firstNonEmptyString([item?.selectedApplicationName]),
+    placeholderMessage: firstNonEmptyString([item?.placeholderMessage])
+  }));
+}
+
+function hydrateProgrammerApplicationsFromVault(vaultRecord = null) {
+  const selectedApplications = Array.isArray(vaultRecord?.selectedApplications)
+    ? vaultRecord.selectedApplications
+    : [];
+  const fallbackApplications = VAULT_DCR_SERVICE_DEFINITIONS.map(
+    (definition) => vaultRecord?.services?.[definition.serviceKey]?.registeredApplication
+  ).filter(Boolean);
+  const seen = new Set();
+  const dedupedApplications = [];
+
+  (selectedApplications.length > 0 ? selectedApplications : fallbackApplications).forEach((application) => {
+    const applicationKey = firstNonEmptyString([application?.key, application?.id]);
+    if (!applicationKey || seen.has(applicationKey)) {
+      return;
+    }
+    seen.add(applicationKey);
+    dedupedApplications.push(application);
+  });
+
+  return buildPersistableRegisteredApplications(dedupedApplications);
+}
+
+function resolvePersistedSelectionId(options = [], selectedId = "") {
+  const normalizedSelectedId = String(selectedId || "").trim();
+  if (!normalizedSelectedId) {
+    return "";
+  }
+
+  const match = (Array.isArray(options) ? options : []).find((option) => option?.key === normalizedSelectedId || option?.id === normalizedSelectedId);
+  return match ? firstNonEmptyString([match.key, match.id]) : "";
 }
 
 function buildInspectableUserPayload({
@@ -5209,6 +6444,103 @@ function syncRegisteredApplicationPicker(authenticatedDataContext = {}) {
     authenticatedDataContext?.registeredApplicationLoading === true ||
     !authenticatedDataContext?.selectedProgrammer ||
     options.length === 0;
+}
+
+function syncPremiumServicesSummary(authenticatedDataContext = {}) {
+  if (!premiumServicesSection || !premiumServicesList) {
+    return;
+  }
+
+  const items = Array.isArray(authenticatedDataContext?.premiumServiceItems)
+    ? authenticatedDataContext.premiumServiceItems
+    : [];
+  const rowVisible = authenticatedDataContext?.premiumServicesVisible === true && items.length > 0;
+  premiumServicesSection.hidden = !rowVisible;
+  if (!rowVisible) {
+    premiumServicesList.hidden = true;
+    premiumServicesList.innerHTML = "";
+    return;
+  }
+
+  premiumServicesList.innerHTML = "";
+  premiumServicesList.hidden = items.length === 0;
+  if (items.length === 0) {
+    return;
+  }
+
+  const expandedKeys = new Set(
+    Array.isArray(state.premiumServiceExpandedKeys) ? state.premiumServiceExpandedKeys.map((value) => String(value || "").trim()) : []
+  );
+
+  items.forEach((item, index) => {
+    const itemKey = String(firstNonEmptyString([item?.key, item?.label, `premium-service-${index + 1}`]) || "").trim();
+    const domToken =
+      itemKey.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "") || `premium-service-${index + 1}`;
+    const panelId = `premium-service-panel-${domToken}`;
+    const isExpanded = expandedKeys.has(itemKey);
+
+    const card = document.createElement("article");
+    card.className = "premium-serviceCard";
+    card.classList.toggle("is-selected-app", Boolean(item?.selectedApplicationName));
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "premium-serviceToggle";
+    toggle.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+    toggle.setAttribute("aria-controls", panelId);
+
+    const title = document.createElement("span");
+    title.className = "premium-serviceTitle";
+    title.textContent = firstNonEmptyString([item?.label, "Premium Service"]);
+
+    const icon = document.createElement("span");
+    icon.className = "premium-serviceIcon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "▼";
+
+    toggle.append(title, icon);
+
+    const body = document.createElement("div");
+    body.id = panelId;
+    body.className = "premium-serviceBody";
+    body.hidden = !isExpanded;
+
+    const cheatSheetMessage = `Use ${firstNonEmptyString([
+      item?.selectedApplicationName,
+      item?.applicationName,
+      "this Registered Application"
+    ])} to show cheat sheet and real time result of cheat sheet sample`;
+
+    const actionRow = document.createElement("div");
+    actionRow.className = "premium-serviceActionRow";
+
+    const cheatSheetButton = document.createElement("button");
+    cheatSheetButton.type = "button";
+    cheatSheetButton.className =
+      "spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM premium-serviceCheatSheetButton";
+
+    const cheatSheetButtonLabel = document.createElement("span");
+    cheatSheetButtonLabel.className = "spectrum-Button-label";
+    cheatSheetButtonLabel.textContent = "CHEAT SHEET";
+    cheatSheetButton.appendChild(cheatSheetButtonLabel);
+    cheatSheetButton.addEventListener("click", () => {
+      window.alert(cheatSheetMessage);
+    });
+
+    actionRow.appendChild(cheatSheetButton);
+    body.appendChild(actionRow);
+    toggle.addEventListener("click", () => {
+      const nextExpanded = !expandedKeys.has(itemKey);
+      const nextKeys = nextExpanded
+        ? [...expandedKeys, itemKey]
+        : Array.from(expandedKeys).filter((value) => value !== itemKey);
+      state.premiumServiceExpandedKeys = nextKeys;
+      render();
+    });
+
+    card.append(toggle, body);
+    premiumServicesList.appendChild(card);
+  });
 }
 
 function syncRequestorPicker(authenticatedDataContext = {}) {
@@ -6371,6 +7703,8 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `console_programmer_count=${Array.isArray(consoleContext?.programmers) ? consoleContext.programmers.length : 0}`,
     `console_registered_application_count=${Array.isArray(authenticatedDataContext?.registeredApplicationOptions) ? authenticatedDataContext.registeredApplicationOptions.length : 0}`,
     `console_requestor_count=${Array.isArray(authenticatedDataContext?.requestorOptions) ? authenticatedDataContext.requestorOptions.length : 0}`,
+    `console_premium_service_count=${Array.isArray(authenticatedDataContext?.premiumServiceItems) ? authenticatedDataContext.premiumServiceItems.length : 0}`,
+    `console_premium_services_summary=${firstNonEmptyString([authenticatedDataContext?.premiumServicesSummary, "n/a"])}`,
     `console_programmer_gate_reason=${firstNonEmptyString([programmerAccess?.reason, "n/a"])}`,
     `console_extended_profile_error=${firstNonEmptyString([consoleContext?.errors?.extendedProfile, "n/a"])}`,
     `console_channels_error=${firstNonEmptyString([consoleContext?.errors?.channels, "n/a"])}`,
@@ -7769,6 +9103,13 @@ function setConfigStatus(message, { error = false, ok = false } = {}) {
   };
 }
 
+function setVaultTransferStatus(message, { error = false, ok = false } = {}) {
+  state.vaultTransferStatus = {
+    message: String(message || "").trim() || DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE,
+    tone: error ? "error" : ok ? "ok" : ""
+  };
+}
+
 async function importZipKeyFiles(fileList) {
   const file = fileList?.[0];
   if (!file || state.busy) {
@@ -7800,6 +9141,7 @@ async function importZipKeyFiles(fileList) {
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
       state.programmerApplicationsLoadingFor = "";
+      state.selectedProgrammerVaultRecord = null;
       state.selectedOrganizationSwitchKey = "";
       log(`ZIP.KEY switched Adobe IMS client from ${previousClientId} to ${importedConfig.clientId}. Cleared the stored session.`);
     } else if (hasActiveSession(state.session)) {
@@ -7808,6 +9150,7 @@ async function importZipKeyFiles(fileList) {
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
       state.programmerApplicationsLoadingFor = "";
+      state.selectedProgrammerVaultRecord = null;
       state.selectedOrganizationSwitchKey = "";
       void refreshSessionPostLoginContextInBackground(state.session, { reason: "zip-key-runtime-config-update" });
       log(
@@ -7832,6 +9175,131 @@ async function importZipKeyFiles(fileList) {
     setBusy(false);
     render();
   }
+}
+
+async function exportVaultFromContextMenu() {
+  if (state.busy || state.vaultTransferBusy) {
+    return;
+  }
+
+  state.vaultTransferBusy = true;
+  setVaultTransferStatus("Exporting the LoginButton VAULT…");
+  render();
+
+  try {
+    const snapshot = await exportLoginButtonVaultSnapshot();
+    const environmentCount = Number(snapshot?.stats?.environmentCount || 0);
+    const programmerRecordCount = Number(snapshot?.stats?.programmerRecordCount || 0);
+    const serviceClientCount = Number(snapshot?.stats?.serviceClientCount || 0);
+    const fileName = buildVaultExportFileName(snapshot);
+    triggerJsonDownload(snapshot, fileName);
+    setVaultTransferStatus(
+      `Exported ${environmentCount} environment${environmentCount === 1 ? "" : "s"}, ${programmerRecordCount} programmer record${programmerRecordCount === 1 ? "" : "s"}, and ${serviceClientCount} service client${serviceClientCount === 1 ? "" : "s"}.`,
+      { ok: true }
+    );
+    log(`LoginButton VAULT exported to ${fileName}.`);
+  } catch (error) {
+    const message = `Unable to export the LoginButton VAULT: ${serializeError(error)}`;
+    setVaultTransferStatus(message, { error: true });
+    log(message);
+  } finally {
+    state.vaultTransferBusy = false;
+    render();
+  }
+}
+
+async function importVaultFiles(fileList) {
+  const file = fileList?.[0];
+  if (!file || state.busy || state.vaultTransferBusy) {
+    if (vaultImportInput) {
+      vaultImportInput.value = "";
+    }
+    return;
+  }
+
+  state.vaultTransferBusy = true;
+  setVaultTransferStatus(`Importing ${file.name || "VAULT file"}…`);
+  render();
+
+  try {
+    const rawText = await file.text();
+    const importedPayload = parseJsonText(rawText);
+    const result = await importLoginButtonVaultSnapshot(importedPayload, {
+      replaceExisting: false
+    });
+    const importedEnvironmentCount = Number(result?.importedEnvironmentCount || 0);
+    const importedProgrammerRecordCount = Number(result?.importedProgrammerRecordCount || 0);
+    const importedServiceClientCount = Number(result?.importedServiceClientCount || 0);
+    setVaultTransferStatus(
+      `Imported ${importedEnvironmentCount} environment${importedEnvironmentCount === 1 ? "" : "s"}, ${importedProgrammerRecordCount} programmer record${importedProgrammerRecordCount === 1 ? "" : "s"}, and ${importedServiceClientCount} service client${importedServiceClientCount === 1 ? "" : "s"}.`,
+      { ok: true }
+    );
+    log(`LoginButton VAULT imported from ${file.name || "selected file"}.`);
+    await maybeRehydrateSelectedProgrammerFromImportedVault();
+  } catch (error) {
+    const message = `Unable to import the LoginButton VAULT: ${serializeError(error)}`;
+    setVaultTransferStatus(message, { error: true });
+    log(message);
+  } finally {
+    if (vaultImportInput) {
+      vaultImportInput.value = "";
+    }
+    state.vaultTransferBusy = false;
+    render();
+  }
+}
+
+async function maybeRehydrateSelectedProgrammerFromImportedVault() {
+  const normalizedProgrammerId = String(state.selectedProgrammerId || "").trim();
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  if (!normalizedProgrammerId || !currentSession?.accessToken) {
+    return;
+  }
+
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const applicationsByProgrammer =
+    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
+      ? consoleContext.applicationsByProgrammer
+      : {};
+  if (Array.isArray(applicationsByProgrammer?.[normalizedProgrammerId])) {
+    return;
+  }
+
+  const lookupContext = buildProgrammerVaultLookupContext(currentSession, normalizedProgrammerId);
+  if (!lookupContext) {
+    return;
+  }
+
+  const importedRecord = await readProgrammerVaultRecord(lookupContext);
+  const vaultAssessment = assessProgrammerVaultRecord(importedRecord, lookupContext);
+  if (vaultAssessment.reusable) {
+    hydrateSelectedProgrammerFromVaultRecord(importedRecord, normalizedProgrammerId, {
+      restoreSelections: true
+    });
+  }
+}
+
+function buildVaultExportFileName(snapshot = null) {
+  const exportedAt = firstNonEmptyString([snapshot?.exportedAt, new Date().toISOString()]);
+  const safeTimestamp = exportedAt.replace(/[:]/g, "-").replace(/\.\d{3}Z$/, "Z");
+  return `loginbutton-vault-${safeTimestamp}.json`;
+}
+
+function triggerJsonDownload(payload = null, fileName = "loginbutton-vault.json") {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json"
+  });
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(blobUrl);
+  }, 0);
 }
 
 function dragEventHasFiles(event) {

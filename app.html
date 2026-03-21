@@ -13,6 +13,7 @@
         <section id="setupView" class="view view--setup" hidden aria-label="ZIP.KEY setup view">
           <div class="surface surface--setup">
             <input id="zipKeyFileInput" class="zip-key-file-input" type="file" accept=".key,.json,.txt,.inc" hidden>
+            <input id="vaultImportInput" class="vault-import-input" type="file" accept=".json,application/json" hidden>
 
             <div id="zipKeyDropSurface" class="zip-key-dropSurface">
               <button
@@ -122,6 +123,36 @@
                   <p id="avatarMenuOverview" class="spectrum-Body spectrum-Body--sizeS avatar-menuOverviewValue">
                     Awaiting session.
                   </p>
+                </div>
+
+                <div class="avatar-menuSection">
+                  <div class="avatar-menuSectionHeader">
+                    <p class="spectrum-Detail spectrum-Detail--sizeM">VAULT transfer</p>
+                    <p
+                      id="vaultTransferStatus"
+                      class="spectrum-Body spectrum-Body--sizeS avatar-menuVaultStatus"
+                    >
+                      Export hydrated programmer records or import a VAULT from another Login Button user.
+                    </p>
+                  </div>
+
+                  <div class="avatar-menuActions avatar-menuActions--vault">
+                    <button
+                      id="exportVaultButton"
+                      class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM"
+                      type="button"
+                    >
+                      <span class="spectrum-Button-label">EXPORT VAULT</span>
+                    </button>
+
+                    <button
+                      id="importVaultButton"
+                      class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM"
+                      type="button"
+                    >
+                      <span class="spectrum-Button-label">IMPORT VAULT</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div class="avatar-menuActions">
@@ -241,6 +272,14 @@
                   aria-describedby="organizationPickerMeta"
                 ></select>
                 <span class="org-pickerChevron" aria-hidden="true">▼</span>
+              </div>
+            </div>
+
+            <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
+              <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
+
+              <div class="premium-servicesSurface" aria-live="polite">
+                <div id="premiumServicesList" class="premium-servicesList" hidden></div>
               </div>
             </div>
 

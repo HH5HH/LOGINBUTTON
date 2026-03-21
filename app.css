@@ -383,8 +383,14 @@ body {
   gap: var(--spectrum-spacing-150);
 }
 
+.avatar-menuSectionHeader {
+  display: grid;
+  gap: var(--spectrum-spacing-75);
+}
+
 .avatar-menuOverview > .spectrum-Detail,
-.avatar-menuOverviewValue {
+.avatar-menuOverviewValue,
+.avatar-menuSectionHeader > .spectrum-Detail {
   margin: 0;
 }
 
@@ -392,8 +398,26 @@ body {
   color: var(--spectrum-neutral-subdued-content-color-default);
 }
 
+.avatar-menuVaultStatus {
+  margin: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  line-height: 1.45;
+}
+
+.avatar-menuVaultStatus.is-ok {
+  color: var(--spectrum-positive-content-color-default);
+}
+
+.avatar-menuVaultStatus.is-error {
+  color: var(--spectrum-negative-content-color-default);
+}
+
 .avatar-menuActions {
   gap: var(--spectrum-spacing-150);
+}
+
+.avatar-menuActions--vault {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .avatar-menuActions > .spectrum-Button {
@@ -484,6 +508,123 @@ body {
 .org-tokenValue.is-empty {
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-style: italic;
+}
+
+.org-summaryValue {
+  margin: 0;
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.org-summaryValue.is-empty {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-style: italic;
+}
+
+.premium-servicesSurface {
+  display: grid;
+  gap: var(--spectrum-spacing-150);
+}
+
+.premium-servicesList {
+  display: grid;
+  gap: var(--spectrum-spacing-200);
+}
+
+.premium-serviceCard {
+  border: 1px solid color-mix(in srgb, var(--spectrum-gray-500) 48%, transparent);
+  border-radius: var(--spectrum-corner-radius-200);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--spectrum-background-base-color) 92%, white) 0%, var(--spectrum-background-elevated-color) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 18%, transparent),
+    0 10px 24px color-mix(in srgb, var(--spectrum-black) 8%, transparent);
+  overflow: hidden;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.premium-serviceCard.is-selected-app {
+  border-color: color-mix(in srgb, var(--spectrum-accent-border-color-default) 40%, transparent);
+}
+
+.premium-serviceToggle {
+  inline-size: 100%;
+  margin: 0;
+  min-block-size: 2.75rem;
+  padding-block: 0.625rem;
+  padding-inline-start: var(--spectrum-spacing-200);
+  padding-inline-end: var(--spectrum-spacing-200);
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--spectrum-spacing-150);
+  cursor: pointer;
+}
+
+.premium-serviceToggle[aria-expanded="false"] {
+  border-bottom-color: transparent;
+}
+
+.premium-serviceCard:hover {
+  border-color: var(--spectrum-accent-border-color-default);
+  transform: translateY(-1px);
+}
+
+.premium-serviceToggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--spectrum-focus-indicator-color);
+}
+
+.premium-serviceTitle {
+  min-width: 0;
+  font-size: var(--spectrum-font-size-200);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+
+.premium-serviceIcon {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.premium-serviceToggle[aria-expanded="false"] .premium-serviceIcon {
+  transform: rotate(-90deg);
+}
+
+.premium-serviceBody {
+  padding: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-200);
+  display: grid;
+  gap: var(--spectrum-spacing-125);
+  background: transparent;
+  border-top: 1px solid color-mix(in srgb, var(--spectrum-gray-400) 20%, transparent);
+}
+
+.premium-serviceBody[hidden] {
+  display: none;
+}
+
+.premium-serviceActionRow {
+  display: flex;
+  padding-top: var(--spectrum-spacing-150);
+}
+
+.premium-serviceCheatSheetButton {
+  inline-size: 100%;
+  justify-content: center;
 }
 
 .user-dataSection {
@@ -1002,6 +1143,10 @@ body {
 
   .avatar-menu {
     inline-size: 100%;
+  }
+
+  .avatar-menuActions--vault {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .debug-header {
