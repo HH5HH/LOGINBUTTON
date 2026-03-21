@@ -413,6 +413,8 @@ body[data-theme-stop="dark"] {
 .org-pickerListSection,
 .org-pickerListHeader,
 .org-pickerCompact,
+.field-cluster,
+.field-clusterHeader,
 .org-pickerControl,
 .user-dataSection,
 .user-dataList,
@@ -577,17 +579,6 @@ body[data-theme-stop="dark"] {
     linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 35%, transparent) 0%, transparent 100%),
     var(--login-button-surface-background-strong);
   box-shadow: var(--login-button-surface-shadow);
-  position: relative;
-}
-
-.field-cluster::before {
-  content: "";
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline: 0;
-  block-size: 0.28rem;
-  border-radius: var(--spectrum-corner-radius-200) var(--spectrum-corner-radius-200) 0 0;
-  background: var(--field-cluster-accent, var(--spectrum-accent-visual-color));
 }
 
 .field-cluster--cm {
@@ -630,7 +621,7 @@ body[data-theme-stop="dark"] {
   border-top: 1px solid var(--login-button-divider-color);
 }
 
-.field-cluster > .org-pickerCompact:first-of-type {
+.field-cluster > .org-pickerCompact {
   padding-top: 0;
   border-top: 0;
 }

@@ -143,6 +143,7 @@ test("authenticated sessions keep the hero avatar menu visible for recovery and 
 test("authenticated CM and Programmer controls live in separate field containers", () => {
   const appMarkup = fs.readFileSync(path.join(ROOT, "app.html"), "utf8");
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const appCss = fs.readFileSync(path.join(ROOT, "app.css"), "utf8");
 
   assert.match(appMarkup, /<section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">/);
   assert.match(appMarkup, /<section[\s\S]*id="programmerFieldGroup"[\s\S]*class="field-cluster field-cluster--programmer"/);
@@ -158,6 +159,10 @@ test("authenticated CM and Programmer controls live in separate field containers
     appSource,
     /programmerFieldGroup\.hidden = \[programmerPickerSection, registeredApplicationPickerSection, requestorPickerSection, premiumServicesSection\]/
   );
+  assert.match(appCss, /\.field-cluster,\s*\.field-clusterHeader,\s*\.org-pickerControl,/);
+  assert.match(appCss, /\.field-cluster > \.org-pickerCompact \{\s*padding-top: 0;\s*border-top: 0;/);
+  assert.doesNotMatch(appCss, /\.field-cluster::before/);
+  assert.doesNotMatch(appCss, /\.field-cluster > \.org-pickerCompact:first-of-type/);
 });
 
 test("MODE x COLOR theming drives app surfaces beyond links and the sign-in button", () => {
