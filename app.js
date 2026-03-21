@@ -31,6 +31,7 @@ import {
   loadImsRuntimeConfig,
   mergeProfilePayloads,
   normalizeImsRuntimeConfig,
+  normalizeImsRedirectUri,
   normalizeAvatarCandidate,
   getConsoleEnvironmentMeta,
   normalizeScopeList,
@@ -620,6 +621,12 @@ async function initialize() {
     if (state.runtimeConfig.clientId) {
       setConfigStatus(`ZIP.KEY loaded for Adobe IMS client ${state.runtimeConfig.clientId}.`, { ok: true });
       log(`ZIP.KEY client ${state.runtimeConfig.clientId} loaded from extension storage.`);
+      const effectiveRedirectUri = getEffectiveAuthRedirectUri(state.runtimeConfig);
+      if (effectiveRedirectUri && effectiveRedirectUri !== state.runtime.redirectUri) {
+        log(
+          `Using Adobe-registered redirect URI ${effectiveRedirectUri}. Interactive sign-in will use popup tab monitoring because Chrome identity is bound to ${state.runtime.redirectUri || "an unavailable redirect"}.`
+        );
+      }
       if (Array.isArray(state.runtimeConfig.droppedScopes) && state.runtimeConfig.droppedScopes.length > 0) {
         log(
           `ZIP.KEY scope was clamped to the supported Adobe Console scope set. Dropped scopes: ${state.runtimeConfig.droppedScopes.join(", ")}`
@@ -660,14 +667,10 @@ async function login({
   log(
     forceInteractive
       ? "Starting forced interactive Adobe IMS sign-in so the user can choose a different Adobe IMS org."
-      : "Starting Adobe IMS sign-in with Chrome identity and PKCE."
+      : "Starting Adobe IMS sign-in with PKCE."
   );
 
   try {
-    if (!chrome.identity?.launchWebAuthFlow) {
-      throw new Error("Chrome identity API is unavailable. Add the identity permission and reload the extension.");
-    }
-
     const runtimeConfig = await loadRuntimeConfig();
     const clientId = requireConfiguredClientId(runtimeConfig);
     const configuredScope = normalizeScopeList(firstNonEmptyString([runtimeConfig.scope, IMS_SCOPE]), IMS_SCOPE);
@@ -678,9 +681,12 @@ async function login({
     const scopePlan = buildRequestedScopePlan(configuredScope);
     const preferredScope = scopePlan[0] || configuredScope;
     const authConfiguration = await loadAuthConfiguration();
-    const redirectUri = state.runtime.redirectUri || getExtensionRedirectUri();
+    const redirectUri = getEffectiveAuthRedirectUri(runtimeConfig);
     if (!redirectUri) {
-      throw new Error("Unable to generate the extension redirect URI.");
+      throw new Error("Unable to resolve the Adobe redirect URI.");
+    }
+    if (shouldUseChromeIdentityRedirectTransport(redirectUri) && !chrome.identity?.launchWebAuthFlow) {
+      throw new Error("Chrome identity API is unavailable. Add the identity permission and reload the extension.");
     }
 
     if (requestedTargetOrganization) {
@@ -1008,15 +1014,26 @@ async function runImsBrowserLogout({ accessToken = "", redirectUri = "", clientI
     clientId
   });
 
-  if (!chrome.identity?.launchWebAuthFlow) {
+  if (!redirectUri) {
     return false;
   }
 
   try {
-    await chrome.identity.launchWebAuthFlow({
-      url: logoutUrl,
-      interactive: true
-    });
+    if (shouldUseChromeIdentityRedirectTransport(redirectUri)) {
+      if (!chrome.identity?.launchWebAuthFlow) {
+        return false;
+      }
+      await chrome.identity.launchWebAuthFlow({
+        url: logoutUrl,
+        interactive: true
+      });
+    } else {
+      await launchInteractiveAuthPopup({
+        authorizeUrl: logoutUrl,
+        redirectUri,
+        timeoutMs: 30000
+      });
+    }
     return true;
   } catch (error) {
     log(`Adobe browser logout reset failed: ${summarizeErrorHeadline(error)}`);
@@ -1052,8 +1069,8 @@ async function maybeResumeExistingAdobeSession(reason = "auto") {
     const authConfiguration = state.authConfiguration?.authorization_endpoint
       ? state.authConfiguration
       : await loadAuthConfiguration({ silent: true });
-    const redirectUri = state.runtime.redirectUri || getExtensionRedirectUri();
-    if (!redirectUri) {
+    const redirectUri = getEffectiveAuthRedirectUri(state.runtimeConfig);
+    if (!redirectUri || !shouldUseChromeIdentityRedirectTransport(redirectUri)) {
       return null;
     }
 
@@ -1120,6 +1137,9 @@ async function attemptSessionHydration({
   extraParams = {},
   targetOrganization = null
 }) {
+  const authTransport = interactive && !shouldUseChromeIdentityRedirectTransport(redirectUri)
+    ? "popup-monitor"
+    : "chrome.identity.launchWebAuthFlow";
   const authContext = {
     clientId,
     requestedScope,
@@ -1131,7 +1151,8 @@ async function attemptSessionHydration({
     tokenEndpoint: firstNonEmptyString([authConfiguration?.token_endpoint, DEFAULT_AUTH_CONFIGURATION.token_endpoint]),
     extensionId: state.runtime.extensionId,
     hasManifestKey: state.runtime.hasManifestKey,
-    transport: "chrome.identity.launchWebAuthFlow",
+    chromeIdentityRedirectUri: getChromeIdentityRedirectUri(),
+    transport: authTransport,
     interactive,
     prompt,
     reason
@@ -1167,10 +1188,20 @@ async function attemptSessionHydration({
       interactive
     };
     if (!interactive) {
+      if (!shouldUseChromeIdentityRedirectTransport(redirectUri)) {
+        throw new Error("Silent auth requires the current Chrome identity redirect URI.");
+      }
       launchDetails.abortOnLoadForNonInteractive = false;
       launchDetails.timeoutMsForNonInteractive = 10000;
     }
-    callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
+    if (authTransport === "popup-monitor") {
+      callbackUrl = await launchInteractiveAuthPopup({
+        authorizeUrl,
+        redirectUri
+      });
+    } else {
+      callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
+    }
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
       recordAuthOutcome({
@@ -7671,6 +7702,7 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `manifest_key_present=${state.runtime.hasManifestKey ? "yes" : "no"}`,
     `app_url=${firstNonEmptyString([state.runtime.appUrl, "unavailable"])}`,
     `redirect_uri=${firstNonEmptyString([state.runtime.redirectUri, "unavailable"])}`,
+    `effective_auth_redirect_uri=${firstNonEmptyString([getEffectiveAuthRedirectUri(), "unavailable"])}`,
     `browser_language=${firstNonEmptyString([navigator.language, "unavailable"])}`,
     `browser_timezone=${firstNonEmptyString([Intl.DateTimeFormat().resolvedOptions().timeZone, "unavailable"])}`
   ]);
@@ -7680,6 +7712,7 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `zip_key_client_id=${firstNonEmptyString([state.runtimeConfig?.clientId, "not-loaded"])}`,
     `zip_key_scope=${zipKeyScope}`,
     `zip_key_raw_scope=${firstNonEmptyString([state.runtimeConfig?.rawScope, "n/a"])}`,
+    `zip_key_redirect_uri=${firstNonEmptyString([state.runtimeConfig?.redirectUri, "n/a"])}`,
     `zip_key_dropped_scopes=${droppedScopes}`,
     `zip_key_console_environment=${firstNonEmptyString([state.runtimeConfig?.consoleEnvironment, "n/a"])}`,
     `zip_key_console_base_url=${firstNonEmptyString([state.runtimeConfig?.consoleBaseUrl, "n/a"])}`,
@@ -7875,6 +7908,22 @@ function getExtensionRedirectUri() {
   }
 }
 
+function getChromeIdentityRedirectUri() {
+  return normalizeImsRedirectUri(firstNonEmptyString([state.runtime.redirectUri, getExtensionRedirectUri()]));
+}
+
+function getEffectiveAuthRedirectUri(runtimeConfig = state.runtimeConfig) {
+  return normalizeImsRedirectUri(
+    firstNonEmptyString([runtimeConfig?.redirectUri, state.runtime.redirectUri, getExtensionRedirectUri()])
+  );
+}
+
+function shouldUseChromeIdentityRedirectTransport(redirectUri = "") {
+  const normalizedRedirectUri = normalizeImsRedirectUri(redirectUri);
+  const chromeIdentityRedirectUri = getChromeIdentityRedirectUri();
+  return Boolean(normalizedRedirectUri && chromeIdentityRedirectUri && normalizedRedirectUri === chromeIdentityRedirectUri);
+}
+
 function summarizeErrorHeadline(error) {
   const message = redactSensitiveTokenValues(serializeError(error));
   const headline = message
@@ -7903,7 +7952,7 @@ function buildAuthHintFromContext(errorMessage) {
     return "Adobe rejected the requested scope set. Match the ZIP.KEY scope to the Adobe Console credential.";
   }
   if (/authorization page could not be loaded/.test(message)) {
-    return "Chrome never received the final callback. Check Adobe-side validation, project access, or redirect handling.";
+    return "Login Button never received the final callback. Check Adobe-side validation, project access, or redirect handling.";
   }
   if (/popup was closed before login button received the redirect|popup window was closed/.test(message)) {
     return "The auth popup closed before callback. If Adobe pages were still visible, the block happened on Adobe's side.";
@@ -7989,10 +8038,15 @@ function describeLoginError(error) {
     );
   } else if (/authorization page could not be loaded/i.test(message)) {
     notes.push(
-      `Login Button requested this Chrome identity redirect URI: ${state.runtime.redirectUri || "unavailable"}.`
+      `Login Button requested this redirect URI: ${getEffectiveAuthRedirectUri() || "unavailable"}.`
     );
+    if (getEffectiveAuthRedirectUri() !== getChromeIdentityRedirectUri()) {
+      notes.push(
+        `Chrome identity on this install is bound to ${getChromeIdentityRedirectUri() || "unavailable"}, so Login Button fell back to popup tab monitoring for the Adobe-registered callback.`
+      );
+    }
     notes.push(
-      "If Adobe Console is already registered with that exact URI and pattern, this error does not prove the redirect is wrong. It means Chrome never received the final callback it was waiting for."
+      "If Adobe Console is already registered with that exact URI and pattern, this error does not prove the redirect is wrong. It means Login Button never received the final callback it was waiting for."
     );
     notes.push(
       "Common causes are an Adobe-side error page after sign-in, a credential/user access restriction, or another validation failure that prevented Adobe from redirecting back to the extension."
@@ -8008,7 +8062,7 @@ function describeLoginError(error) {
       "This Adobe client ID is most likely an OAuth Web App credential. For this Chrome extension, use an OAuth Single Page App or other public-client-compatible Adobe credential, or move token exchange to a backend that can hold the client secret."
     );
   } else if (/redirect|invalid_request/i.test(message)) {
-    notes.push(`Verify this redirect URI is allowed in Adobe Developer Console: ${state.runtime.redirectUri || "unavailable"}.`);
+    notes.push(`Verify this redirect URI is allowed in Adobe Developer Console: ${getEffectiveAuthRedirectUri() || "unavailable"}.`);
   }
 
   if (/unsupported_response_type|code_challenge|pkce/i.test(message)) {
@@ -8017,7 +8071,7 @@ function describeLoginError(error) {
 
   if (!state.runtime.hasManifestKey) {
     notes.push(
-      "This unpacked extension still has no manifest key, so its extension ID and chromiumapp redirect URI are not guaranteed to stay stable across installs."
+      "This unpacked extension still has no manifest key, so Chrome identity redirect URIs are not guaranteed to stay stable across installs. Login Button can still use the Adobe-registered redirect when ZIP.KEY provides one."
     );
   }
 
@@ -8042,6 +8096,7 @@ function buildDetailedAuthError(error, authContext, elapsedMs, phase) {
   lines.push(`token_endpoint=${firstNonEmptyString([authContext?.tokenEndpoint, "unavailable"])}`);
   lines.push(`redirect_uri=${firstNonEmptyString([authContext?.redirectUri, "unavailable"])}`);
   lines.push(`expected_redirect_pattern=${buildRedirectUriPattern(authContext?.redirectUri) || "unavailable"}`);
+  lines.push(`chrome_identity_redirect_uri=${firstNonEmptyString([authContext?.chromeIdentityRedirectUri, "unavailable"])}`);
   lines.push(`extension_id=${firstNonEmptyString([authContext?.extensionId, "unavailable"])}`);
   lines.push(`manifest_key_present=${authContext?.hasManifestKey ? "yes" : "no"}`);
 
@@ -8947,9 +9002,19 @@ async function launchInteractiveAuthPopup({ authorizeUrl, redirectUri, timeoutMs
     const timeoutId = window.setTimeout(() => {
       void fail(new Error("Adobe sign-in popup timed out before Login Button received the redirect."));
     }, timeoutMs);
+    const pollIntervalId = window.setInterval(() => {
+      void chrome.tabs
+        .get(popupTabId)
+        .then((tab) => {
+          rememberPopupSnapshot(tab);
+          maybeCaptureRedirect(firstNonEmptyString([tab?.pendingUrl, tab?.url]));
+        })
+        .catch(() => {});
+    }, 150);
 
     const cleanup = () => {
       window.clearTimeout(timeoutId);
+      window.clearInterval(pollIntervalId);
       chrome.tabs.onUpdated.removeListener(handleUpdated);
       chrome.tabs.onRemoved.removeListener(handleTabRemoved);
       chrome.windows.onRemoved.removeListener(handleWindowRemoved);

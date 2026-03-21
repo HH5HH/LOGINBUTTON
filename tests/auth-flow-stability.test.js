@@ -11,7 +11,7 @@ test("manifest does not pin an extension key", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(manifest, "key"), false);
 });
 
-test("interactive auth uses launchWebAuthFlow for browser redirects", () => {
+test("interactive auth chooses popup monitoring when the configured redirect differs from chrome.identity", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
   const hydrationSectionMatch = appSource.match(
     /async function attemptSessionHydration\([\s\S]*?\n}\n\nfunction requireConfiguredClientId/
@@ -20,9 +20,19 @@ test("interactive auth uses launchWebAuthFlow for browser redirects", () => {
   assert.ok(hydrationSectionMatch, "attemptSessionHydration should exist");
   const hydrationSection = hydrationSectionMatch[0];
 
-  assert.match(hydrationSection, /transport:\s*"chrome\.identity\.launchWebAuthFlow"/);
+  assert.match(hydrationSection, /const authTransport = interactive && !shouldUseChromeIdentityRedirectTransport\(redirectUri\)/);
+  assert.match(hydrationSection, /transport: authTransport/);
+  assert.match(hydrationSection, /callbackUrl = await launchInteractiveAuthPopup\(\{/);
   assert.match(hydrationSection, /callbackUrl = await chrome\.identity\.launchWebAuthFlow\(launchDetails\);/);
-  assert.doesNotMatch(hydrationSection, /launchInteractiveAuthPopup/);
+});
+
+test("runtime config accepts the Adobe project export redirect URI", () => {
+  const sharedSource = fs.readFileSync(path.join(ROOT, "shared.js"), "utf8");
+
+  assert.match(sharedSource, /IMS_PROJECT_DEFAULT_EXTENSION_REDIRECT_URI = "https:\/\/danaegilocobhopoepodlpondjjfcpoi\.chromiumapp\.org\/ims"/);
+  assert.match(sharedSource, /project\.workspace\.details\.credentials\.0\.oauth2\.client_id/);
+  assert.match(sharedSource, /project\.workspace\.details\.credentials\.0\.oauth2\.defaultRedirectUri/);
+  assert.match(sharedSource, /redirectUri,/);
 });
 
 test("scope planning still prefers org discovery when the configured scope lacks it", () => {

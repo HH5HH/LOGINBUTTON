@@ -38,6 +38,7 @@ export const IMS_BASE_URL = IMS_ISSUER_URL;
 export const IMS_PROFILE_URL = "https://ims-na1.adobelogin.com/ims/profile/v1";
 export const IMS_ORGS_URL = "https://ims-na1.adobelogin.com/ims/organizations/v5";
 export const IMS_LEGACY_REDIRECT_URI = "https://login.aepdebugger.adobe.com";
+export const IMS_PROJECT_DEFAULT_EXTENSION_REDIRECT_URI = "https://danaegilocobhopoepodlpondjjfcpoi.chromiumapp.org/ims";
 export const PPS_PROFILE_BASE_URL = "https://pps.services.adobe.com";
 export const PROFILE_CLIENT_IDS = [IMS_CLIENT_ID, "AdobePass1"].filter(Boolean);
 export const CONSOLE_LEGACY_DEFAULT_ENVIRONMENT = "release-staging";
@@ -154,6 +155,7 @@ export function getDefaultImsRuntimeConfig() {
     clientId: String(IMS_CLIENT_ID || "").trim(),
     scope: normalizeScopeList(IMS_SCOPE),
     rawScope: "",
+    redirectUri: "",
     droppedScopes: [],
     hasExplicitScope: false,
     consoleEnvironment,
@@ -218,7 +220,8 @@ export function normalizeImsRuntimeConfig(payload) {
     "ims.clientId",
     "client_id",
     "clientId",
-    "flow.clientId"
+    "flow.clientId",
+    "project.workspace.details.credentials.0.oauth2.client_id"
   ]);
   const rawScope = firstNonEmptyString([
     readZipKeyValue(sourcePayload, [
@@ -229,6 +232,19 @@ export function normalizeImsRuntimeConfig(payload) {
       "flow.scope"
     ]),
     firstNonEmptyString([sourcePayload.rawScope])
+  ]);
+  const configuredRedirectUri = readZipKeyValue(sourcePayload, [
+    "services.adobe.ims.redirect_uri",
+    "services.adobe.ims.redirectUri",
+    "adobe.ims.redirect_uri",
+    "adobe.ims.redirectUri",
+    "ims.redirect_uri",
+    "ims.redirectUri",
+    "redirect_uri",
+    "redirectUri",
+    "flow.redirectUri",
+    "project.workspace.details.credentials.0.oauth2.defaultRedirectUri",
+    "project.workspace.details.credentials.0.oauth2.redirect_uri.0"
   ]);
   const hasExplicitScope = sourcePayload.hasExplicitScope === true
     || hasAnyConfiguredValue(sourcePayload, [
@@ -325,11 +341,16 @@ export function normalizeImsRuntimeConfig(payload) {
   );
   const source = firstNonEmptyString([sourcePayload.source, clientId ? "ZIP.KEY" : "defaults"]);
   const importedAt = firstNonEmptyString([sourcePayload.importedAt]);
+  const redirectUri = normalizeImsRedirectUri(
+    configuredRedirectUri,
+    clientId ? IMS_PROJECT_DEFAULT_EXTENSION_REDIRECT_URI : ""
+  );
 
   return {
     clientId,
     scope: sanitizedScope.scope,
     rawScope: effectiveRawScope,
+    redirectUri,
     droppedScopes: sanitizedScope.droppedScopes,
     hasExplicitScope,
     consoleEnvironment,
@@ -437,6 +458,35 @@ export function normalizeScopeList(scopeValue = "", fallbackScope = IMS_SCOPE) {
   }
 
   return Array.from(new Set(tokens)).join(" ");
+}
+
+export function normalizeImsRedirectUri(
+  redirectUriValue = "",
+  fallbackRedirectUri = ""
+) {
+  const fallback = String(fallbackRedirectUri || "").trim();
+  const normalizedValue = String(redirectUriValue || "")
+    .trim()
+    .replace(/\\\./g, ".");
+  const candidate = normalizedValue || fallback;
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return fallback || "";
+    }
+    if (parsed.protocol === "http:") {
+      parsed.protocol = "https:";
+    }
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return fallback || "";
+  }
 }
 
 export function sanitizeImsScopeForCredential(scopeValue = "", fallbackScope = IMS_SCOPE) {
