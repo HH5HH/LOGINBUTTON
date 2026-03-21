@@ -177,6 +177,14 @@ test("MODE x COLOR theming drives app surfaces beyond links and the sign-in butt
   assert.match(appSource, /body\.style\.setProperty\("--login-button-theme-shell", "var\(--login-button-surface-background\)"\);/);
 });
 
+test("setup view asks for loginbutton.KEY in the visible import copy", () => {
+  const appHtml = fs.readFileSync(path.join(ROOT, "app.html"), "utf8");
+
+  assert.match(appHtml, /aria-label="loginbutton\.KEY setup view"/);
+  assert.match(appHtml, /LOGINBUTTON\.KEY PLEASE/);
+  assert.match(appHtml, /Drop loginbutton\.KEY to configure Login Button/);
+});
+
 test("post-login Adobe Pass hydration auto-activates the selected or sole programmer context", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
 
