@@ -1,7 +1,8 @@
 export const LOGINBUTTON_VAULT_DB_NAME = "loginbutton-vault";
 export const LOGINBUTTON_VAULT_DB_VERSION = 2;
 export const LOGINBUTTON_VAULT_SCHEMA_VERSION = 2;
-export const LOGINBUTTON_VAULT_EXPORT_SCHEMA = "loginbutton-vault-json-v2";
+export const LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION = 3;
+export const LOGINBUTTON_VAULT_EXPORT_SCHEMA = "loginbutton-vault-json-v3";
 export const LOGINBUTTON_VAULT_PROGRAMMER_RECORD_TTL_MS = 12 * 60 * 60 * 1000;
 
 const PROGRAMMER_STORE = "programmerRecords";
@@ -9,7 +10,7 @@ const ENVIRONMENT_STORE = "environmentGlobals";
 const META_STORE = "meta";
 const PROGRAMMER_CACHE_LIMIT = 48;
 const ENVIRONMENT_CACHE_LIMIT = 12;
-const SUPPORTED_SERVICE_KEYS = ["restV2", "esm", "degradation", "cm"];
+const SUPPORTED_SERVICE_KEYS = ["restV2", "esm", "degradation", "resetTempPass", "cm"];
 
 let databasePromise = null;
 const programmerRecordCache = new Map();
@@ -226,26 +227,25 @@ export async function exportLoginButtonVaultSnapshot() {
   ]);
   const exportedAt = new Date().toISOString();
   const environments = {};
+  const compactProgrammerRecords = programmerRecords
+    .map((record) => buildCompactProgrammerVaultExportRecord(record))
+    .filter(Boolean);
 
   environmentRecords.forEach((record) => {
     environments[record.environmentId] = {
       key: record.environmentId,
       label: firstNonEmptyString([record.environmentLabel, record.environmentId]),
       updatedAt: firstNonEmptyString([record.updatedAt]),
-      cmGlobal: cloneJsonLikeValue(record.cmGlobal, null),
-      cmTenants: cloneJsonLikeValue(record.cmTenants, null),
       mediaCompanies: {}
     };
   });
 
-  programmerRecords.forEach((record) => {
+  compactProgrammerRecords.forEach((record) => {
     if (!environments[record.environmentId]) {
       environments[record.environmentId] = {
         key: record.environmentId,
         label: firstNonEmptyString([record.environmentLabel, record.environmentId]),
         updatedAt: firstNonEmptyString([record.updatedAt]),
-        cmGlobal: null,
-        cmTenants: null,
         mediaCompanies: {}
       };
     }
@@ -259,12 +259,12 @@ export async function exportLoginButtonVaultSnapshot() {
 
   return {
     schema: LOGINBUTTON_VAULT_EXPORT_SCHEMA,
-    schemaVersion: LOGINBUTTON_VAULT_SCHEMA_VERSION,
+    schemaVersion: LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION,
     exportedAt,
     stats: {
       environmentCount: Object.keys(environments).length,
-      programmerRecordCount: programmerRecords.length,
-      serviceClientCount: countServiceClients(programmerRecords)
+      programmerRecordCount: compactProgrammerRecords.length,
+      serviceClientCount: countServiceClients(compactProgrammerRecords)
     },
     loginbutton: {
       globals: {
@@ -371,7 +371,7 @@ export async function getLoginButtonVaultStats() {
 
   return {
     schema: LOGINBUTTON_VAULT_EXPORT_SCHEMA,
-    schemaVersion: LOGINBUTTON_VAULT_SCHEMA_VERSION,
+    schemaVersion: LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION,
     environmentCount: environmentRecords.length,
     programmerRecordCount: programmerRecords.length,
     serviceClientCount: countServiceClients(programmerRecords)
@@ -947,25 +947,38 @@ function normalizeVaultImportPayload(payload = null) {
 
   const environmentRecords = [];
   const programmerRecords = [];
+  const globalsByEnvironment =
+    payload?.loginbutton?.globals?.cmGlobalsByEnvironment &&
+    typeof payload.loginbutton.globals.cmGlobalsByEnvironment === "object" &&
+    !Array.isArray(payload.loginbutton.globals.cmGlobalsByEnvironment)
+      ? payload.loginbutton.globals.cmGlobalsByEnvironment
+      : {};
 
-  if (Array.isArray(payload.programmerRecords)) {
-    payload.programmerRecords.forEach((record) => {
-      const normalizedRecord = normalizeProgrammerVaultRecord(record, null);
-      if (normalizedRecord) {
-        programmerRecords.push(normalizedRecord);
-      }
-    });
+  Object.entries(globalsByEnvironment).forEach(([environmentId, record]) => {
+    const normalizedRecord = normalizeEnvironmentGlobalsRecord(
+      {
+        environmentId,
+        environmentLabel: record?.environmentLabel,
+        cmGlobal: record?.cmGlobal,
+        cmTenants: record?.cmTenants,
+        updatedAt: record?.updatedAt
+      },
+      null
+    );
+    if (normalizedRecord) {
+      environmentRecords.push(normalizedRecord);
+    }
+  });
 
-    const environmentGlobals = Array.isArray(payload.environmentGlobals)
-      ? payload.environmentGlobals
-      : [];
-    environmentGlobals.forEach((record) => {
-      const normalizedRecord = normalizeEnvironmentGlobalsRecord(record, null);
-      if (normalizedRecord) {
-        environmentRecords.push(normalizedRecord);
-      }
-    });
-  }
+  const environmentGlobals = Array.isArray(payload.environmentGlobals)
+    ? payload.environmentGlobals
+    : [];
+  environmentGlobals.forEach((record) => {
+    const normalizedRecord = normalizeEnvironmentGlobalsRecord(record, null);
+    if (normalizedRecord) {
+      environmentRecords.push(normalizedRecord);
+    }
+  });
 
   const passEnvironments =
     payload?.pass?.environments && typeof payload.pass.environments === "object" && !Array.isArray(payload.pass.environments)
@@ -986,15 +999,45 @@ function normalizeVaultImportPayload(payload = null) {
       if (normalizedEnvironmentRecord) {
         environmentRecords.push(normalizedEnvironmentRecord);
       }
+    });
+  }
 
+  const normalizedEnvironmentRecords = dedupeEnvironmentRecords(environmentRecords);
+  const environmentRecordsById = new Map(
+    normalizedEnvironmentRecords.map((record) => [record.environmentId, record])
+  );
+
+  if (Array.isArray(payload.programmerRecords)) {
+    payload.programmerRecords.forEach((record) => {
+      const inflatedRecord = inflateCompactProgrammerVaultImportRecord(
+        record,
+        record?.environmentId,
+        record?.environmentLabel,
+        environmentRecordsById.get(normalizeIdentifier(record?.environmentId))
+      );
+      const normalizedRecord = normalizeProgrammerVaultRecord(inflatedRecord, null);
+      if (normalizedRecord) {
+        programmerRecords.push(normalizedRecord);
+      }
+    });
+  }
+
+  if (passEnvironments) {
+    Object.entries(passEnvironments).forEach(([environmentId, environmentRecord]) => {
       const mediaCompanies =
         environmentRecord?.mediaCompanies && typeof environmentRecord.mediaCompanies === "object" && !Array.isArray(environmentRecord.mediaCompanies)
           ? environmentRecord.mediaCompanies
           : {};
       Object.entries(mediaCompanies).forEach(([programmerId, programmerRecord]) => {
+        const inflatedProgrammerRecord = inflateCompactProgrammerVaultImportRecord(
+          programmerRecord,
+          environmentId,
+          environmentRecord?.label,
+          environmentRecordsById.get(normalizeIdentifier(environmentId))
+        );
         const normalizedProgrammerRecord = normalizeProgrammerVaultRecord(
           {
-            ...cloneJsonLikeValue(programmerRecord, {}),
+            ...cloneJsonLikeValue(inflatedProgrammerRecord, {}),
             environmentId,
             environmentLabel: environmentRecord?.label,
             programmerId
@@ -1013,7 +1056,7 @@ function normalizeVaultImportPayload(payload = null) {
   }
 
   return {
-    environmentRecords: dedupeEnvironmentRecords(environmentRecords),
+    environmentRecords: normalizedEnvironmentRecords,
     programmerRecords: dedupeProgrammerRecords(programmerRecords)
   };
 }
@@ -1035,9 +1078,255 @@ function dedupeEnvironmentRecords(records = []) {
     if (!record?.environmentId) {
       return;
     }
-    deduped.set(record.environmentId, record);
+    const existingRecord = deduped.get(record.environmentId) || null;
+    deduped.set(
+      record.environmentId,
+      normalizeEnvironmentGlobalsRecord(record, existingRecord)
+    );
   });
   return Array.from(deduped.values());
+}
+
+function buildCompactProgrammerVaultExportRecord(record = null) {
+  const normalizedRecord = normalizeProgrammerVaultRecord(record, null);
+  if (!normalizedRecord) {
+    return null;
+  }
+
+  const registeredApplicationsById = buildCompactRegisteredApplicationsById(
+    []
+      .concat(Array.isArray(normalizedRecord.selectedApplications) ? normalizedRecord.selectedApplications : [])
+      .concat(
+        SUPPORTED_SERVICE_KEYS.map((serviceKey) => normalizedRecord.services?.[serviceKey]?.registeredApplication).filter(Boolean)
+      )
+  );
+
+  return {
+    key: normalizedRecord.key,
+    schemaVersion: normalizedRecord.schemaVersion,
+    environmentId: normalizedRecord.environmentId,
+    environmentLabel: normalizedRecord.environmentLabel,
+    programmerId: normalizedRecord.programmerId,
+    programmerKey: normalizedRecord.programmerKey,
+    programmerName: normalizedRecord.programmerName,
+    programmerLabel: normalizedRecord.programmerLabel,
+    consoleBaseUrl: normalizedRecord.consoleBaseUrl,
+    configurationVersion: normalizedRecord.configurationVersion,
+    programmerFingerprint: normalizedRecord.programmerFingerprint,
+    hydrationStatus: normalizedRecord.hydrationStatus,
+    selectedRegisteredApplicationId: normalizedRecord.selectedRegisteredApplicationId,
+    selectedRequestorId: normalizedRecord.selectedRequestorId,
+    selectedCmTenantId: normalizedRecord.selectedCmTenantId,
+    registeredApplicationsById,
+    services: buildCompactProgrammerVaultExportServices(normalizedRecord.services),
+    maxAgeMs: normalizedRecord.maxAgeMs,
+    source: normalizedRecord.source,
+    hydratedAt: normalizedRecord.hydratedAt,
+    updatedAt: normalizedRecord.updatedAt,
+    expiresAt: normalizedRecord.expiresAt,
+    lastSelectedAt: normalizedRecord.lastSelectedAt
+  };
+}
+
+function buildCompactProgrammerVaultExportServices(services = null) {
+  const currentServices = services && typeof services === "object" ? services : {};
+  const compactServices = {};
+
+  SUPPORTED_SERVICE_KEYS.forEach((serviceKey) => {
+    const currentService = currentServices?.[serviceKey];
+    if (serviceKey === "cm") {
+      compactServices.cm = buildCompactCmServiceExportRecord(currentService);
+      return;
+    }
+
+    compactServices[serviceKey] = buildCompactDcrServiceExportRecord(serviceKey, currentService);
+  });
+
+  return compactServices;
+}
+
+function buildCompactDcrServiceExportRecord(serviceKey = "", record = null) {
+  const normalizedRecord = normalizeDcrServiceRecord(serviceKey, record, null, "");
+  const registeredApplicationId = firstNonEmptyString([
+    normalizedRecord?.registeredApplication?.id,
+    normalizedRecord?.registeredApplication?.key
+  ]);
+  return {
+    key: normalizedRecord.key,
+    label: normalizedRecord.label,
+    available: normalizedRecord.available === true,
+    requiredScope: normalizedRecord.requiredScope,
+    registeredApplicationId,
+    client: cloneJsonLikeValue(normalizedRecord.client, null),
+    updatedAt: normalizedRecord.updatedAt,
+    status: normalizedRecord.status
+  };
+}
+
+function buildCompactCmServiceExportRecord(record = null) {
+  const normalizedRecord = normalizeCmServiceRecord(record, null, "");
+  return {
+    key: normalizedRecord.key,
+    label: normalizedRecord.label,
+    available: normalizedRecord.available === true,
+    checked: normalizedRecord.checked === true,
+    matchedTenantCount: Number(normalizedRecord.matchedTenantCount || 0),
+    matchedTenantIds: normalizeMatchedTenants(normalizedRecord.matchedTenants).map((tenant) =>
+      firstNonEmptyString([tenant?.id, tenant?.key])
+    ),
+    sourceUrl: normalizedRecord.sourceUrl,
+    loadError: normalizedRecord.loadError,
+    updatedAt: normalizedRecord.updatedAt,
+    status: normalizedRecord.status
+  };
+}
+
+function buildCompactRegisteredApplicationsById(applications = []) {
+  const compactApplications = {};
+  (Array.isArray(applications) ? applications : []).forEach((application) => {
+    const normalizedApplication = normalizeCompactApplication(application);
+    const applicationId = firstNonEmptyString([normalizedApplication?.id, normalizedApplication?.key]);
+    if (!applicationId) {
+      return;
+    }
+    compactApplications[applicationId] = normalizedApplication;
+  });
+  return compactApplications;
+}
+
+function normalizeCompactApplicationMap(applicationsById = null) {
+  const normalizedApplications = {};
+  if (!applicationsById || typeof applicationsById !== "object" || Array.isArray(applicationsById)) {
+    return normalizedApplications;
+  }
+
+  Object.entries(applicationsById).forEach(([applicationId, application]) => {
+    const normalizedApplication = normalizeCompactApplication({
+      id: applicationId,
+      ...(application && typeof application === "object" ? application : {})
+    });
+    const normalizedApplicationId = firstNonEmptyString([
+      normalizedApplication?.id,
+      normalizedApplication?.key
+    ]);
+    if (!normalizedApplicationId) {
+      return;
+    }
+    normalizedApplications[normalizedApplicationId] = normalizedApplication;
+  });
+  return normalizedApplications;
+}
+
+function inflateCompactProgrammerVaultImportRecord(
+  record = null,
+  fallbackEnvironmentId = "",
+  fallbackEnvironmentLabel = "",
+  environmentRecord = null
+) {
+  if (!record || typeof record !== "object") {
+    return record;
+  }
+
+  const normalizedRecord = cloneJsonLikeValue(record, {});
+  const applicationsById = normalizeCompactApplicationMap(normalizedRecord.registeredApplicationsById);
+  const hasCompactServicesShape = Object.values(
+    normalizedRecord?.services && typeof normalizedRecord.services === "object" ? normalizedRecord.services : {}
+  ).some((serviceRecord) => {
+    return Boolean(
+      firstNonEmptyString([
+        serviceRecord?.registeredApplicationId
+      ]) || Array.isArray(serviceRecord?.matchedTenantIds)
+    );
+  });
+  if (Object.keys(applicationsById).length === 0 && !hasCompactServicesShape) {
+    return {
+      ...normalizedRecord,
+      environmentId: firstNonEmptyString([normalizedRecord.environmentId, fallbackEnvironmentId]),
+      environmentLabel: firstNonEmptyString([normalizedRecord.environmentLabel, fallbackEnvironmentLabel])
+    };
+  }
+
+  return {
+    ...normalizedRecord,
+    environmentId: firstNonEmptyString([normalizedRecord.environmentId, fallbackEnvironmentId]),
+    environmentLabel: firstNonEmptyString([normalizedRecord.environmentLabel, fallbackEnvironmentLabel]),
+    selectedApplications: Object.values(applicationsById),
+    services: inflateCompactProgrammerVaultServices(
+      normalizedRecord.services,
+      applicationsById,
+      environmentRecord
+    )
+  };
+}
+
+function inflateCompactProgrammerVaultServices(services = null, applicationsById = {}, environmentRecord = null) {
+  const inputServices = services && typeof services === "object" ? services : {};
+  const inflatedServices = {};
+
+  SUPPORTED_SERVICE_KEYS.forEach((serviceKey) => {
+    const currentService = inputServices?.[serviceKey];
+    if (serviceKey === "cm") {
+      inflatedServices.cm = inflateCompactCmServiceRecord(currentService, environmentRecord);
+      return;
+    }
+
+    inflatedServices[serviceKey] = inflateCompactDcrServiceRecord(currentService, applicationsById);
+  });
+
+  return inflatedServices;
+}
+
+function inflateCompactDcrServiceRecord(record = null, applicationsById = {}) {
+  if (!record || typeof record !== "object") {
+    return record;
+  }
+
+  const registeredApplicationId = firstNonEmptyString([record.registeredApplicationId]);
+  return {
+    ...cloneJsonLikeValue(record, {}),
+    registeredApplication:
+      normalizeCompactApplication(record.registeredApplication) ||
+      cloneJsonLikeValue(applicationsById?.[registeredApplicationId], null)
+  };
+}
+
+function inflateCompactCmServiceRecord(record = null, environmentRecord = null) {
+  if (!record || typeof record !== "object") {
+    return record;
+  }
+
+  return {
+    ...cloneJsonLikeValue(record, {}),
+    matchedTenants: inflateCompactMatchedTenants(record.matchedTenantIds, environmentRecord)
+  };
+}
+
+function inflateCompactMatchedTenants(matchedTenantIds = [], environmentRecord = null) {
+  const catalogTenants = Array.isArray(environmentRecord?.cmTenants?.tenants)
+    ? environmentRecord.cmTenants.tenants
+    : [];
+  const catalogById = new Map(
+    catalogTenants
+      .map((tenant) => normalizeCompactTenant(tenant))
+      .filter(Boolean)
+      .flatMap((tenant) => {
+        const identifiers = uniqueStrings([tenant?.id, tenant?.key]);
+        return identifiers.map((identifier) => [identifier, tenant]);
+      })
+  );
+
+  return uniqueStrings(matchedTenantIds).map((tenantId) => {
+    const catalogMatch = catalogById.get(tenantId);
+    if (catalogMatch) {
+      return cloneJsonLikeValue(catalogMatch, null);
+    }
+    return {
+      key: tenantId,
+      id: tenantId,
+      name: tenantId,
+      label: tenantId
+    };
+  });
 }
 
 function countServiceClients(programmerRecords = []) {

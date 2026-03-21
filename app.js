@@ -126,7 +126,8 @@ const PREMIUM_SERVICE_SCOPE_RULES = [
 const VAULT_DCR_SERVICE_DEFINITIONS = [
   { serviceKey: "restV2", label: "REST API V2", requiredScope: "api:client:v2" },
   { serviceKey: "esm", label: "ESM", requiredScope: "analytics:client" },
-  { serviceKey: "degradation", label: "degradation", requiredScope: "decisions:owner" }
+  { serviceKey: "degradation", label: "degradation", requiredScope: "decisions:owner" },
+  { serviceKey: "resetTempPass", label: "reset TempPass", requiredScope: "temporary:passes:owner" }
 ];
 const PREMIUM_SERVICE_CONCURRENCY_LABEL = "Concurrency Monitoring";
 const REGISTERED_APPLICATION_SCOPE_LABELS = {
@@ -4354,6 +4355,63 @@ function buildVaultCompactRegisteredApplication(application = null) {
   return normalizedApplication.id || normalizedApplication.key ? normalizedApplication : null;
 }
 
+function resolveVaultDcrServiceDefinition(serviceKey = "") {
+  const normalizedServiceKey = String(serviceKey || "").trim();
+  if (!normalizedServiceKey) {
+    return null;
+  }
+
+  return VAULT_DCR_SERVICE_DEFINITIONS.find((definition) => definition.serviceKey === normalizedServiceKey) || null;
+}
+
+function registeredApplicationMatchesRequiredScope(application = null, requiredScope = "") {
+  const normalizedRequiredScope = String(requiredScope || "").trim();
+  if (!application || !normalizedRequiredScope) {
+    return false;
+  }
+
+  return (Array.isArray(application?.scopes) ? application.scopes : [])
+    .map((scope) => String(scope || "").trim())
+    .includes(normalizedRequiredScope);
+}
+
+function buildCompactRegisteredApplicationIdentity(application = null) {
+  return firstNonEmptyString([application?.id, application?.key]);
+}
+
+function compactRegisteredApplicationsMatch(left = null, right = null) {
+  const leftIdentity = buildCompactRegisteredApplicationIdentity(left);
+  const rightIdentity = buildCompactRegisteredApplicationIdentity(right);
+  return Boolean(leftIdentity) && leftIdentity === rightIdentity;
+}
+
+function resolvePreferredVaultServiceApplication({
+  definition = null,
+  registeredApplications = [],
+  selectedRegisteredApplication = null,
+  existingService = null
+} = {}) {
+  const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
+  if (!normalizedDefinition) {
+    return null;
+  }
+
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
+  const selectedApplicationMatchesScope = registeredApplicationMatchesRequiredScope(
+    selectedRegisteredApplication,
+    normalizedDefinition.requiredScope
+  );
+  const matchingApplication = normalizedApplications.find((application) =>
+    registeredApplicationMatchesRequiredScope(application, normalizedDefinition.requiredScope)
+  );
+
+  return buildVaultCompactRegisteredApplication(
+    selectedApplicationMatchesScope
+      ? selectedRegisteredApplication
+      : matchingApplication || existingService?.registeredApplication || null
+  );
+}
+
 function matchProgrammerCmTenants(selectedProgrammer = null, cmTenants = []) {
   if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
     return [];
@@ -4413,26 +4471,28 @@ function buildProgrammerServiceVaultEntries({
   registeredApplications = [],
   selectedProgrammer = null,
   cmTenants = [],
-  existingVaultRecord = null
+  existingVaultRecord = null,
+  selectedRegisteredApplication = null
 } = {}) {
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
   const services = {};
 
   VAULT_DCR_SERVICE_DEFINITIONS.forEach((definition) => {
     const existingService = existingVaultRecord?.services?.[definition.serviceKey] || null;
-    const matchingApplication = normalizedApplications.find((application) =>
-      (Array.isArray(application?.scopes) ? application.scopes : [])
-        .map((scope) => String(scope || "").trim())
-        .includes(definition.requiredScope)
-    );
-    const registeredApplication = buildVaultCompactRegisteredApplication(
-      matchingApplication || existingService?.registeredApplication || null
-    );
-    const client = existingService?.client && typeof existingService.client === "object"
-      ? {
-          ...existingService.client
-        }
-      : null;
+    const registeredApplication = resolvePreferredVaultServiceApplication({
+      definition,
+      registeredApplications: normalizedApplications,
+      selectedRegisteredApplication,
+      existingService
+    });
+    const client =
+      compactRegisteredApplicationsMatch(registeredApplication, existingService?.registeredApplication) &&
+      existingService?.client &&
+      typeof existingService.client === "object"
+        ? {
+            ...existingService.client
+          }
+        : null;
 
     services[definition.serviceKey] = {
       key: definition.serviceKey,
@@ -4728,10 +4788,18 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
   };
 }
 
-async function hydrateProgrammerVaultServiceClients(services = {}) {
+async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys = null) {
   const nextServices = services && typeof services === "object" ? { ...services } : {};
+  const requestedServiceKeys = new Set(
+    (Array.isArray(serviceKeys) ? serviceKeys : [])
+      .map((serviceKey) => String(serviceKey || "").trim())
+      .filter(Boolean)
+  );
+  const definitionsToHydrate = requestedServiceKeys.size > 0
+    ? VAULT_DCR_SERVICE_DEFINITIONS.filter((definition) => requestedServiceKeys.has(definition.serviceKey))
+    : VAULT_DCR_SERVICE_DEFINITIONS;
   const hydratedServices = await Promise.all(
-    VAULT_DCR_SERVICE_DEFINITIONS.map(async (definition) => [
+    definitionsToHydrate.map(async (definition) => [
       definition.serviceKey,
       await ensureVaultServiceClientHydrated(nextServices[definition.serviceKey], definition)
     ])
@@ -4935,19 +5003,19 @@ function derivePremiumServicesSummary({
         ? vaultServiceRecord.registeredApplication
         : null;
     const matchingApplication = normalizedApplications.find((application) =>
-      (Array.isArray(application?.scopes) ? application.scopes : [])
-        .map((scope) => String(scope || "").trim())
-        .includes(rule.scope)
+      registeredApplicationMatchesRequiredScope(application, rule.scope)
     );
     if (!matchingApplication && !vaultRegisteredApplication) {
       return;
     }
 
-    const selectedApplicationMatchesScope = Boolean(selectedRegisteredApplication) &&
-      (Array.isArray(selectedRegisteredApplication?.scopes) ? selectedRegisteredApplication.scopes : [])
-        .map((scope) => String(scope || "").trim())
-        .includes(rule.scope);
-    const effectiveApplication = matchingApplication || vaultRegisteredApplication;
+    const selectedApplicationMatchesScope = registeredApplicationMatchesRequiredScope(
+      selectedRegisteredApplication,
+      rule.scope
+    );
+    const effectiveApplication = selectedApplicationMatchesScope
+      ? selectedRegisteredApplication
+      : matchingApplication || vaultRegisteredApplication;
 
     const applicationName = firstNonEmptyString([
       effectiveApplication?.name,
@@ -4965,14 +5033,17 @@ function derivePremiumServicesSummary({
           vaultRegisteredApplication?.name,
           vaultRegisteredApplication?.label,
           vaultRegisteredApplication?.id
-        ]);
+    ]);
     labels.push(rule.label);
     items.push({
-      key: `${rule.label}:${applicationName}`,
+      key: `${firstNonEmptyString([vaultServiceDefinition?.serviceKey, rule.scope])}:${applicationName}`,
+      serviceKey: firstNonEmptyString([vaultServiceDefinition?.serviceKey]),
       label: rule.label,
+      requiredScope: rule.scope,
+      registeredApplicationId: firstNonEmptyString([effectiveApplication?.id, effectiveApplication?.key]),
       applicationName,
       selectedApplicationName,
-      placeholderMessage: `Use ${applicationName} to show cheat sheet and real time result of cheat sheet sample`
+      serviceStatus: firstNonEmptyString([vaultServiceRecord?.status, effectiveApplication ? "pending" : "unavailable"])
     });
   });
 
@@ -4995,10 +5066,15 @@ function derivePremiumServicesSummary({
     labels.push(PREMIUM_SERVICE_CONCURRENCY_LABEL);
     items.push({
       key: `${PREMIUM_SERVICE_CONCURRENCY_LABEL}:${fallbackApplicationName}`,
+      serviceKey: "cm",
       label: PREMIUM_SERVICE_CONCURRENCY_LABEL,
       applicationName: fallbackApplicationName,
       selectedApplicationName,
-      placeholderMessage: `Use ${fallbackApplicationName} to show cheat sheet and real time result of cheat sheet sample`
+      serviceStatus: firstNonEmptyString([vaultCmService?.status, matchedCmTenants.length > 0 ? "ready" : "pending"]),
+      matchedTenantCount: Math.max(
+        matchedCmTenants.length,
+        Number(vaultCmService?.matchedTenantCount || 0)
+      )
     });
   }
 
@@ -5744,6 +5820,7 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     consoleContext,
     cmContext,
     selectedProgrammer,
+    selectedRegisteredApplication,
     registeredApplicationsHydrated: hasHydratedApplications,
     registeredApplications: effectiveRegisteredApplications,
     requestors,
@@ -5776,7 +5853,11 @@ function resolveVaultSelectedRegisteredApplicationId(applications = [], selected
   return firstNonEmptyString([firstApplication?.key, firstApplication?.id]);
 }
 
-async function buildProgrammerVaultSnapshotInput(session = null, programmerId = "", { registeredApplications = null, source = "network" } = {}) {
+async function buildProgrammerVaultSnapshotInput(
+  session = null,
+  programmerId = "",
+  { registeredApplications = null, source = "network", serviceKeys = null } = {}
+) {
   const snapshotContext = buildProgrammerVaultSnapshotContext(session, programmerId, {
     registeredApplications
   });
@@ -5791,8 +5872,10 @@ async function buildProgrammerVaultSnapshotInput(session = null, programmerId = 
       registeredApplications: snapshotContext.registeredApplications,
       selectedProgrammer: snapshotContext.selectedProgrammer,
       cmTenants: Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
-      existingVaultRecord
-    })
+      existingVaultRecord,
+      selectedRegisteredApplication: snapshotContext.selectedRegisteredApplication
+    }),
+    serviceKeys
   );
   const selectedApplications = VAULT_DCR_SERVICE_DEFINITIONS.map((definition) => services?.[definition.serviceKey]?.registeredApplication)
     .filter(Boolean);
@@ -5828,10 +5911,15 @@ async function buildProgrammerVaultSnapshotInput(session = null, programmerId = 
   };
 }
 
-async function persistProgrammerVaultSnapshot(session = null, programmerId = "", { registeredApplications = null, source = "network" } = {}) {
+async function persistProgrammerVaultSnapshot(
+  session = null,
+  programmerId = "",
+  { registeredApplications = null, source = "network", serviceKeys = null } = {}
+) {
   const snapshotInput = await buildProgrammerVaultSnapshotInput(session, programmerId, {
     registeredApplications,
-    source
+    source,
+    serviceKeys
   });
   if (!snapshotInput) {
     return null;
@@ -5868,7 +5956,24 @@ async function persistSelectedProgrammerVaultSelections(programmerId = state.sel
   if (mergedSelections && String(state.selectedProgrammerId || "").trim() === String(mergedSelections?.programmerId || "").trim()) {
     state.selectedProgrammerVaultRecord = mergedSelections;
   }
-  if (mergedSelections || !snapshotContext.registeredApplicationsHydrated) {
+  if (!snapshotContext.registeredApplicationsHydrated) {
+    return mergedSelections;
+  }
+
+  const selectedRegisteredApplication = resolveSelectedRegisteredApplication(
+    snapshotContext.registeredApplications,
+    nextSelections.selectedRegisteredApplicationId
+  );
+  const selectedServiceKeys = VAULT_DCR_SERVICE_DEFINITIONS.filter((definition) =>
+    registeredApplicationMatchesRequiredScope(selectedRegisteredApplication, definition.requiredScope)
+  ).map((definition) => definition.serviceKey);
+  if (selectedServiceKeys.length > 0) {
+    return persistProgrammerVaultSnapshot(state.session, programmerId, {
+      source: "selection",
+      serviceKeys: selectedServiceKeys
+    });
+  }
+  if (mergedSelections) {
     return mergedSelections;
   }
 
@@ -6658,12 +6763,6 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
     body.className = "premium-serviceBody";
     body.hidden = !isExpanded;
 
-    const cheatSheetMessage = `Use ${firstNonEmptyString([
-      item?.selectedApplicationName,
-      item?.applicationName,
-      "this Registered Application"
-    ])} to show cheat sheet and real time result of cheat sheet sample`;
-
     const actionRow = document.createElement("div");
     actionRow.className = "premium-serviceActionRow";
 
@@ -6676,8 +6775,18 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
     cheatSheetButtonLabel.className = "spectrum-Button-label";
     cheatSheetButtonLabel.textContent = "CHEAT SHEET";
     cheatSheetButton.appendChild(cheatSheetButtonLabel);
-    cheatSheetButton.addEventListener("click", () => {
-      window.alert(cheatSheetMessage);
+    cheatSheetButton.addEventListener("click", async () => {
+      cheatSheetButton.disabled = true;
+      cheatSheetButton.setAttribute("aria-busy", "true");
+      try {
+        const cheatSheetMessage = await buildPremiumServiceCheatSheetMessage(item);
+        window.alert(cheatSheetMessage);
+      } catch (error) {
+        window.alert(`Unable to hydrate ${firstNonEmptyString([item?.label, "this premium service"])}: ${serializeError(error)}`);
+      } finally {
+        cheatSheetButton.disabled = false;
+        cheatSheetButton.setAttribute("aria-busy", "false");
+      }
     });
 
     actionRow.appendChild(cheatSheetButton);
@@ -6694,6 +6803,144 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
     card.append(toggle, body);
     premiumServicesList.appendChild(card);
   });
+}
+
+function buildPremiumServiceApplicationDisplayName(application = null, fallbackLabel = "Registered Application") {
+  return firstNonEmptyString([
+    application?.name,
+    application?.label,
+    application?.id,
+    fallbackLabel
+  ]);
+}
+
+function buildPremiumServiceClientReadyMessage(definition = null, serviceRecord = null, fallbackApplicationName = "") {
+  const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
+  const normalizedServiceRecord = serviceRecord && typeof serviceRecord === "object" ? serviceRecord : {};
+  const registeredApplication =
+    normalizedServiceRecord?.registeredApplication && typeof normalizedServiceRecord.registeredApplication === "object"
+      ? normalizedServiceRecord.registeredApplication
+      : null;
+  const client = normalizedServiceRecord?.client && typeof normalizedServiceRecord.client === "object"
+    ? normalizedServiceRecord.client
+    : {};
+  const applicationName = buildPremiumServiceApplicationDisplayName(registeredApplication, fallbackApplicationName);
+  const clientId = firstNonEmptyString([client.clientId]);
+  const clientSecret = firstNonEmptyString([client.clientSecret]);
+  const accessToken = firstNonEmptyString([client.accessToken]);
+  const tokenScope = firstNonEmptyString([
+    client.tokenScope,
+    client.tokenRequestedScope,
+    normalizedDefinition?.requiredScope
+  ]);
+
+  if (!normalizedDefinition || !clientId || !clientSecret || !accessToken) {
+    return [
+      `${firstNonEmptyString([normalizedDefinition?.label, "Premium service"])} is not fully hydrated yet.`,
+      `Registered Application: ${applicationName}`,
+      `Required scope: ${firstNonEmptyString([normalizedDefinition?.requiredScope, "Unavailable"])}`,
+      `Result: ${firstNonEmptyString([client.error, normalizedServiceRecord?.status, "LoginButton could not finish the DCR /register flow yet."])}`
+    ].join("\n");
+  }
+
+  return [
+    `${normalizedDefinition.label} is fully hydrated and ready.`,
+    `Registered Application: ${applicationName}`,
+    `Required scope: ${firstNonEmptyString([normalizedDefinition.requiredScope])}`,
+    `DCR client: ${clientId}`,
+    `Token scope: ${tokenScope}`,
+    `Result: Make cheatsheet for ${normalizedDefinition.label} using ${applicationName} client ${clientId}.`
+  ].join("\n");
+}
+
+function buildConcurrencyMonitoringReadyMessage(authenticatedDataContext = {}, matchedTenants = []) {
+  const cmContext =
+    authenticatedDataContext?.cmContext && typeof authenticatedDataContext.cmContext === "object"
+      ? authenticatedDataContext.cmContext
+      : {};
+  const selectedCmTenant = authenticatedDataContext?.selectedCmTenant || matchedTenants[0] || null;
+  const tenantLabel = firstNonEmptyString([
+    selectedCmTenant?.label,
+    selectedCmTenant?.name,
+    selectedCmTenant?.id,
+    matchedTenants[0]?.label,
+    matchedTenants[0]?.name,
+    matchedTenants[0]?.id
+  ]);
+  const cmuClientId = firstNonEmptyString([cmContext.cmuTokenClientId, CM_CONSOLE_IMS_CLIENT_ID]);
+  const cmuTokenHeaderValue = firstNonEmptyString([authenticatedDataContext?.cmuTokenHeaderValue]);
+  if (!cmuTokenHeaderValue || matchedTenants.length === 0) {
+    return [
+      `${PREMIUM_SERVICE_CONCURRENCY_LABEL} is not fully hydrated yet.`,
+      `Security gate: Adobe IMS CMU token (no DCR /register step).`,
+      `Matched CM tenants: ${String(matchedTenants.length)}`,
+      `Result: ${firstNonEmptyString([cmContext?.errors?.cmuToken, cmContext?.errors?.tenants, cmContext?.status, "LoginButton still needs the CMU token + tenant match before it can use Concurrency Monitoring."])}`
+    ].join("\n");
+  }
+
+  return [
+    `${PREMIUM_SERVICE_CONCURRENCY_LABEL} is fully hydrated and ready.`,
+    `Security gate: Adobe IMS CMU token (no DCR /register step).`,
+    `CMU client: ${cmuClientId}`,
+    `Header: ${firstNonEmptyString([cmContext.cmuTokenHeaderName, CMU_TOKEN_HEADER_NAME])}`,
+    `CM tenant: ${tenantLabel}`,
+    `Result: Make cheatsheet for ${PREMIUM_SERVICE_CONCURRENCY_LABEL} using ${cmuClientId}.`
+  ].join("\n");
+}
+
+async function buildPremiumServiceCheatSheetMessage(item = null) {
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  if (!currentSession?.accessToken) {
+    throw new Error("Sign in to Adobe first.");
+  }
+
+  let authenticatedDataContext = buildAuthenticatedUserDataContext(currentSession);
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer;
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  if (!programmerId) {
+    throw new Error("Choose a Programmer first.");
+  }
+
+  await ensureSelectedProgrammerApplicationsLoaded(programmerId);
+  authenticatedDataContext = buildAuthenticatedUserDataContext(state.session);
+  const refreshedProgrammer = authenticatedDataContext?.selectedProgrammer;
+  if (!refreshedProgrammer) {
+    throw new Error("LoginButton could not restore the selected Programmer.");
+  }
+
+  const normalizedServiceKey = String(item?.serviceKey || "").trim();
+  if (normalizedServiceKey === "cm") {
+    let matchedTenants = matchProgrammerCmTenants(refreshedProgrammer, authenticatedDataContext.cmTenantOptions);
+    if (!authenticatedDataContext?.cmuTokenHeaderValue || matchedTenants.length === 0) {
+      await refreshSessionPostLoginContextInBackground(state.session, {
+        reason: "premium-service-cheat-sheet"
+      });
+      authenticatedDataContext = buildAuthenticatedUserDataContext(state.session);
+      matchedTenants = matchProgrammerCmTenants(
+        authenticatedDataContext?.selectedProgrammer,
+        authenticatedDataContext.cmTenantOptions
+      );
+    }
+    return buildConcurrencyMonitoringReadyMessage(authenticatedDataContext, matchedTenants);
+  }
+
+  const definition = resolveVaultDcrServiceDefinition(normalizedServiceKey);
+  if (!definition) {
+    throw new Error(`LoginButton could not resolve the ${firstNonEmptyString([item?.label, "selected"])} premium service.`);
+  }
+
+  const snapshot = await persistProgrammerVaultSnapshot(state.session, programmerId, {
+    registeredApplications: authenticatedDataContext.registeredApplicationOptions,
+    source: "cheat-sheet",
+    serviceKeys: [definition.serviceKey]
+  });
+  const serviceRecord = snapshot?.services?.[definition.serviceKey] || null;
+
+  return buildPremiumServiceClientReadyMessage(
+    definition,
+    serviceRecord,
+    firstNonEmptyString([item?.selectedApplicationName, item?.applicationName, definition.label])
+  );
 }
 
 function syncAuthenticatedFieldGroups() {

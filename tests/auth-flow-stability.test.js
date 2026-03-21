@@ -298,3 +298,47 @@ test("manifest declares webNavigation for popup redirect capture", () => {
   assert.ok(manifest.host_permissions.includes("https://api.github.com/*"));
   assert.ok(manifest.host_permissions.includes("https://raw.githubusercontent.com/*"));
 });
+
+test("vault export compacts programmer records and keeps CM globals only at the LoginButton environment layer", () => {
+  const vaultSource = fs.readFileSync(path.join(ROOT, "vault.js"), "utf8");
+
+  assert.match(vaultSource, /LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION = 3;/);
+  assert.match(vaultSource, /LOGINBUTTON_VAULT_EXPORT_SCHEMA = "loginbutton-vault-json-v3";/);
+  assert.match(vaultSource, /const SUPPORTED_SERVICE_KEYS = \["restV2", "esm", "degradation", "resetTempPass", "cm"\];/);
+  assert.match(vaultSource, /const compactProgrammerRecords = programmerRecords[\s\S]*buildCompactProgrammerVaultExportRecord/);
+  assert.match(vaultSource, /registeredApplicationsById,/);
+  assert.match(vaultSource, /matchedTenantIds:/);
+  assert.match(vaultSource, /payload\?\.loginbutton\?\.globals\?\.cmGlobalsByEnvironment/);
+  assert.match(vaultSource, /inflateCompactProgrammerVaultImportRecord/);
+  assert.match(vaultSource, /inflateCompactMatchedTenants/);
+});
+
+test("selected registered application drives service hydration for scope-matched premium services", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /serviceKey: "resetTempPass", label: "reset TempPass", requiredScope: "temporary:passes:owner"/);
+  assert.match(appSource, /function resolvePreferredVaultServiceApplication\(/);
+  assert.match(appSource, /const selectedApplicationMatchesScope = registeredApplicationMatchesRequiredScope\(/);
+  assert.match(appSource, /selectedRegisteredApplication: snapshotContext\.selectedRegisteredApplication/);
+
+  const selectionPersistSectionMatch = appSource.match(
+    /async function persistSelectedProgrammerVaultSelections\([\s\S]*?\n}\n\nfunction hydrateSelectedProgrammerFromVaultRecord/
+  );
+  assert.ok(selectionPersistSectionMatch, "persistSelectedProgrammerVaultSelections should exist");
+  assert.match(selectionPersistSectionMatch[0], /const selectedServiceKeys = VAULT_DCR_SERVICE_DEFINITIONS\.filter/);
+  assert.match(selectionPersistSectionMatch[0], /registeredApplicationMatchesRequiredScope\(selectedRegisteredApplication, definition\.requiredScope\)/);
+  assert.match(selectionPersistSectionMatch[0], /serviceKeys: selectedServiceKeys/);
+});
+
+test("premium service cheat sheet button reports real DCR or CM readiness instead of placeholder copy", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /async function buildPremiumServiceCheatSheetMessage\(/);
+  assert.match(appSource, /await persistProgrammerVaultSnapshot\(state\.session, programmerId, \{/);
+  assert.match(appSource, /serviceKeys: \[definition\.serviceKey\]/);
+  assert.match(appSource, /Security gate: Adobe IMS CMU token \(no DCR \/register step\)\./);
+  assert.match(appSource, /Result: Make cheatsheet for \$\{normalizedDefinition\.label\} using \$\{applicationName\} client \$\{clientId\}\./);
+  assert.match(appSource, /Result: Make cheatsheet for \$\{PREMIUM_SERVICE_CONCURRENCY_LABEL\} using \$\{cmuClientId\}\./);
+  assert.match(appSource, /window\.alert\(cheatSheetMessage\);/);
+  assert.doesNotMatch(appSource, /show cheat sheet and real time result of cheat sheet sample/);
+});
