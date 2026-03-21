@@ -165,6 +165,29 @@ test("authenticated CM and Programmer controls live in separate field containers
   assert.doesNotMatch(appCss, /\.field-cluster > \.org-pickerCompact:first-of-type/);
 });
 
+test("premium services cards use one shared themed Spectrum-style container treatment", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const appCss = fs.readFileSync(path.join(ROOT, "app.css"), "utf8");
+
+  assert.match(appCss, /--login-button-premium-service-background:/);
+  assert.match(appCss, /--login-button-premium-service-header-background:/);
+  assert.match(appCss, /--login-button-premium-service-border:/);
+  assert.match(appCss, /--login-button-premium-service-body-background:/);
+  assert.match(appCss, /\.premium-serviceCard \{\s*display: grid;[\s\S]*border: 1px solid var\(--login-button-premium-service-border\);[\s\S]*background: var\(--login-button-premium-service-background\);/);
+  assert.match(appCss, /\.premium-serviceToggle \{\s*[\s\S]*background: var\(--login-button-premium-service-header-background\);/);
+  assert.match(appCss, /\.premium-serviceMeta \{/);
+  assert.doesNotMatch(appCss, /\.premium-serviceCard\.is-selected-app/);
+
+  const premiumServicesSectionMatch = appSource.match(
+    /function syncPremiumServicesSummary\([\s\S]*?\n}\n\nfunction syncAuthenticatedFieldGroups/
+  );
+  assert.ok(premiumServicesSectionMatch, "syncPremiumServicesSummary should exist");
+  assert.match(premiumServicesSectionMatch[0], /headerCopy\.className = "premium-serviceHeaderCopy";/);
+  assert.match(premiumServicesSectionMatch[0], /meta\.className = "premium-serviceMeta";/);
+  assert.match(premiumServicesSectionMatch[0], /meta\.textContent = item\?\.selectedApplicationName/);
+  assert.doesNotMatch(premiumServicesSectionMatch[0], /card\.classList\.toggle\("is-selected-app"/);
+});
+
 test("MODE x COLOR theming drives app surfaces beyond links and the sign-in button", () => {
   const appCss = fs.readFileSync(path.join(ROOT, "app.css"), "utf8");
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");

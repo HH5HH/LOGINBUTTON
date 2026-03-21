@@ -44,6 +44,23 @@ body {
   --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-200) 34%, var(--spectrum-background-layer-1-color) 66%);
   --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-500) 76%, white);
   --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-900) 82%, black);
+  --login-button-premium-service-background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--login-button-surface-background-strong) 94%, white 6%) 0%,
+      color-mix(in srgb, var(--login-button-surface-background) 90%, transparent) 100%
+    );
+  --login-button-premium-service-header-background:
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 58%, transparent) 0%, transparent 100%),
+    color-mix(in srgb, var(--login-button-surface-background) 92%, white 8%);
+  --login-button-premium-service-border: color-mix(in srgb, var(--spectrum-accent-color-500) 20%, var(--spectrum-gray-400) 80%);
+  --login-button-premium-service-hover-border: color-mix(in srgb, var(--spectrum-accent-color-800) 42%, var(--spectrum-gray-500) 58%);
+  --login-button-premium-service-shadow:
+    0 16px 32px color-mix(in srgb, var(--spectrum-black) 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 16%, transparent);
+  --login-button-premium-service-body-background:
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-control-background) 34%, transparent) 0%, transparent 100%);
+  --login-button-premium-service-meta-color: var(--spectrum-neutral-subdued-content-color-default);
   background:
     radial-gradient(circle at top left, var(--login-button-shell-glow) 0%, transparent 34%),
     radial-gradient(circle at top right, var(--login-button-shell-glow-secondary) 0%, transparent 28%),
@@ -73,6 +90,8 @@ body[data-theme-stop="light"] {
   --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-200) 38%, white);
   --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-500) 70%, white);
   --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-900) 84%, black);
+  --login-button-premium-service-border: color-mix(in srgb, var(--spectrum-accent-color-500) 22%, var(--spectrum-gray-400) 78%);
+  --login-button-premium-service-hover-border: color-mix(in srgb, var(--spectrum-accent-color-800) 46%, var(--spectrum-gray-500) 54%);
 }
 
 body[data-theme-stop="dark"] {
@@ -111,6 +130,22 @@ body[data-theme-stop="dark"] {
   --login-button-avatar-background: color-mix(in srgb, var(--spectrum-accent-color-1100) 40%, var(--spectrum-background-layer-1-color) 60%);
   --login-button-cm-accent: color-mix(in srgb, var(--spectrum-accent-color-600) 74%, white);
   --login-button-programmer-accent: color-mix(in srgb, var(--spectrum-accent-color-300) 78%, white);
+  --login-button-premium-service-background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--login-button-surface-background-strong) 88%, var(--spectrum-accent-color-1200) 12%) 0%,
+      color-mix(in srgb, var(--login-button-surface-background) 92%, black 8%) 100%
+    );
+  --login-button-premium-service-header-background:
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 66%, transparent) 0%, transparent 100%),
+    color-mix(in srgb, var(--login-button-surface-background) 88%, black 12%);
+  --login-button-premium-service-border: color-mix(in srgb, var(--spectrum-accent-color-900) 34%, var(--spectrum-gray-600) 66%);
+  --login-button-premium-service-hover-border: color-mix(in srgb, var(--spectrum-accent-color-700) 60%, var(--spectrum-gray-600) 40%);
+  --login-button-premium-service-shadow:
+    0 18px 36px color-mix(in srgb, var(--spectrum-black) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--spectrum-white) 8%, transparent);
+  --login-button-premium-service-body-background:
+    linear-gradient(180deg, color-mix(in srgb, var(--login-button-control-background) 42%, transparent) 0%, transparent 100%);
 }
 
 [hidden] {
@@ -679,14 +714,16 @@ body[data-theme-stop="dark"] {
 
 .premium-servicesList {
   display: grid;
-  gap: var(--spectrum-spacing-200);
+  gap: var(--spectrum-spacing-150);
 }
 
 .premium-serviceCard {
-  border: 1px solid var(--login-button-surface-border);
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--login-button-premium-service-border);
   border-radius: var(--spectrum-corner-radius-200);
-  background: var(--login-button-surface-background-strong);
-  box-shadow: var(--login-button-surface-shadow);
+  background: var(--login-button-premium-service-background);
+  box-shadow: var(--login-button-premium-service-shadow);
   overflow: hidden;
   transition:
     border-color 140ms ease,
@@ -694,24 +731,17 @@ body[data-theme-stop="dark"] {
     transform 140ms ease;
 }
 
-.premium-serviceCard.is-selected-app {
-  border-color: var(--login-button-selection-border);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--login-button-selection-fill) 70%, transparent) 0%, transparent 100%),
-    var(--login-button-surface-background-strong);
-}
-
 .premium-serviceToggle {
   inline-size: 100%;
   margin: 0;
   min-block-size: 2.75rem;
-  padding-block: 0.625rem;
+  padding-block: var(--spectrum-spacing-200);
   padding-inline-start: var(--spectrum-spacing-200);
   padding-inline-end: var(--spectrum-spacing-200);
   appearance: none;
   border: 0;
   border-bottom: 1px solid transparent;
-  background: transparent;
+  background: var(--login-button-premium-service-header-background);
   color: var(--spectrum-neutral-content-color-default);
   text-align: left;
   display: grid;
@@ -725,8 +755,12 @@ body[data-theme-stop="dark"] {
   border-bottom-color: transparent;
 }
 
+.premium-serviceToggle[aria-expanded="true"] {
+  border-bottom-color: var(--login-button-divider-color);
+}
+
 .premium-serviceCard:hover {
-  border-color: var(--login-button-control-hover-border);
+  border-color: var(--login-button-premium-service-hover-border);
   transform: translateY(-1px);
 }
 
@@ -735,12 +769,25 @@ body[data-theme-stop="dark"] {
   box-shadow: inset 0 0 0 2px var(--spectrum-focus-indicator-color);
 }
 
+.premium-serviceHeaderCopy {
+  display: grid;
+  gap: var(--spectrum-spacing-50);
+  min-width: 0;
+}
+
 .premium-serviceTitle {
   min-width: 0;
   font-size: var(--spectrum-font-size-200);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1.35;
+}
+
+.premium-serviceMeta {
+  margin: 0;
+  color: var(--login-button-premium-service-meta-color);
+  font-size: var(--spectrum-font-size-75);
+  line-height: 1.4;
 }
 
 .premium-serviceIcon {
@@ -755,11 +802,10 @@ body[data-theme-stop="dark"] {
 }
 
 .premium-serviceBody {
-  padding: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-200);
+  padding: var(--spectrum-spacing-175) var(--spectrum-spacing-200) var(--spectrum-spacing-200);
   display: grid;
   gap: var(--spectrum-spacing-125);
-  background: transparent;
-  border-top: 1px solid var(--login-button-divider-color);
+  background: var(--login-button-premium-service-body-background);
 }
 
 .premium-serviceBody[hidden] {

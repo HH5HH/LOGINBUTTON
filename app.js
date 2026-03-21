@@ -6625,7 +6625,6 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
 
     const card = document.createElement("article");
     card.className = "premium-serviceCard";
-    card.classList.toggle("is-selected-app", Boolean(item?.selectedApplicationName));
 
     const toggle = document.createElement("button");
     toggle.type = "button";
@@ -6633,16 +6632,26 @@ function syncPremiumServicesSummary(authenticatedDataContext = {}) {
     toggle.setAttribute("aria-expanded", isExpanded ? "true" : "false");
     toggle.setAttribute("aria-controls", panelId);
 
+    const headerCopy = document.createElement("span");
+    headerCopy.className = "premium-serviceHeaderCopy";
+
     const title = document.createElement("span");
     title.className = "premium-serviceTitle";
     title.textContent = firstNonEmptyString([item?.label, "Premium Service"]);
+
+    const meta = document.createElement("span");
+    meta.className = "premium-serviceMeta";
+    meta.textContent = item?.selectedApplicationName
+      ? `Using ${item.selectedApplicationName}`
+      : `Ready through ${firstNonEmptyString([item?.applicationName, "Registered Application"])}`;
 
     const icon = document.createElement("span");
     icon.className = "premium-serviceIcon";
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = "▼";
 
-    toggle.append(title, icon);
+    headerCopy.append(title, meta);
+    toggle.append(headerCopy, icon);
 
     const body = document.createElement("div");
     body.id = panelId;
