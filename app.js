@@ -72,6 +72,8 @@ const DEFAULT_DEBUG_TOGGLE_META = "Click copies. Shift+click toggles details.";
 const DEFAULT_DEBUG_COPY_STATUS = "Copied to clipboard";
 const DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE =
   "Export hydrated programmer records or import a VAULT from another Login Button user.";
+const LOGINBUTTON_GET_UPDATE_STATE_REQUEST_TYPE = "loginbutton:getUpdateState";
+const LOGINBUTTON_GET_LATEST_REQUEST_TYPE = "loginbutton:getLatest";
 const ORG_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_other_org__";
 const ORG_PICKER_REAUTH_VALUE = "__loginbutton_reauth_org__";
 const ORG_PICKER_UNAVAILABLE_VALUE = "__loginbutton_unavailable_org__";
@@ -209,6 +211,7 @@ const loggedOutView = document.getElementById("loggedOutView");
 const authenticatedView = document.getElementById("authenticatedView");
 const loginButton = document.getElementById("loginButton");
 const loadZipKeyButton = document.getElementById("loadZipKeyButton");
+const getLatestButton = document.getElementById("getLatestButton");
 const logoutButton = document.getElementById("logoutButton");
 const exportVaultButton = document.getElementById("exportVaultButton");
 const importVaultButton = document.getElementById("importVaultButton");
@@ -319,6 +322,11 @@ const state = {
   programmerApplicationsLoadingFor: "",
   selectedProgrammerVaultRecord: null,
   premiumServiceExpandedKeys: [],
+  updateAvailable: false,
+  latestVersion: "",
+  latestCommitSha: "",
+  updateCheckPending: false,
+  updateCheckError: "",
   configStatus: {
     message: DEFAULT_CONFIG_STATUS_MESSAGE,
     tone: ""
@@ -338,8 +346,10 @@ applyThemePreferenceToDocument(state.theme);
 initializeThemeSwatchGrid();
 
 loginButton.addEventListener("click", async () => {
+  state.selectedOrganizationSwitchKey = "";
   await login({
     forceInteractive: true,
+    forceBrowserLogout: true,
     prompt: "login"
   });
 });
@@ -362,6 +372,12 @@ loadZipKeyButton.addEventListener("click", () => {
   setAvatarMenuOpen(false);
   zipKeyFileInput.click();
 });
+
+if (getLatestButton) {
+  getLatestButton.addEventListener("click", async () => {
+    await triggerGetLatestWorkflow();
+  });
+}
 
 organizationPicker.addEventListener("change", (event) => {
   const nextValue = String(event.currentTarget?.value || "").trim();
@@ -552,14 +568,6 @@ document.addEventListener("dragleave", handleDocumentDragLeave);
 document.addEventListener("drop", handleDocumentDrop);
 document.addEventListener("click", handleDocumentClick);
 document.addEventListener("keydown", handleDocumentKeydown);
-window.addEventListener("focus", () => {
-  void maybeResumeExistingAdobeSession("window-focus");
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    void maybeResumeExistingAdobeSession("panel-visible");
-  }
-});
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") {
@@ -601,9 +609,13 @@ async function initialize() {
 
   try {
     const stored = await chrome.storage.local.get([SESSION_KEY, THEME_STORAGE_KEY]);
-    state.session = stored[SESSION_KEY] || null;
+    state.session = null;
     state.theme = normalizeThemePreference(stored[THEME_STORAGE_KEY] || DEFAULT_THEME);
     applyThemePreferenceToDocument(state.theme);
+    if (stored[SESSION_KEY]) {
+      await chrome.storage.local.remove(SESSION_KEY);
+      log("Discarded the stored Adobe IMS session on startup so LoginButton sign-in stays user-driven.");
+    }
     void primeLoginButtonVault().catch((error) => {
       log(`LoginButton VAULT unavailable: ${serializeError(error)}`);
     });
@@ -632,10 +644,6 @@ async function initialize() {
           `ZIP.KEY scope was clamped to the supported Adobe Console scope set. Dropped scopes: ${state.runtimeConfig.droppedScopes.join(", ")}`
         );
       }
-      if (hasActiveSession(state.session) && !hasHydratedPostLoginContext(state.session)) {
-        void refreshSessionPostLoginContextInBackground(state.session, { reason: "startup-existing-session" });
-      }
-      await maybeResumeExistingAdobeSession("startup");
     } else {
       setConfigStatus(DEFAULT_CONFIG_STATUS_MESSAGE);
       log("No ZIP.KEY is loaded yet. Drop ZIP.KEY before sign-in.");
@@ -664,11 +672,6 @@ async function login({
 
   setBusy(true);
   render();
-  log(
-    forceInteractive
-      ? "Starting forced interactive Adobe IMS sign-in so the user can choose a different Adobe IMS org."
-      : "Starting Adobe IMS sign-in with PKCE."
-  );
 
   try {
     const runtimeConfig = await loadRuntimeConfig();
@@ -676,8 +679,19 @@ async function login({
     const configuredScope = normalizeScopeList(firstNonEmptyString([runtimeConfig.scope, IMS_SCOPE]), IMS_SCOPE);
     const requestedTargetOrganization = normalizeRequestedTargetOrganization(targetOrganization);
     const effectiveForceInteractive = forceInteractive || Boolean(requestedTargetOrganization?.key);
-    const effectivePrompt = firstNonEmptyString([prompt, requestedTargetOrganization ? "login" : ""]);
-    const targetOrgStrategy = buildPreferredOrgSwitchStrategy(requestedTargetOrganization);
+    const effectivePrompt = firstNonEmptyString([prompt]);
+    const baseInteractiveReason = intent === "org-switch" ? "interactive-org-switch" : "interactive-login";
+    log(
+      requestedTargetOrganization
+        ? forceBrowserLogout
+          ? "Starting interactive Adobe IMS sign-in after resetting the browser session so Adobe can reopen the org chooser."
+          : "Starting interactive Adobe IMS sign-in for an Adobe org switch."
+        : effectiveForceInteractive && forceBrowserLogout
+          ? "Starting interactive Adobe IMS sign-in after resetting the browser session so Adobe can reopen the profile chooser."
+          : effectiveForceInteractive
+            ? "Starting forced interactive Adobe IMS sign-in."
+            : "Starting Adobe IMS sign-in with PKCE."
+    );
     const scopePlan = buildRequestedScopePlan(configuredScope);
     const preferredScope = scopePlan[0] || configuredScope;
     const authConfiguration = await loadAuthConfiguration();
@@ -691,15 +705,8 @@ async function login({
 
     if (requestedTargetOrganization) {
       log(
-        `Requested Adobe IMS org switch to "${requestedTargetOrganization.label}" (${firstNonEmptyString([requestedTargetOrganization.id, "no org id"])}) and forcing Adobe sign-in so the user can choose that org in Adobe.`
+        `Requested Adobe IMS org switch to "${requestedTargetOrganization.label}" (${firstNonEmptyString([requestedTargetOrganization.id, "no org id"])}). Login Button will reopen Adobe sign-in so the user can choose that org explicitly.`
       );
-      if (targetOrgStrategy) {
-        log(
-          `Login Button will hint Adobe IMS org switching with ${Object.keys(targetOrgStrategy)
-            .map((key) => `${key}=${targetOrgStrategy[key]}`)
-            .join(" ")}.`
-        );
-      }
     }
 
     if (preferredScope !== configuredScope) {
@@ -746,58 +753,74 @@ async function login({
       return;
     }
 
-    let nextSession = null;
-    let lastInteractiveError = null;
-    let browserLogoutAttempted = false;
-    for (const [index, requestedScope] of scopePlan.entries()) {
-      try {
-        if (effectiveForceInteractive && forceBrowserLogout && !browserLogoutAttempted) {
-          browserLogoutAttempted = true;
-          log("Resetting the Adobe browser session before re-authenticating for an org switch.");
-          await runImsBrowserLogout({
-            accessToken: firstNonEmptyString([state.session?.accessToken]),
+    const runInteractiveScopePlan = async ({
+      reasonBase = baseInteractiveReason,
+      promptOverride = effectivePrompt,
+      forceBrowserLogoutForAttempt = false
+    } = {}) => {
+      let nextSession = null;
+      let lastInteractiveError = null;
+      let browserLogoutAttempted = false;
+
+      for (const [index, requestedScope] of scopePlan.entries()) {
+        try {
+          if (effectiveForceInteractive && forceBrowserLogoutForAttempt && !browserLogoutAttempted) {
+            browserLogoutAttempted = true;
+            log(
+              requestedTargetOrganization
+                ? "Resetting the Adobe browser session before reopening Adobe's org chooser for the selected target org."
+                : "Resetting the Adobe browser session before re-authenticating so Adobe reopens the profile chooser."
+            );
+            await runImsBrowserLogout({
+              accessToken: firstNonEmptyString([state.session?.accessToken]),
+              redirectUri,
+              clientId
+            });
+          }
+
+          nextSession = await attemptSessionHydration({
+            authConfiguration,
+            clientId,
             redirectUri,
-            clientId
+            requestedScope,
+            reason:
+              index === 0
+                ? requestedScope === configuredScope
+                  ? reasonBase
+                  : `${reasonBase}-org-discovery`
+                : `${reasonBase}-configured-scope`,
+            interactive: true,
+            prompt: promptOverride,
+            targetOrganization: requestedTargetOrganization
           });
+          if (index > 0) {
+            setConfigStatus(
+              "Adobe rejected the org discovery scope add-on. Signed in with the configured ZIP.KEY scope instead, so org switching may be limited.",
+              { ok: true }
+            );
+          }
+          break;
+        } catch (error) {
+          lastInteractiveError = error;
+          if (shouldRetryWithConfiguredScope(error, requestedScope, configuredScope) && index < scopePlan.length - 1) {
+            log(`Adobe rejected scope "${requestedScope}". Retrying with configured ZIP.KEY scope "${configuredScope}".`);
+            continue;
+          }
+          break;
         }
-        nextSession = await attemptSessionHydration({
-          authConfiguration,
-          clientId,
-          redirectUri,
-          requestedScope,
-          reason:
-            index === 0
-              ? requestedScope === configuredScope
-                ? intent === "org-switch"
-                  ? "interactive-org-switch"
-                  : "interactive-login"
-                : intent === "org-switch"
-                  ? "interactive-org-switch-org-discovery"
-                  : "interactive-login-org-discovery"
-              : intent === "org-switch"
-                ? "interactive-org-switch-configured-scope"
-                : "interactive-login-configured-scope",
-          interactive: true,
-          prompt: effectivePrompt,
-          extraParams: requestedTargetOrganization ? targetOrgStrategy : {},
-          targetOrganization: requestedTargetOrganization
-        });
-        if (index > 0) {
-          setConfigStatus(
-            "Adobe rejected the org discovery scope add-on. Signed in with the configured ZIP.KEY scope instead, so org switching may be limited.",
-            { ok: true }
-          );
-        }
-        break;
-      } catch (error) {
-        lastInteractiveError = error;
-        if (shouldRetryWithConfiguredScope(error, requestedScope, configuredScope) && index < scopePlan.length - 1) {
-          log(`Adobe rejected scope "${requestedScope}". Retrying with configured ZIP.KEY scope "${configuredScope}".`);
-          continue;
-        }
-        break;
       }
-    }
+
+      return {
+        nextSession,
+        lastInteractiveError
+      };
+    };
+
+    let { nextSession, lastInteractiveError } = await runInteractiveScopePlan({
+      reasonBase: baseInteractiveReason,
+      promptOverride: effectivePrompt,
+      forceBrowserLogoutForAttempt: forceBrowserLogout
+    });
 
     if (!nextSession) {
       setConfigStatus(
@@ -813,10 +836,22 @@ async function login({
     if (requestedTargetOrganization) {
       log(targetOrganizationVerification.message);
       if (!isSuccessfulTargetOrganizationVerification(targetOrganizationVerification)) {
-        const verificationFailureMessage = `${targetOrganizationVerification.message} Login Button kept the prior session so it does not misrepresent the selected Adobe profile.`;
-        setConfigStatus(verificationFailureMessage, { error: true });
-        window.alert(verificationFailureMessage);
-        return;
+        if (forceBrowserLogout) {
+          finalizedSession = attachTargetOrganizationToSession(finalizedSession, null);
+          finalizedSession.orgVerification = {
+            ...targetOrganizationVerification,
+            status: "accepted-returned-org",
+            expectedOrgKey: "",
+            message: `${targetOrganizationVerification.message} Login Button switched to the active returned Adobe org.`
+          };
+          setConfigStatus(finalizedSession.orgVerification.message, { ok: true });
+          log(finalizedSession.orgVerification.message);
+        } else {
+          const verificationFailureMessage = `${targetOrganizationVerification.message} Login Button kept the prior session so it does not misrepresent the selected Adobe profile. Use Sign In Again if Adobe needs to reopen the chooser.`;
+          setConfigStatus(verificationFailureMessage, { error: true });
+          log(verificationFailureMessage);
+          return;
+        }
       }
     }
 
@@ -937,55 +972,6 @@ function buildRequestedScopePlan(configuredScope = IMS_SCOPE) {
 function shouldRetryWithConfiguredScope(error, attemptedScope, configuredScope) {
   const message = String(serializeError(error) || "");
   return /invalid_scope/i.test(message) && normalizeScopeList(attemptedScope, IMS_SCOPE) !== normalizeScopeList(configuredScope, IMS_SCOPE);
-}
-
-function buildPreferredOrgSwitchStrategy(targetOrganization = null) {
-  return buildOrgSwitchStrategies(targetOrganization)[0] || null;
-}
-
-function buildOrgSwitchStrategies(targetOrganization = null) {
-  if (!targetOrganization || typeof targetOrganization !== "object") {
-    return [];
-  }
-
-  const tenantId = firstNonEmptyString([targetOrganization.tenantId, targetOrganization.id]);
-  const imsOrgId = firstNonEmptyString([targetOrganization.imsOrgId]);
-  const userId = firstNonEmptyString([targetOrganization.userId, targetOrganization.clusterUserId]);
-  const organizationName = firstNonEmptyString([targetOrganization.name, targetOrganization.label]);
-  const isAdobePass = isAdobePassOrganization(targetOrganization);
-  const strategyCandidates = [
-    imsOrgId && tenantId && userId ? { organization_id: imsOrgId, organization: tenantId, user_id: userId } : null,
-    imsOrgId && tenantId ? { organization_id: imsOrgId, organization: tenantId } : null,
-    imsOrgId ? { organization_id: imsOrgId } : null,
-    imsOrgId && userId ? { organization_id: imsOrgId, user_id: userId } : null,
-    tenantId ? { organization: tenantId } : null,
-    tenantId && userId ? { organization: tenantId, user_id: userId } : null,
-    organizationName ? { organization: organizationName } : null,
-    isAdobePass ? { organization: ADOBE_PASS_TENANT_ID } : null,
-    isAdobePass && imsOrgId && userId
-      ? { organization_id: imsOrgId, organization: ADOBE_PASS_TENANT_ID, user_id: userId }
-      : null,
-    userId ? { user_id: userId } : null
-  ];
-
-  const seen = new Set();
-  const strategies = [];
-  strategyCandidates.forEach((candidate) => {
-    if (!candidate || typeof candidate !== "object") {
-      return;
-    }
-
-    const cleaned = Object.fromEntries(
-      Object.entries(candidate).filter(([, value]) => value !== undefined && value !== null && value !== "")
-    );
-    const key = JSON.stringify(cleaned);
-    if (key !== "{}" && !seen.has(key)) {
-      seen.add(key);
-      strategies.push(cleaned);
-    }
-  });
-
-  return strategies;
 }
 
 function buildImsLogoutUrl({ accessToken = "", redirectUri = "", clientId = "" } = {}) {
@@ -1366,11 +1352,14 @@ function buildSessionRecord({
   const expiresAt = expiresAtMs > 0 ? new Date(expiresAtMs).toISOString() : "";
   const tokenType = String(tokenPayload?.token_type || "bearer").trim() || "bearer";
   const returnedScope = String(tokenPayload?.scope || requestedScope || IMS_SCOPE).trim() || IMS_SCOPE;
-  const normalizedOrganizations = collectOrganizationCandidates({
-    profile,
-    accessClaims: accessTokenClaims,
-    idClaims: idTokenClaims,
-    organizations: flattenOrganizations(organizations)
+  const normalizedOrganizations = mergeDetectedOrganizationCandidates({
+    existingOrganizations: collectOrganizationCandidates({
+      profile,
+      accessClaims: accessTokenClaims,
+      idClaims: idTokenClaims,
+      organizations: flattenOrganizations(organizations)
+    }),
+    additionalOrganizations: getConfiguredOrganizationCandidates()
   });
   const avatarUrl = normalizeAvatarCandidate(
     firstNonEmptyString([
@@ -1481,6 +1470,9 @@ async function refreshSessionPostLoginContextInBackground(session, { reason = "p
     state.session = hydratedSession;
     await chrome.storage.local.set({ [SESSION_KEY]: hydratedSession });
     render();
+    void autoActivateAdobePassProgrammerContext(hydratedSession, { reason }).catch((error) => {
+      log(`Adobe Pass programmer auto-activation skipped: ${serializeError(error)}`);
+    });
     return hydratedSession;
   } catch (error) {
     log(`Background Adobe post-login hydration failed (${reason}): ${serializeError(error)}`);
@@ -1504,9 +1496,13 @@ async function hydratePostLoginSessionData(session, { reason = "post-login" } = 
     buildCmContext(currentSession, reason),
     buildUnifiedShellContext(currentSession, reason)
   ]);
+  const configuredOrganizations = getConfiguredOrganizationCandidates();
   const mergedDetectedOrganizations = mergeDetectedOrganizationCandidates({
     existingOrganizations: currentSession?.detectedOrganizations,
-    additionalOrganizations: nextUnifiedShellContext?.organizations,
+    additionalOrganizations: [
+      ...configuredOrganizations,
+      ...(Array.isArray(nextUnifiedShellContext?.organizations) ? nextUnifiedShellContext.organizations : [])
+    ],
     activeOrganizationHint: buildOrganizationContextFromSession(currentSession).activeOrganization
   });
   void persistEnvironmentVaultGlobalsFromSession({
@@ -2120,14 +2116,111 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
   }).catch((error) => {
     log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
   });
+  state.session = mergedSession;
+  autoSelectSingletonAuthenticatedOptions(mergedSession);
 
   if (state.selectedProgrammerId !== normalizedProgrammerId) {
     render();
     return;
   }
 
-  state.session = mergedSession;
   render();
+}
+
+function autoSelectSingletonAuthenticatedOptions(session = state.session) {
+  const authenticatedDataContext = buildAuthenticatedUserDataContext(session);
+  if (authenticatedDataContext?.programmerAccess?.eligible !== true) {
+    return false;
+  }
+
+  let changed = false;
+  if (!String(state.selectedCmTenantId || "").trim() && authenticatedDataContext.cmTenantOptions.length === 1) {
+    state.selectedCmTenantId = firstNonEmptyString([
+      authenticatedDataContext.cmTenantOptions[0]?.key,
+      authenticatedDataContext.cmTenantOptions[0]?.id
+    ]);
+    changed = true;
+  }
+
+  if (
+    authenticatedDataContext?.selectedProgrammer &&
+    !String(state.selectedRegisteredApplicationId || "").trim() &&
+    authenticatedDataContext.registeredApplicationOptions.length === 1
+  ) {
+    state.selectedRegisteredApplicationId = firstNonEmptyString([
+      authenticatedDataContext.registeredApplicationOptions[0]?.key,
+      authenticatedDataContext.registeredApplicationOptions[0]?.id
+    ]);
+    changed = true;
+  }
+
+  if (
+    authenticatedDataContext?.selectedProgrammer &&
+    !String(state.selectedRequestorId || "").trim() &&
+    authenticatedDataContext.requestorOptions.length === 1
+  ) {
+    state.selectedRequestorId = firstNonEmptyString([
+      authenticatedDataContext.requestorOptions[0]?.key,
+      authenticatedDataContext.requestorOptions[0]?.id
+    ]);
+    changed = true;
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  render();
+  if (authenticatedDataContext?.selectedProgrammer) {
+    void persistSelectedProgrammerVaultSelections();
+  }
+  return true;
+}
+
+async function autoActivateAdobePassProgrammerContext(session = state.session, { reason = "post-login" } = {}) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  if (!currentSession?.accessToken) {
+    return false;
+  }
+
+  const authenticatedDataContext = buildAuthenticatedUserDataContext(currentSession);
+  if (authenticatedDataContext?.programmerAccess?.eligible !== true) {
+    return false;
+  }
+
+  autoSelectSingletonAuthenticatedOptions(currentSession);
+  const programmerOptions = Array.isArray(authenticatedDataContext.programmerOptions)
+    ? authenticatedDataContext.programmerOptions
+    : [];
+  if (programmerOptions.length === 0) {
+    return false;
+  }
+
+  let selectedProgrammer = authenticatedDataContext.selectedProgrammer || null;
+  if (!selectedProgrammer) {
+    if (programmerOptions.length !== 1) {
+      return false;
+    }
+
+    selectedProgrammer = programmerOptions[0];
+    state.selectedProgrammerId = firstNonEmptyString([selectedProgrammer?.key, selectedProgrammer?.id]);
+    state.selectedRegisteredApplicationId = "";
+    state.selectedRequestorId = "";
+    state.selectedProgrammerVaultRecord = null;
+    log(
+      `Auto-selected ${firstNonEmptyString([selectedProgrammer?.label, selectedProgrammer?.name, "the only programmer"])} after Adobe Pass org activation (${reason}).`
+    );
+    render();
+  }
+
+  const selectedProgrammerId = firstNonEmptyString([selectedProgrammer?.key, selectedProgrammer?.id]);
+  if (!selectedProgrammerId) {
+    return false;
+  }
+
+  await ensureSelectedProgrammerApplicationsLoaded(selectedProgrammerId);
+  autoSelectSingletonAuthenticatedOptions();
+  return true;
 }
 
 function resolveProgrammerAccessContext(session) {
@@ -4999,7 +5092,7 @@ function render() {
   const isThemeProcessing = isThemeActivityActive();
   const initials = deriveInitials(name, email);
   const flow = session?.flow && typeof session.flow === "object" ? session.flow : {};
-  const avatarMenuAvailable = hasSession && authenticatedDataContext.showHero === true;
+  const avatarMenuAvailable = hasSession;
   const isAvatarMenuVisible = avatarMenuAvailable && state.avatarMenuOpen;
   const statusLabel = getStatusLabel(hasSession, expired, flow);
 
@@ -5041,6 +5134,7 @@ function render() {
   avatarMenuButton.setAttribute("aria-expanded", isAvatarMenuVisible ? "true" : "false");
   avatarMenu.hidden = !isAvatarMenuVisible;
   loadZipKeyButton.disabled = state.busy;
+  syncAvatarMenuUpdateAction();
   logoutButton.disabled = state.busy || !hasSession;
   if (exportVaultButton) {
     exportVaultButton.disabled = state.busy || state.vaultTransferBusy;
@@ -5275,7 +5369,7 @@ function buildAuthenticatedUserDataContext(session = state.session) {
     requestorOptions: requestors,
     requestorPickerVisible: programmerAccess.eligible,
     workflowMode: adobePassWorkflowActive ? "adobe-pass" : "org-switch-only",
-    showHero: adobePassWorkflowActive,
+    showHero: true,
     showOrganizationMeta: false,
     identityMeta,
     menuMeta: menuMeta || "Awaiting Adobe organization context.",
@@ -6246,22 +6340,37 @@ function syncDetectedOrganizationPicker(organizationContext = {}) {
   }
 
   const options = Array.isArray(organizationContext?.options) ? organizationContext.options : [];
+  const shouldOfferInteractiveSwitch = organizationContext?.shouldOfferInteractiveSwitch === true;
   const activeOrganizationKey = String(organizationContext?.activeOrganization?.key || "").trim();
+  const recommendedOrganizationKey = String(organizationContext?.recommendedOrgKey || "").trim();
   const switchableOptionCount = options.filter((option) => String(option?.key || "").trim() !== activeOrganizationKey).length;
   const hasStoredSelection = options.some((option) => option.key === state.selectedOrganizationSwitchKey);
   const nextValue = hasStoredSelection
     ? state.selectedOrganizationSwitchKey
     : firstNonEmptyString([organizationContext?.pickerValue, options[0]?.key, ORG_PICKER_UNAVAILABLE_VALUE]);
-  const signature = options.map((option) => `${option.key}:${option.label}`).join("|");
+  const signature = `${options
+    .map((option) => {
+      const optionKey = String(option?.key || "").trim();
+      const optionLabel =
+        optionKey && optionKey === recommendedOrganizationKey && optionKey !== activeOrganizationKey
+          ? `${option.label} (Recommended for Adobe Pass)`
+          : option.label;
+      return `${option.key}:${optionLabel}`;
+    })
+    .join("|")}|interactive=${shouldOfferInteractiveSwitch ? "yes" : "no"}`;
 
   if (detectedOrganizationPicker.dataset.optionsSignature !== signature) {
     detectedOrganizationPicker.innerHTML = "";
 
     if (options.length > 0) {
       options.forEach((option) => {
+        const optionKey = String(option?.key || "").trim();
         const optionElement = document.createElement("option");
         optionElement.value = option.key;
-        optionElement.textContent = option.label;
+        optionElement.textContent =
+          optionKey && optionKey === recommendedOrganizationKey && optionKey !== activeOrganizationKey
+            ? `${option.label} (Recommended for Adobe Pass)`
+            : option.label;
         detectedOrganizationPicker.appendChild(optionElement);
       });
     } else {
@@ -6269,9 +6378,16 @@ function syncDetectedOrganizationPicker(organizationContext = {}) {
       unavailableOption.value = ORG_PICKER_UNAVAILABLE_VALUE;
       unavailableOption.textContent = firstNonEmptyString([
         organizationContext?.emptyLabel,
-        "No other detected Adobe orgs"
+        "No other available Adobe orgs"
       ]);
       detectedOrganizationPicker.appendChild(unavailableOption);
+    }
+
+    if (shouldOfferInteractiveSwitch) {
+      const reauthOption = document.createElement("option");
+      reauthOption.value = ORG_PICKER_REAUTH_VALUE;
+      reauthOption.textContent = "Sign In Again To Choose Another Adobe Org";
+      detectedOrganizationPicker.appendChild(reauthOption);
     }
 
     detectedOrganizationPicker.dataset.optionsSignature = signature;
@@ -6282,7 +6398,7 @@ function syncDetectedOrganizationPicker(organizationContext = {}) {
   }
 
   detectedOrganizationPicker.value = nextValue;
-  detectedOrganizationPicker.disabled = state.busy || switchableOptionCount === 0;
+  detectedOrganizationPicker.disabled = state.busy || (switchableOptionCount === 0 && !shouldOfferInteractiveSwitch);
 }
 
 function syncCmTenantPicker(authenticatedDataContext = {}) {
@@ -6732,6 +6848,112 @@ function syncAvatarMenuDetails(authenticatedDataContext = {}, statusLabel = "") 
   );
 }
 
+function syncAvatarMenuUpdateAction() {
+  if (!getLatestButton) {
+    return;
+  }
+
+  const updateAvailable = state.updateAvailable === true;
+  const currentVersion = String(chrome.runtime.getManifest()?.version || "").trim();
+  const latestVersion = String(state.latestVersion || "").trim();
+  const buttonLabel = getLatestButton.querySelector(".spectrum-Button-label");
+  const title = state.updateCheckPending
+    ? "Checking for the latest LoginButton package."
+    : updateAvailable
+      ? `Open LoginButton ${latestVersion ? `v${latestVersion}` : "latest"} from GitHub and chrome://extensions${currentVersion ? ` (current v${currentVersion})` : ""}`
+      : `Download the latest LoginButton package and open chrome://extensions${currentVersion ? ` (current v${currentVersion})` : ""}`;
+
+  getLatestButton.hidden = false;
+  getLatestButton.disabled = state.busy || state.updateCheckPending;
+  getLatestButton.title = title;
+  getLatestButton.setAttribute("aria-label", title);
+  if (buttonLabel) {
+    buttonLabel.textContent = "GET LATEST";
+  } else {
+    getLatestButton.textContent = "GET LATEST";
+  }
+}
+
+function applyAvatarMenuUpdateState(updateInfo = null) {
+  const info = updateInfo && typeof updateInfo === "object" ? updateInfo : null;
+  if (!info) {
+    return;
+  }
+
+  state.updateAvailable = info?.updateAvailable === true;
+  state.latestVersion = String(info?.latestVersion || "").trim();
+  state.latestCommitSha = String(info?.latestCommitSha || "").trim();
+  state.updateCheckError = String(info?.checkError || "").trim();
+}
+
+async function loadAvatarMenuUpdateState(force = false) {
+  state.updateCheckPending = true;
+  render();
+
+  try {
+    const response = await sendRuntimeMessageSafe({
+      type: LOGINBUTTON_GET_UPDATE_STATE_REQUEST_TYPE,
+      force: force === true
+    });
+    applyAvatarMenuUpdateState(response || null);
+    return response || null;
+  } catch {
+    return null;
+  } finally {
+    state.updateCheckPending = false;
+    render();
+  }
+}
+
+async function triggerGetLatestWorkflow() {
+  if (state.busy || state.updateCheckPending) {
+    return;
+  }
+
+  setAvatarMenuOpen(false);
+  log("Starting latest LoginButton download and opening chrome://extensions.");
+
+  try {
+    const response = await sendRuntimeMessageSafe({
+      type: LOGINBUTTON_GET_LATEST_REQUEST_TYPE
+    });
+    if (response?.ok === false) {
+      throw new Error(firstNonEmptyString([response?.error, "Unknown error"]));
+    }
+
+    applyAvatarMenuUpdateState(response || null);
+    render();
+
+    const downloadLabel = firstNonEmptyString([response?.downloadFileName, "latest LoginButton package"]);
+    if (response?.downloadStarted === true && response?.extensionsOpened === true) {
+      log(`Started ${downloadLabel} download and opened chrome://extensions.`);
+      return;
+    }
+    if (response?.downloadStarted === true) {
+      log(`Started ${downloadLabel} download. Open chrome://extensions to finish the update.`);
+      return;
+    }
+    if (response?.downloadTabOpened === true && response?.extensionsOpened === true) {
+      log("Opened latest LoginButton package tab and chrome://extensions.");
+      return;
+    }
+    if (response?.downloadTabOpened === true) {
+      log("Opened latest LoginButton package tab. Open chrome://extensions to finish the update.");
+      return;
+    }
+    if (response?.extensionsOpened === true) {
+      log("Opened chrome://extensions. Start the latest LoginButton download to finish the update.");
+      return;
+    }
+
+    throw new Error("Unable to open update links");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`Get Latest failed: ${message}`);
+    window.alert(`Get Latest failed: ${message}`);
+  }
+}
+
 function getStatusLabel(hasSession, expired, flow) {
   if (state.busy) {
     return state.silentAuthInFlight
@@ -6768,6 +6990,9 @@ function setAvatarMenuOpen(open) {
   }
 
   state.avatarMenuOpen = nextValue;
+  if (nextValue) {
+    void loadAvatarMenuUpdateState();
+  }
   render();
 }
 
@@ -6864,7 +7089,14 @@ function setTextOutput(element, value) {
 function buildAuthenticatedOrganizationPickerContext(session = state.session) {
   const detectedOrganizationContext = buildOrganizationContextFromSession(session);
   const activeOrganization = detectedOrganizationContext.activeOrganization;
-  const allDetectedOptions = sortOrganizationOptionsForPicker(detectedOrganizationContext.options, activeOrganization);
+  const recommendedOrganization = !isAdobePassOrganization(activeOrganization)
+    ? findAdobePassOrganizationCandidate(detectedOrganizationContext.options)
+    : null;
+  const allDetectedOptions = sortOrganizationOptionsForPicker(
+    detectedOrganizationContext.options,
+    activeOrganization,
+    recommendedOrganization
+  );
   const options = allDetectedOptions;
   const verification =
     session?.orgVerification && typeof session.orgVerification === "object" ? session.orgVerification : null;
@@ -6881,10 +7113,10 @@ function buildAuthenticatedOrganizationPickerContext(session = state.session) {
     activeOrganization.id ? `Current org ${activeOrganization.id}` : activeOrganization.meta,
     verification?.status !== "not-applicable" ? verification?.message : "",
     otherOrgCount > 1
-      ? `${otherOrgCount} other Adobe orgs detected.`
+      ? `${otherOrgCount} other Adobe orgs available.`
       : otherOrgCount === 1
-        ? "1 other Adobe org detected."
-        : "No other detected Adobe orgs."
+        ? "1 other Adobe org available."
+        : "No other Adobe orgs available."
   ]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
@@ -6905,13 +7137,17 @@ function buildAuthenticatedOrganizationPickerContext(session = state.session) {
       {
         ...detectedOrganizationContext,
         options,
-        allDetectedOptions
+        allDetectedOptions,
+        activeOrganization,
+        recommendedOrganization
       },
       verification,
       session
     ),
+    recommendedOrganization,
+    recommendedOrgKey: firstNonEmptyString([recommendedOrganization?.key]),
     shouldOfferInteractiveSwitch,
-    emptyLabel: "No detected Adobe orgs",
+    emptyLabel: "No available Adobe orgs",
     pickerValue: firstNonEmptyString([activeOrganization.key, options[0]?.key, ORG_PICKER_UNAVAILABLE_VALUE])
   };
 }
@@ -6919,7 +7155,7 @@ function buildAuthenticatedOrganizationPickerContext(session = state.session) {
 function buildOrganizationListSummary({ activeOrganization = null, allDetectedOptions = [] } = {}) {
   const totalDetectedCount = Array.isArray(allDetectedOptions) ? allDetectedOptions.length : 0;
   if (totalDetectedCount === 0) {
-    return "Adobe did not return a detected org list for this session.";
+    return "No additional Adobe orgs are currently available in this session.";
   }
 
   const activeKey = String(activeOrganization?.key || "").trim();
@@ -6928,11 +7164,12 @@ function buildOrganizationListSummary({ activeOrganization = null, allDetectedOp
     return "Showing the current Adobe org only.";
   }
 
-  return `Showing ${totalDetectedCount} detected Adobe orgs, including ${otherOrgCount} other org${otherOrgCount === 1 ? "" : "s"}.`;
+  return `Showing ${totalDetectedCount} available Adobe orgs, including ${otherOrgCount} other org${otherOrgCount === 1 ? "" : "s"}.`;
 }
 
-function sortOrganizationOptionsForPicker(options = [], activeOrganization = null) {
+function sortOrganizationOptionsForPicker(options = [], activeOrganization = null, recommendedOrganization = null) {
   const activeKey = String(activeOrganization?.key || "").trim();
+  const recommendedKey = String(recommendedOrganization?.key || "").trim();
   return [...(Array.isArray(options) ? options : [])].sort((left, right) => {
     const leftKey = String(left?.key || "").trim();
     const rightKey = String(right?.key || "").trim();
@@ -6940,6 +7177,12 @@ function sortOrganizationOptionsForPicker(options = [], activeOrganization = nul
       return -1;
     }
     if (rightKey === activeKey && leftKey !== activeKey) {
+      return 1;
+    }
+    if (recommendedKey && leftKey === recommendedKey && rightKey !== recommendedKey && rightKey !== activeKey) {
+      return -1;
+    }
+    if (recommendedKey && rightKey === recommendedKey && leftKey !== recommendedKey && leftKey !== activeKey) {
       return 1;
     }
 
@@ -7288,6 +7531,9 @@ function formatOrganizationSourceLabel(source = "") {
   if (!normalizedSource) {
     return "";
   }
+  if (/^runtimeConfig\.organizations\[\d+\]/.test(normalizedSource)) {
+    return "ZIP.KEY configured organizations";
+  }
   if (/^unifiedShell\.imsExtendedAccountClusterData\[\d+\]\.owningOrg/.test(normalizedSource)) {
     return "Unified Shell owning org";
   }
@@ -7402,6 +7648,11 @@ async function requestOrganizationSwitch(nextKey = "") {
     render();
     return;
   }
+  if (normalizedKey === ORG_PICKER_REAUTH_VALUE) {
+    log("Starting Sign In Again so Adobe can reopen the account chooser for a different org.");
+    await switchAdobeOrganization();
+    return;
+  }
 
   const organizationPickerContext = buildAuthenticatedOrganizationPickerContext(state.session);
   const nextOrganization = organizationPickerContext.options.find((option) => option.key === normalizedKey) || null;
@@ -7416,7 +7667,7 @@ async function requestOrganizationSwitch(nextKey = "") {
   }
 
   log(
-    `Switching Adobe IMS org to ${nextOrganization.label}. Login Button will reset the current Adobe sign-in session, reopen Adobe sign-in, and verify the returned org.`
+    `Switching Adobe IMS org to ${nextOrganization.label}. Login Button will reopen Adobe sign-in, let the user choose the org explicitly, and then verify the returned profile.`
   );
   await switchAdobeOrganization(nextOrganization);
 }
@@ -7426,12 +7677,13 @@ async function switchAdobeOrganization(targetOrganization = null) {
     return;
   }
 
+  const normalizedTargetOrganization = normalizeRequestedTargetOrganization(targetOrganization);
   await login({
     forceInteractive: true,
     forceBrowserLogout: true,
     prompt: "login",
     intent: "org-switch",
-    targetOrganization
+    targetOrganization: normalizedTargetOrganization
   });
 }
 
@@ -7444,7 +7696,15 @@ function getCurrentOrganizationScope(session = state.session) {
 
 function shouldOfferInteractiveOrgSwitch(organizationContext, session = state.session) {
   const optionCount = Array.isArray(organizationContext?.options) ? organizationContext.options.length : 0;
-  return Boolean(session?.accessToken) && (optionCount === 0 || !scopeIncludes(getCurrentOrganizationScope(session), IMS_ORG_DISCOVERY_SCOPE));
+  if (!session?.accessToken) {
+    return false;
+  }
+
+  if (!isAdobePassOrganization(organizationContext?.activeOrganization)) {
+    return true;
+  }
+
+  return optionCount === 0 || !scopeIncludes(getCurrentOrganizationScope(session), IMS_ORG_DISCOVERY_SCOPE);
 }
 
 function initializeThemeSwatchGrid() {
@@ -8320,28 +8580,57 @@ function resetAvatarAsset() {
 
 function buildOrganizationContextFromSession(session) {
   const currentSession = session && typeof session === "object" ? session : null;
+  const configuredOrganizations = getConfiguredOrganizationCandidates();
   const storedOrganizations = hasCanonicalStoredOrganizations(currentSession?.detectedOrganizations)
     ? normalizeStoredOrganizationCandidates(currentSession?.detectedOrganizations)
     : hasCanonicalStoredOrganizations(currentSession?.organizations)
       ? normalizeStoredOrganizationCandidates(currentSession?.organizations)
     : [];
   if (storedOrganizations.length > 0) {
+    const mergedOrganizations = mergeDetectedOrganizationCandidates({
+      existingOrganizations: storedOrganizations,
+      additionalOrganizations: configuredOrganizations
+    });
     return {
-      options: storedOrganizations,
+      options: mergedOrganizations,
       activeOrganization: resolveActiveOrganization({
-        organizationCandidates: storedOrganizations,
+        organizationCandidates: mergedOrganizations,
         session: currentSession
       })
     };
   }
 
-  return buildOrganizationContext({
+  const resolvedContext = buildOrganizationContext({
     session: currentSession,
     profile: currentSession?.profile && typeof currentSession.profile === "object" ? currentSession.profile : null,
     accessClaims: currentSession?.accessTokenClaims || null,
     idClaims: currentSession?.idTokenClaims || null,
     organizations: flattenOrganizations(currentSession?.organizations)
   });
+  const mergedOrganizations = mergeDetectedOrganizationCandidates({
+    existingOrganizations: resolvedContext.options,
+    additionalOrganizations: configuredOrganizations,
+    activeOrganizationHint: resolvedContext.activeOrganization
+  });
+
+  return {
+    options: mergedOrganizations,
+    activeOrganization: resolveActiveOrganization({
+      organizationCandidates: mergedOrganizations,
+      session: currentSession
+    })
+  };
+}
+
+function getConfiguredOrganizationCandidates(runtimeConfig = state.runtimeConfig) {
+  const configuredOrganizations = Array.isArray(runtimeConfig?.organizations) ? runtimeConfig.organizations : [];
+  return normalizeStoredOrganizationCandidates(
+    configuredOrganizations.map((organization, index) => ({
+      ...organization,
+      source: firstNonEmptyString([organization?.source, `runtimeConfig.organizations[${index}]`]),
+      sources: Array.isArray(organization?.sources) ? organization.sources : []
+    }))
+  );
 }
 
 function hasCanonicalStoredOrganizations(organizations = []) {
@@ -8709,29 +8998,51 @@ function buildOrganizationPickerHelpText(organizationContext, verification = nul
   const totalDetectedCount = Array.isArray(organizationContext?.allDetectedOptions)
     ? organizationContext.allDetectedOptions.length
     : optionCount;
+  const activeOrganization = organizationContext?.activeOrganization || null;
+  const recommendedOrganization =
+    organizationContext?.recommendedOrganization && typeof organizationContext.recommendedOrganization === "object"
+      ? organizationContext.recommendedOrganization
+      : !isAdobePassOrganization(activeOrganization)
+        ? findAdobePassOrganizationCandidate(
+            Array.isArray(organizationContext?.allDetectedOptions) && organizationContext.allDetectedOptions.length > 0
+              ? organizationContext.allDetectedOptions
+              : organizationContext?.options
+          )
+        : null;
   const currentScope = getCurrentOrganizationScope(session);
   const hasOrgDiscoveryScope = scopeIncludes(currentScope, IMS_ORG_DISCOVERY_SCOPE);
   const shouldOfferInteractiveSwitch = shouldOfferInteractiveOrgSwitch(organizationContext, session);
+  const recommendedLabel = firstNonEmptyString([
+    recommendedOrganization?.label,
+    recommendedOrganization?.name,
+    ADOBE_PASS_DISPLAY_NAME
+  ]);
   if (verification?.status === "verified-mismatch" || verification?.status === "derived-mismatch") {
     return "Adobe returned a different org than the one you selected. Pick the desired Adobe IMS org again to reopen Adobe sign-in.";
   }
+  if (
+    recommendedOrganization &&
+    String(recommendedOrganization?.key || "").trim() !== String(activeOrganization?.key || "").trim()
+  ) {
+    return `Choose ${recommendedLabel} to reopen Adobe sign-in and select that Adobe IMS org explicitly.`;
+  }
   if (optionCount === 0) {
     if (totalDetectedCount === 1) {
-      return "Login Button only detected the currently selected Adobe IMS org for this user. No other detected org is available to switch to.";
+      return "Login Button only found the currently selected Adobe IMS org for this user. No other org is available to switch to yet.";
     }
     if (shouldOfferInteractiveSwitch || !hasOrgDiscoveryScope) {
-      return "This session cannot enumerate other Adobe IMS orgs yet. Use the menu to sign in again and let Adobe return a different org.";
+      return "This session cannot enumerate other Adobe IMS orgs yet. Choose Sign In Again and let Adobe reopen the account chooser.";
     }
-    return "Login Button did not find any other detected Adobe IMS orgs in the returned payloads.";
+    return "Login Button did not find any other Adobe IMS orgs in the returned payloads or configured runtime org roster.";
   }
   if (optionCount === 1) {
     return hasOrgDiscoveryScope
-      ? "1 other detected Adobe IMS org is available for this user."
-      : "1 other detected Adobe IMS org is available, but this session is missing read_organizations so Adobe may still be hiding additional org memberships.";
+      ? "1 other Adobe IMS org is available for this user."
+      : "1 other Adobe IMS org is available, but this session is missing read_organizations so Adobe may still be hiding additional org memberships.";
   }
   return hasOrgDiscoveryScope
-    ? `${optionCount} other detected Adobe IMS orgs are available for this user.`
-    : `${optionCount} other detected Adobe IMS orgs are available, but this session is missing read_organizations so the full org set may still be incomplete.`;
+    ? `${optionCount} other Adobe IMS orgs are available for this user.`
+    : `${optionCount} other Adobe IMS orgs are available, but this session is missing read_organizations so the full org set may still be incomplete.`;
 }
 
 function buildOrganizationOptionKey({ id, name }) {
@@ -9178,6 +9489,27 @@ async function copyDebugConsoleToClipboard() {
       window.clearTimeout(copyDebugResetTimer);
     }
   }
+}
+
+async function sendRuntimeMessageSafe(message = {}) {
+  if (!chrome.runtime?.sendMessage) {
+    throw new Error("Chrome runtime messaging is unavailable.");
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) {
+          reject(new Error(runtimeError.message || "Chrome runtime messaging failed."));
+          return;
+        }
+        resolve(response);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 async function settle(fn) {

@@ -35,7 +35,7 @@ function shouldExcludeRelativePath(relativePath) {
   if (segments.includes(".git") || segments.includes(".githooks")) {
     return true;
   }
-  if (basename === ".DS_Store" || basename === "ZIP.KEY") {
+  if (basename === ".DS_Store" || basename === "ZIP.KEY" || basename === "loginbutton_distro.version.json") {
     return true;
   }
   if (segments.length === 1 && /\.zip$/iu.test(basename)) {

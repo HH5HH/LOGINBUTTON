@@ -25,6 +25,7 @@ test("distribution build packages tracked source plus dependencies without mutat
   const nodeModuleDir = path.join(repoDir, "node_modules", "demo-spectrum");
   const hooksDir = path.join(repoDir, ".githooks");
   const artifactPath = path.join(repoDir, "loginbutton_distro.zip");
+  const metadataPath = path.join(repoDir, "loginbutton_distro.version.json");
 
   t.after(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -117,11 +118,17 @@ test("distribution build packages tracked source plus dependencies without mutat
     .trim()
     .split(/\n+/)
     .filter(Boolean);
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
   const packagedManifest = JSON.parse(runCommand("unzip", ["-p", artifactPath, "loginbutton_distro/manifest.json"], repoDir));
 
   assert.equal(fs.realpathSync(outputPath), fs.realpathSync(artifactPath));
   assert.equal(fs.existsSync(path.join(repoDir, "legacy_distro.zip")), false);
   assert.equal(fs.existsSync(path.join(repoDir, "loginbutton_old.zip")), false);
+  assert.equal(metadata.version, "1.0.0");
+  assert.equal(metadata.version_name, "1.0.0");
+  assert.equal(metadata.package_path, "loginbutton_distro.zip");
+  assert.equal(metadata.archive_root, "loginbutton_distro");
+  assert.equal(metadata.archive_manifest_path, "loginbutton_distro/manifest.json");
   assert.ok(archiveEntries.includes("loginbutton_distro/manifest.json"));
   assert.ok(archiveEntries.includes("loginbutton_distro/background.js"));
   assert.ok(archiveEntries.includes("loginbutton_distro/app.html"));
@@ -136,6 +143,7 @@ test("distribution build packages tracked source plus dependencies without mutat
   assert.ok(archiveEntries.includes("loginbutton_distro/node_modules/demo-spectrum/base.css"));
   assert.ok(archiveEntries.includes("loginbutton_distro/node_modules/demo-spectrum/theme.css"));
   assert.ok(archiveEntries.includes("loginbutton_distro/node_modules/demo-spectrum/icon.svg"));
+  assert.ok(!archiveEntries.includes("loginbutton_distro/loginbutton_distro.version.json"));
   assert.ok(!archiveEntries.includes("loginbutton_distro/ZIP.KEY"));
   assert.ok(!archiveEntries.includes("loginbutton_distro/.githooks/pre-commit"));
   assert.ok(!archiveEntries.includes("loginbutton_distro/untracked-local-note.txt"));
