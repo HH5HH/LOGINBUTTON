@@ -795,10 +795,10 @@ async function login({
 
     if (!nextSession) {
       setConfigStatus(
-        "Adobe sign-in failed before Login Button received a usable callback. Verify the ZIP.KEY client, redirect URI, and allowed scope for this Adobe credential.",
+        "Adobe rejected the requested Adobe IMS scope bundle. Login Button kept the original scope request and did not downgrade sign-in to a narrower profile-only consent.",
         { error: true }
       );
-      throw lastInteractiveError || new Error("Adobe sign-in failed before Login Button received a usable callback.");
+      throw lastInteractiveError || new Error("Adobe rejected the requested Adobe IMS scope bundle.");
     }
 
     let finalizedSession = attachTargetOrganizationToSession(nextSession, requestedTargetOrganization);
@@ -915,12 +915,17 @@ async function loadRuntimeConfig() {
 
 function buildPreferredRequestedScope(configuredScope = IMS_SCOPE) {
   const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
-  return normalizedConfiguredScope;
+  if (scopeIncludes(normalizedConfiguredScope, IMS_ORG_DISCOVERY_SCOPE)) {
+    return normalizedConfiguredScope;
+  }
+
+  return normalizeScopeList(`${normalizedConfiguredScope} ${IMS_ORG_DISCOVERY_SCOPE}`, normalizedConfiguredScope);
 }
 
 function buildRequestedScopePlan(configuredScope = IMS_SCOPE) {
   const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
-  return Array.from(new Set([buildPreferredRequestedScope(normalizedConfiguredScope)]));
+  const preferredScope = buildPreferredRequestedScope(normalizedConfiguredScope);
+  return Array.from(new Set([preferredScope, normalizedConfiguredScope]));
 }
 
 function shouldRetryWithConfiguredScope(error, attemptedScope, configuredScope) {
@@ -1126,7 +1131,7 @@ async function attemptSessionHydration({
     tokenEndpoint: firstNonEmptyString([authConfiguration?.token_endpoint, DEFAULT_AUTH_CONFIGURATION.token_endpoint]),
     extensionId: state.runtime.extensionId,
     hasManifestKey: state.runtime.hasManifestKey,
-    transport: "chrome.identity.launchWebAuthFlow",
+    transport: interactive ? "browser-popup-monitor" : "chrome.identity.launchWebAuthFlow",
     interactive,
     prompt,
     reason
@@ -1155,17 +1160,20 @@ async function attemptSessionHydration({
     if (interactive) {
       state.interactiveAuthInFlight = true;
       render();
-    }
-
-    const launchDetails = {
-      url: authorizeUrl,
-      interactive
-    };
-    if (!interactive) {
+      callbackUrl = await launchInteractiveAuthPopup({
+        authorizeUrl,
+        redirectUri,
+        timeoutMs: INTERACTIVE_AUTH_TIMEOUT_MS
+      });
+    } else {
+      const launchDetails = {
+        url: authorizeUrl,
+        interactive
+      };
       launchDetails.abortOnLoadForNonInteractive = false;
       launchDetails.timeoutMsForNonInteractive = 10000;
+      callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
     }
-    callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
       recordAuthOutcome({
