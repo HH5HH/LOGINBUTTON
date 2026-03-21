@@ -795,10 +795,10 @@ async function login({
 
     if (!nextSession) {
       setConfigStatus(
-        "Adobe rejected the requested Adobe IMS scope bundle. Login Button kept the original scope request and did not downgrade sign-in to a narrower profile-only consent.",
+        "Adobe sign-in failed before Login Button received a usable callback. Verify the ZIP.KEY client, redirect URI, and allowed scope for this Adobe credential.",
         { error: true }
       );
-      throw lastInteractiveError || new Error("Adobe rejected the requested Adobe IMS scope bundle.");
+      throw lastInteractiveError || new Error("Adobe sign-in failed before Login Button received a usable callback.");
     }
 
     let finalizedSession = attachTargetOrganizationToSession(nextSession, requestedTargetOrganization);
@@ -915,17 +915,12 @@ async function loadRuntimeConfig() {
 
 function buildPreferredRequestedScope(configuredScope = IMS_SCOPE) {
   const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
-  if (scopeIncludes(normalizedConfiguredScope, IMS_ORG_DISCOVERY_SCOPE)) {
-    return normalizedConfiguredScope;
-  }
-
-  return normalizeScopeList(`${normalizedConfiguredScope} ${IMS_ORG_DISCOVERY_SCOPE}`, normalizedConfiguredScope);
+  return normalizedConfiguredScope;
 }
 
 function buildRequestedScopePlan(configuredScope = IMS_SCOPE) {
   const normalizedConfiguredScope = normalizeScopeList(configuredScope, IMS_SCOPE);
-  const preferredScope = buildPreferredRequestedScope(normalizedConfiguredScope);
-  return Array.from(new Set([preferredScope, normalizedConfiguredScope]));
+  return Array.from(new Set([buildPreferredRequestedScope(normalizedConfiguredScope)]));
 }
 
 function shouldRetryWithConfiguredScope(error, attemptedScope, configuredScope) {

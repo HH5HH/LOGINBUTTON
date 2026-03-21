@@ -26,3 +26,17 @@ test("interactive auth uses chrome.identity.launchWebAuthFlow instead of popup m
   assert.match(hydrationSection, /callbackUrl = await chrome\.identity\.launchWebAuthFlow\(launchDetails\);/);
   assert.doesNotMatch(hydrationSection, /launchInteractiveAuthPopup\(/);
 });
+
+test("scope planning keeps the ZIP.KEY scope unchanged", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const scopeSectionMatch = appSource.match(
+    /function buildPreferredRequestedScope\([\s\S]*?\n}\n\nfunction shouldRetryWithConfiguredScope/
+  );
+
+  assert.ok(scopeSectionMatch, "scope planning helpers should exist");
+  const scopeSection = scopeSectionMatch[0];
+
+  assert.match(scopeSection, /return normalizedConfiguredScope;/);
+  assert.doesNotMatch(scopeSection, /\$\{normalizedConfiguredScope\}\s+\$\{IMS_ORG_DISCOVERY_SCOPE\}/);
+  assert.doesNotMatch(scopeSection, /new Set\(\[preferredScope, normalizedConfiguredScope\]\)/);
+});
