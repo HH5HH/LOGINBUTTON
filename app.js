@@ -1131,7 +1131,7 @@ async function attemptSessionHydration({
     tokenEndpoint: firstNonEmptyString([authConfiguration?.token_endpoint, DEFAULT_AUTH_CONFIGURATION.token_endpoint]),
     extensionId: state.runtime.extensionId,
     hasManifestKey: state.runtime.hasManifestKey,
-    transport: interactive ? "browser-popup-monitor" : "chrome.identity.launchWebAuthFlow",
+    transport: "chrome.identity.launchWebAuthFlow",
     interactive,
     prompt,
     reason
@@ -1160,20 +1160,17 @@ async function attemptSessionHydration({
     if (interactive) {
       state.interactiveAuthInFlight = true;
       render();
-      callbackUrl = await launchInteractiveAuthPopup({
-        authorizeUrl,
-        redirectUri,
-        timeoutMs: INTERACTIVE_AUTH_TIMEOUT_MS
-      });
-    } else {
-      const launchDetails = {
-        url: authorizeUrl,
-        interactive
-      };
+    }
+
+    const launchDetails = {
+      url: authorizeUrl,
+      interactive
+    };
+    if (!interactive) {
       launchDetails.abortOnLoadForNonInteractive = false;
       launchDetails.timeoutMsForNonInteractive = 10000;
-      callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
     }
+    callbackUrl = await chrome.identity.launchWebAuthFlow(launchDetails);
   } catch (error) {
     if (silent && isExpectedSilentAuthMiss(error)) {
       recordAuthOutcome({

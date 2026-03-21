@@ -8,8 +8,6 @@ const { execFileSync } = require("node:child_process");
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPT_PATH = path.join(ROOT, "scripts", "build_loginbutton_distro.sh");
 const BUILDER_PATH = path.join(ROOT, "scripts", "build_loginbutton_distro.js");
-const DISTRO_MANIFEST_KEY =
-  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4ggRrOiQdavkh68HgTSj/bSdfBx2OtHqAKWA9iEeCua5/oEQ9I8to7L+Rx5rzFHEFYP62MtAyUBvIrssFeiWrYN1UPO1tQKScTSbzgm2axbtdPLs9emkRv2QeKDECROnzijV4M/48YV6u1VCXYYUU8cTyV5TwwxvtEV/4BSooFdv2NhMxeRJjUOeOLtB8vGPNM567i6WMYX86iVuuBzTRNfQEoDnKBCzjSCgXE/ncMGT26aqP0PwhjBwbUDjk5JEgYXrbsqlO4MD8mAUXT+DSdHH6F2HMCO9DC7jmuRJetgBbMYh6SBsEmjm73MPf/paG0FJtSPcKejv6hOD79vORQIDAQAB";
 
 function runCommand(command, args, cwd) {
   return execFileSync(command, args, {
@@ -48,7 +46,6 @@ test("distribution build packages tracked source plus dependencies without mutat
         manifest_version: 3,
         name: "Login Button",
         version: "1.0.0",
-        key: DISTRO_MANIFEST_KEY,
         background: {
           service_worker: "background.js",
           type: "module"
@@ -142,5 +139,5 @@ test("distribution build packages tracked source plus dependencies without mutat
   assert.ok(!archiveEntries.includes("loginbutton_distro/ZIP.KEY"));
   assert.ok(!archiveEntries.includes("loginbutton_distro/.githooks/pre-commit"));
   assert.ok(!archiveEntries.includes("loginbutton_distro/untracked-local-note.txt"));
-  assert.equal(packagedManifest.key, DISTRO_MANIFEST_KEY);
+  assert.equal(Object.prototype.hasOwnProperty.call(packagedManifest, "key"), false);
 });
