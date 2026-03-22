@@ -320,6 +320,12 @@ test("selected registered application drives service hydration for scope-matched
   assert.match(appSource, /function resolvePreferredVaultServiceApplication\(/);
   assert.match(appSource, /const selectedApplicationMatchesScope = registeredApplicationMatchesRequiredScope\(/);
   assert.match(appSource, /selectedRegisteredApplication: snapshotContext\.selectedRegisteredApplication/);
+  assert.match(appSource, /async function enrichRegisteredApplicationForHydration\(/);
+  assert.match(appSource, /async function fetchRegisteredApplicationDetails\(/);
+  assert.match(appSource, /async function fetchRegisteredApplicationSoftwareStatement\(/);
+  assert.match(appSource, /const pathCandidates = buildRegisteredApplicationDetailPaths\(normalizedApplicationId\);/);
+  assert.match(appSource, /registeredApplication = enrichmentResult\.value\.application;/);
+  assert.match(appSource, /await registerDcrClientWithSoftwareStatement\(softwareStatement\)/);
 
   const selectionPersistSectionMatch = appSource.match(
     /async function persistSelectedProgrammerVaultSelections\([\s\S]*?\n}\n\nfunction hydrateSelectedProgrammerFromVaultRecord/
@@ -336,7 +342,10 @@ test("premium service cheat sheet button reports real DCR or CM readiness instea
   assert.match(appSource, /async function buildPremiumServiceCheatSheetMessage\(/);
   assert.match(appSource, /await persistProgrammerVaultSnapshot\(state\.session, programmerId, \{/);
   assert.match(appSource, /serviceKeys: \[definition\.serviceKey\]/);
-  assert.match(appSource, /Security gate: Adobe IMS CMU token \(no DCR \/register step\)\./);
+  assert.match(appSource, /Hydration path: DCR \/register \+ client_credentials token\./);
+  assert.match(appSource, /Hydration path: Adobe IMS CMU token \(no DCR \/register step\)\./);
+  assert.match(appSource, /DCR client: \$\{clientId\}/);
+  assert.match(appSource, /CMU client: \$\{cmuClientId\}/);
   assert.match(appSource, /Result: Make cheatsheet for \$\{normalizedDefinition\.label\} using \$\{applicationName\} client \$\{clientId\}\./);
   assert.match(appSource, /Result: Make cheatsheet for \$\{PREMIUM_SERVICE_CONCURRENCY_LABEL\} using \$\{cmuClientId\}\./);
   assert.match(appSource, /window\.alert\(cheatSheetMessage\);/);

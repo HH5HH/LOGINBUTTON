@@ -4263,12 +4263,24 @@ function extractSoftwareStatementFromApplicationData(applicationData = null) {
     applicationData.software_statement,
     applicationData.softwarestatement,
     applicationData.software?.statement,
+    applicationData.dcr?.softwareStatement,
+    applicationData.credentials?.softwareStatement,
     applicationData.client?.softwareStatement,
     applicationData.client?.software_statement,
     applicationData.clientApplication?.softwareStatement,
     applicationData.clientApplication?.software_statement,
     applicationData.registeredClient?.softwareStatement,
     applicationData.registeredClient?.software_statement,
+    applicationData.__rawEnvelope?.softwareStatement,
+    applicationData.__rawEnvelope?.software_statement,
+    applicationData.__rawEnvelope?.entityData?.softwareStatement,
+    applicationData.__rawEnvelope?.entityData?.software_statement,
+    applicationData.__rawEnvelope?.entityData?.client?.softwareStatement,
+    applicationData.__rawEnvelope?.entityData?.client?.software_statement,
+    applicationData.__rawEnvelope?.entityData?.clientApplication?.softwareStatement,
+    applicationData.__rawEnvelope?.entityData?.clientApplication?.software_statement,
+    applicationData.__rawEnvelope?.entityData?.registeredClient?.softwareStatement,
+    applicationData.__rawEnvelope?.entityData?.registeredClient?.software_statement,
     applicationData.raw?.softwareStatement,
     applicationData.raw?.software_statement,
     applicationData.raw?.client?.softwareStatement,
@@ -4313,6 +4325,428 @@ function extractSoftwareStatementFromApplicationData(applicationData = null) {
   }
 
   return "";
+}
+
+function extractJwtAndUrlsFromValue(value = null) {
+  const seen = new Set();
+  const jwtCandidates = [];
+  const urlCandidates = [];
+  const stack = [{ node: value, path: "" }];
+
+  while (stack.length > 0) {
+    const { node, path } = stack.pop();
+
+    if (typeof node === "string") {
+      const normalizedNode = node.trim();
+      if (isProbablyJwtToken(normalizedNode)) {
+        const lowerPath = String(path || "").toLowerCase();
+        let score = 0;
+        if (lowerPath.includes("software") && lowerPath.includes("statement")) {
+          score += 100;
+        }
+        if (lowerPath.includes("software_statement") || lowerPath.includes("softwarestatement")) {
+          score += 100;
+        }
+        if (lowerPath.includes("jwt")) {
+          score += 10;
+        }
+        jwtCandidates.push({
+          score,
+          value: normalizedNode
+        });
+      }
+
+      if (/^https?:\/\//i.test(normalizedNode) && /software/i.test(normalizedNode) && /statement/i.test(normalizedNode)) {
+        urlCandidates.push(normalizedNode);
+      }
+      continue;
+    }
+
+    if (!node || typeof node !== "object" || seen.has(node)) {
+      continue;
+    }
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => {
+        stack.push({
+          node: item,
+          path: `${path}[${index}]`
+        });
+      });
+      continue;
+    }
+
+    Object.entries(node).forEach(([key, nested]) => {
+      stack.push({
+        node: nested,
+        path: path ? `${path}.${key}` : key
+      });
+    });
+  }
+
+  jwtCandidates.sort((left, right) => right.score - left.score);
+  return {
+    jwt: firstNonEmptyString([jwtCandidates[0]?.value]),
+    jwtScore: Number(jwtCandidates[0]?.score || 0),
+    urls: dedupeCandidateStrings(urlCandidates)
+  };
+}
+
+function buildRegisteredApplicationScopeLabels(scopes = []) {
+  const normalizedScopes = Array.isArray(scopes) ? scopes.map((scope) => String(scope || "").trim()).filter(Boolean) : [];
+  return [
+    "DEFAULT",
+    ...normalizedScopes.map((scope) => REGISTERED_APPLICATION_SCOPE_LABELS[scope] || scope)
+  ].filter(Boolean);
+}
+
+function buildRegisteredApplicationLabel(name = "", scopeLabels = [], fallbackLabel = "") {
+  const normalizedName = firstNonEmptyString([name]);
+  const scopeSummary = (Array.isArray(scopeLabels) ? scopeLabels : []).filter(Boolean).join(", ");
+  return scopeSummary ? `${normalizedName} | ${scopeSummary}` : firstNonEmptyString([fallbackLabel, normalizedName]);
+}
+
+function normalizeRegisteredApplicationDetailPayload(payload = null) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const entityData =
+    payload.entityData && typeof payload.entityData === "object" && !Array.isArray(payload.entityData)
+      ? payload.entityData
+      : payload;
+  if (!entityData || typeof entityData !== "object" || Array.isArray(entityData)) {
+    return null;
+  }
+
+  return {
+    ...entityData,
+    ...(payload !== entityData ? { __rawEnvelope: payload } : {})
+  };
+}
+
+function buildRegisteredApplicationDetailPaths(applicationId = "") {
+  const normalizedApplicationId = String(applicationId || "").trim();
+  if (!normalizedApplicationId) {
+    return [];
+  }
+
+  const encodedApplicationId = encodeURIComponent(normalizedApplicationId);
+  return [
+    `${CONSOLE_APPLICATIONS_PATH}/${encodedApplicationId}`,
+    `/entity/RegisteredApplication/${encodedApplicationId}`
+  ];
+}
+
+async function fetchTextWithTimeout(resource = "", { headers = {}, timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS } = {}) {
+  const requestUrl = String(resource || "").trim();
+  if (!requestUrl) {
+    return "";
+  }
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs || 0) || ADOBE_PAGE_CONTEXT_TIMEOUT_MS));
+  try {
+    const response = await fetch(requestUrl, {
+      method: "GET",
+      mode: "cors",
+      credentials: "include",
+      headers,
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return "";
+    }
+    return await response.text().catch(() => "");
+  } catch {
+    return "";
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function extractSoftwareStatementFromText(text = "") {
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) {
+    return "";
+  }
+
+  if (isProbablyJwtToken(normalizedText)) {
+    return normalizedText;
+  }
+
+  const parsed = parseJsonText(normalizedText, null);
+  if (parsed && typeof parsed === "object") {
+    const extracted = extractSoftwareStatementFromApplicationData(parsed);
+    if (extracted) {
+      return extracted;
+    }
+    const dereferenced = extractJwtAndUrlsFromValue(parsed);
+    if (dereferenced.jwt && dereferenced.jwtScore > 0) {
+      return dereferenced.jwt;
+    }
+  }
+
+  const match = normalizedText.match(/[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+/);
+  return match && isProbablyJwtToken(match[0]) ? match[0] : "";
+}
+
+function mergeHydratedRegisteredApplication(application = null, detailData = null, softwareStatement = "") {
+  const baseApplication = application && typeof application === "object" ? application : {};
+  const normalizedDetail = detailData && typeof detailData === "object" ? detailData : null;
+  const applicationId = firstNonEmptyString([baseApplication.id, baseApplication.key, normalizedDetail?.id]);
+  const applicationKey = firstNonEmptyString([baseApplication.key, baseApplication.id, normalizedDetail?.id]);
+  const applicationName = firstNonEmptyString([
+    normalizedDetail?.displayName,
+    normalizedDetail?.name,
+    normalizedDetail?.label,
+    normalizedDetail?.title,
+    baseApplication.name,
+    baseApplication.label,
+    applicationId
+  ]);
+  const scopes = Array.isArray(normalizedDetail?.scopes)
+    ? normalizedDetail.scopes.filter(Boolean)
+    : Array.isArray(baseApplication.scopes)
+      ? baseApplication.scopes.filter(Boolean)
+      : [];
+  const scopeLabels = buildRegisteredApplicationScopeLabels(scopes);
+  const normalizedSoftwareStatement = firstNonEmptyString([
+    softwareStatement,
+    extractSoftwareStatementFromApplicationData(normalizedDetail),
+    extractSoftwareStatementFromApplicationData(baseApplication.raw || baseApplication),
+    baseApplication.softwareStatement
+  ]);
+
+  return {
+    key: applicationKey,
+    id: applicationId,
+    name: applicationName,
+    label: buildRegisteredApplicationLabel(applicationName, scopeLabels, baseApplication.label),
+    clientId: firstNonEmptyString([
+      normalizedDetail?.clientId,
+      normalizedDetail?.client_id,
+      baseApplication.clientId
+    ]),
+    scopes,
+    scopeLabels,
+    type: firstNonEmptyString([
+      normalizedDetail?.type,
+      normalizedDetail?.applicationType,
+      baseApplication.type
+    ]),
+    softwareStatement: normalizedSoftwareStatement,
+    raw: normalizedDetail || baseApplication.raw || null
+  };
+}
+
+async function fetchRegisteredApplicationDetails(
+  session = null,
+  applicationId = "",
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const accessToken = firstNonEmptyString([currentSession?.accessToken]);
+  const baseUrl = firstNonEmptyString([consoleContext?.baseUrl]);
+  const configurationVersion = firstNonEmptyString([consoleContext?.configurationVersion]);
+  const environmentId = firstNonEmptyString([
+    consoleContext?.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const normalizedApplicationId = String(applicationId || "").trim();
+  const nextCsrfToken = firstNonEmptyString([csrfToken, consoleContext?.csrfToken, "NO-TOKEN"]);
+
+  if (!accessToken || !baseUrl || !normalizedApplicationId) {
+    throw new Error("Registered Application detail request is missing console context.");
+  }
+
+  const queryParams = configurationVersion ? { configurationVersion } : {};
+  const pathCandidates = buildRegisteredApplicationDetailPaths(normalizedApplicationId);
+  let lastError = null;
+
+  for (const path of pathCandidates) {
+    const result = await settle(() =>
+      fetchConsoleJsonWithFallback({
+        baseUrl,
+        path,
+        accessToken,
+        csrfToken: nextCsrfToken,
+        queryParams,
+        environmentId,
+        pageContextTargetRef
+      })
+    );
+    if (!result.ok) {
+      lastError = result.error;
+      continue;
+    }
+
+    const application = normalizeRegisteredApplicationDetailPayload(result.value?.data);
+    if (!application) {
+      continue;
+    }
+
+    return {
+      application,
+      csrfToken: firstNonEmptyString([result.value?.csrfToken, nextCsrfToken]),
+      transport: firstNonEmptyString([result.value?.transport]),
+      pageContext: result.value?.pageContext || null,
+      rawText: String(result.value?.rawText || "")
+    };
+  }
+
+  throw lastError || new Error(`Registered Application ${normalizedApplicationId} detail is unavailable.`);
+}
+
+async function fetchRegisteredApplicationSoftwareStatement(
+  session = null,
+  applicationId = "",
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const accessToken = firstNonEmptyString([currentSession?.accessToken]);
+  const baseUrl = firstNonEmptyString([consoleContext?.baseUrl]);
+  const configurationVersion = firstNonEmptyString([consoleContext?.configurationVersion]);
+  const environmentId = firstNonEmptyString([
+    consoleContext?.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const normalizedApplicationId = String(applicationId || "").trim();
+  let nextCsrfToken = firstNonEmptyString([csrfToken, consoleContext?.csrfToken, "NO-TOKEN"]);
+
+  if (!accessToken || !baseUrl || !normalizedApplicationId) {
+    throw new Error("Registered Application software statement request is missing console context.");
+  }
+
+  const queryParams = configurationVersion ? { configurationVersion } : {};
+  const pathCandidates = buildRegisteredApplicationDetailPaths(normalizedApplicationId);
+  let lastError = null;
+
+  for (const path of pathCandidates) {
+    const result = await settle(() =>
+      fetchConsoleJsonWithFallback({
+        baseUrl,
+        path,
+        accessToken,
+        csrfToken: nextCsrfToken,
+        queryParams,
+        environmentId,
+        pageContextTargetRef
+      })
+    );
+    if (!result.ok) {
+      lastError = result.error;
+      continue;
+    }
+
+    nextCsrfToken = firstNonEmptyString([result.value?.csrfToken, nextCsrfToken]);
+    const directStatement = firstNonEmptyString([
+      extractSoftwareStatementFromApplicationData(result.value?.data),
+      extractSoftwareStatementFromText(result.value?.rawText)
+    ]);
+    if (directStatement) {
+      return {
+        softwareStatement: directStatement,
+        csrfToken: nextCsrfToken
+      };
+    }
+
+    const dereferenced = extractJwtAndUrlsFromValue(result.value?.data);
+    if (dereferenced.jwt && dereferenced.jwtScore > 0) {
+      return {
+        softwareStatement: dereferenced.jwt,
+        csrfToken: nextCsrfToken
+      };
+    }
+
+    for (const candidateUrl of dereferenced.urls) {
+      const candidateStatement = extractSoftwareStatementFromText(
+        await fetchTextWithTimeout(candidateUrl, {
+          headers: {
+            Accept: "text/plain, application/json, */*"
+          }
+        })
+      );
+      if (candidateStatement) {
+        return {
+          softwareStatement: candidateStatement,
+          csrfToken: nextCsrfToken
+        };
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  return {
+    softwareStatement: "",
+    csrfToken: nextCsrfToken
+  };
+}
+
+async function enrichRegisteredApplicationForHydration(
+  session = null,
+  application = null,
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentApplication = application && typeof application === "object" ? application : null;
+  if (!currentApplication) {
+    return {
+      application: null,
+      csrfToken: firstNonEmptyString([csrfToken, "NO-TOKEN"])
+    };
+  }
+
+  const normalizedApplicationId = firstNonEmptyString([currentApplication.id, currentApplication.key]);
+  if (!normalizedApplicationId || firstNonEmptyString([currentApplication.softwareStatement])) {
+    return {
+      application: mergeHydratedRegisteredApplication(currentApplication),
+      csrfToken: firstNonEmptyString([csrfToken, "NO-TOKEN"])
+    };
+  }
+
+  let nextApplication = mergeHydratedRegisteredApplication(currentApplication);
+  let nextCsrfToken = firstNonEmptyString([csrfToken, "NO-TOKEN"]);
+
+  const detailsResult = await settle(() =>
+    fetchRegisteredApplicationDetails(session, normalizedApplicationId, {
+      csrfToken: nextCsrfToken,
+      pageContextTargetRef
+    })
+  );
+  if (detailsResult.ok && detailsResult.value?.application) {
+    nextApplication = mergeHydratedRegisteredApplication(nextApplication, detailsResult.value.application);
+    nextCsrfToken = firstNonEmptyString([detailsResult.value.csrfToken, nextCsrfToken]);
+  }
+
+  if (!firstNonEmptyString([nextApplication.softwareStatement])) {
+    const statementResult = await settle(() =>
+      fetchRegisteredApplicationSoftwareStatement(session, normalizedApplicationId, {
+        csrfToken: nextCsrfToken,
+        pageContextTargetRef
+      })
+    );
+    if (statementResult.ok && statementResult.value?.softwareStatement) {
+      nextApplication = mergeHydratedRegisteredApplication(
+        nextApplication,
+        null,
+        statementResult.value.softwareStatement
+      );
+      nextCsrfToken = firstNonEmptyString([statementResult.value.csrfToken, nextCsrfToken]);
+    }
+  }
+
+  return {
+    application: nextApplication,
+    csrfToken: nextCsrfToken
+  };
 }
 
 function parseDcrResponsePayload(text = "") {
@@ -4699,12 +5133,17 @@ async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", re
 }
 
 async function ensureVaultServiceClientHydrated(serviceRecord = null, definition = null) {
+  return ensureVaultServiceClientHydratedWithContext(serviceRecord, definition, {});
+}
+
+async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null, definition = null, hydrationContext = {}) {
   const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
   const currentRecord = serviceRecord && typeof serviceRecord === "object" ? serviceRecord : {};
-  const registeredApplication =
+  let registeredApplication =
     currentRecord.registeredApplication && typeof currentRecord.registeredApplication === "object"
       ? currentRecord.registeredApplication
       : null;
+  let nextCsrfToken = firstNonEmptyString([hydrationContext?.csrfToken, "NO-TOKEN"]);
   const nowIso = new Date().toISOString();
   if (!normalizedDefinition || !registeredApplication) {
     return {
@@ -4722,11 +5161,23 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
   nextClient.serviceScope = normalizedDefinition.requiredScope;
 
   if (!nextClient.clientId || !nextClient.clientSecret) {
+    const enrichmentResult = await settle(() =>
+      enrichRegisteredApplicationForHydration(hydrationContext?.session, registeredApplication, {
+        csrfToken: nextCsrfToken,
+        pageContextTargetRef: hydrationContext?.pageContextTargetRef || null
+      })
+    );
+    if (enrichmentResult.ok && enrichmentResult.value?.application) {
+      registeredApplication = enrichmentResult.value.application;
+      nextCsrfToken = firstNonEmptyString([enrichmentResult.value.csrfToken, nextCsrfToken]);
+    }
+
     const softwareStatement = firstNonEmptyString([registeredApplication.softwareStatement]);
     if (!softwareStatement) {
       return {
         ...currentRecord,
         status: "partial",
+        registeredApplication,
         client: {
           ...nextClient,
           updatedAt: nowIso,
@@ -4744,6 +5195,7 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
       return {
         ...currentRecord,
         status: "partial",
+        registeredApplication,
         client: {
           ...nextClient,
           updatedAt: nowIso,
@@ -4768,6 +5220,7 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
       return {
         ...currentRecord,
         status: "partial",
+        registeredApplication,
         client: {
           ...nextClient,
           updatedAt: nowIso,
@@ -4784,11 +5237,12 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
     ...currentRecord,
     status: "ready",
     updatedAt: nowIso,
+    registeredApplication,
     client: nextClient
   };
 }
 
-async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys = null) {
+async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys = null, hydrationContext = {}) {
   const nextServices = services && typeof services === "object" ? { ...services } : {};
   const requestedServiceKeys = new Set(
     (Array.isArray(serviceKeys) ? serviceKeys : [])
@@ -4798,15 +5252,31 @@ async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys =
   const definitionsToHydrate = requestedServiceKeys.size > 0
     ? VAULT_DCR_SERVICE_DEFINITIONS.filter((definition) => requestedServiceKeys.has(definition.serviceKey))
     : VAULT_DCR_SERVICE_DEFINITIONS;
-  const hydratedServices = await Promise.all(
-    definitionsToHydrate.map(async (definition) => [
-      definition.serviceKey,
-      await ensureVaultServiceClientHydrated(nextServices[definition.serviceKey], definition)
-    ])
-  );
-  hydratedServices.forEach(([serviceKey, serviceRecord]) => {
-    nextServices[serviceKey] = serviceRecord;
-  });
+  const pageContextTargetRef =
+    hydrationContext?.pageContextTargetRef && typeof hydrationContext.pageContextTargetRef === "object"
+      ? hydrationContext.pageContextTargetRef
+      : {
+          target: null
+        };
+  let nextCsrfToken = firstNonEmptyString([
+    hydrationContext?.csrfToken,
+    hydrationContext?.session?.console?.csrfToken,
+    "NO-TOKEN"
+  ]);
+
+  try {
+    for (const definition of definitionsToHydrate) {
+      const nextServiceRecord = await ensureVaultServiceClientHydratedWithContext(nextServices[definition.serviceKey], definition, {
+        ...hydrationContext,
+        csrfToken: nextCsrfToken,
+        pageContextTargetRef
+      });
+      nextServices[definition.serviceKey] = nextServiceRecord;
+    }
+  } finally {
+    await closeTemporaryAdobePageContextTarget(pageContextTargetRef.target?.temporaryTarget);
+  }
+
   return nextServices;
 }
 
@@ -4896,23 +5366,17 @@ function normalizeConsoleRegisteredApplications(payload) {
     ]);
     const clientId = firstNonEmptyString([entityData.clientId, entityData.client_id]);
     const rawScopes = Array.isArray(entityData.scopes) ? entityData.scopes.filter(Boolean) : [];
-    const scopeLabels = [
-      "DEFAULT",
-      ...rawScopes.map(
-        (scope) =>
-          REGISTERED_APPLICATION_SCOPE_LABELS[String(scope || "").trim()] || String(scope || "").trim()
-      )
-    ].filter(Boolean);
-    const scopeSummary = scopeLabels.join(", ");
+    const scopeLabels = buildRegisteredApplicationScopeLabels(rawScopes);
     applications.push({
       key,
       id,
       name,
-      label: scopeSummary ? `${name} | ${scopeSummary}` : name,
+      label: buildRegisteredApplicationLabel(name, scopeLabels, name),
       clientId,
       scopes: rawScopes,
       scopeLabels,
       type: firstNonEmptyString([entityData.type, entityData.applicationType]),
+      softwareStatement: extractSoftwareStatementFromApplicationData(entityData),
       raw: entityData
     });
   });
@@ -5875,7 +6339,11 @@ async function buildProgrammerVaultSnapshotInput(
       existingVaultRecord,
       selectedRegisteredApplication: snapshotContext.selectedRegisteredApplication
     }),
-    serviceKeys
+    serviceKeys,
+    {
+      session: snapshotContext.currentSession,
+      csrfToken: firstNonEmptyString([snapshotContext.consoleContext?.csrfToken, "NO-TOKEN"])
+    }
   );
   const selectedApplications = VAULT_DCR_SERVICE_DEFINITIONS.map((definition) => services?.[definition.serviceKey]?.registeredApplication)
     .filter(Boolean);
@@ -6143,7 +6611,10 @@ function buildPersistableRegisteredApplications(applications = []) {
     scopes: Array.isArray(application?.scopes) ? application.scopes.filter(Boolean) : [],
     scopeLabels: Array.isArray(application?.scopeLabels) ? application.scopeLabels.filter(Boolean) : [],
     type: firstNonEmptyString([application?.type]),
-    softwareStatement: firstNonEmptyString([application?.softwareStatement])
+    softwareStatement: firstNonEmptyString([
+      application?.softwareStatement,
+      extractSoftwareStatementFromApplicationData(application?.raw || application)
+    ])
   }));
 }
 
@@ -6839,6 +7310,7 @@ function buildPremiumServiceClientReadyMessage(definition = null, serviceRecord 
       `${firstNonEmptyString([normalizedDefinition?.label, "Premium service"])} is not fully hydrated yet.`,
       `Registered Application: ${applicationName}`,
       `Required scope: ${firstNonEmptyString([normalizedDefinition?.requiredScope, "Unavailable"])}`,
+      `Hydration path: DCR /register + client_credentials token.`,
       `Result: ${firstNonEmptyString([client.error, normalizedServiceRecord?.status, "LoginButton could not finish the DCR /register flow yet."])}`
     ].join("\n");
   }
@@ -6847,6 +7319,7 @@ function buildPremiumServiceClientReadyMessage(definition = null, serviceRecord 
     `${normalizedDefinition.label} is fully hydrated and ready.`,
     `Registered Application: ${applicationName}`,
     `Required scope: ${firstNonEmptyString([normalizedDefinition.requiredScope])}`,
+    `Hydration path: DCR /register + client_credentials token.`,
     `DCR client: ${clientId}`,
     `Token scope: ${tokenScope}`,
     `Result: Make cheatsheet for ${normalizedDefinition.label} using ${applicationName} client ${clientId}.`
@@ -6872,7 +7345,7 @@ function buildConcurrencyMonitoringReadyMessage(authenticatedDataContext = {}, m
   if (!cmuTokenHeaderValue || matchedTenants.length === 0) {
     return [
       `${PREMIUM_SERVICE_CONCURRENCY_LABEL} is not fully hydrated yet.`,
-      `Security gate: Adobe IMS CMU token (no DCR /register step).`,
+      `Hydration path: Adobe IMS CMU token (no DCR /register step).`,
       `Matched CM tenants: ${String(matchedTenants.length)}`,
       `Result: ${firstNonEmptyString([cmContext?.errors?.cmuToken, cmContext?.errors?.tenants, cmContext?.status, "LoginButton still needs the CMU token + tenant match before it can use Concurrency Monitoring."])}`
     ].join("\n");
@@ -6880,7 +7353,7 @@ function buildConcurrencyMonitoringReadyMessage(authenticatedDataContext = {}, m
 
   return [
     `${PREMIUM_SERVICE_CONCURRENCY_LABEL} is fully hydrated and ready.`,
-    `Security gate: Adobe IMS CMU token (no DCR /register step).`,
+    `Hydration path: Adobe IMS CMU token (no DCR /register step).`,
     `CMU client: ${cmuClientId}`,
     `Header: ${firstNonEmptyString([cmContext.cmuTokenHeaderName, CMU_TOKEN_HEADER_NAME])}`,
     `CM tenant: ${tenantLabel}`,
@@ -6939,7 +7412,13 @@ async function buildPremiumServiceCheatSheetMessage(item = null) {
   return buildPremiumServiceClientReadyMessage(
     definition,
     serviceRecord,
-    firstNonEmptyString([item?.selectedApplicationName, item?.applicationName, definition.label])
+    firstNonEmptyString([
+      serviceRecord?.registeredApplication?.name,
+      serviceRecord?.registeredApplication?.label,
+      item?.selectedApplicationName,
+      item?.applicationName,
+      definition.label
+    ])
   );
 }
 
