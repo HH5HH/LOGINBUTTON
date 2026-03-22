@@ -3117,12 +3117,16 @@ async function fetchConsoleJsonViaAdobePageContext({
   accessToken,
   csrfToken = "NO-TOKEN",
   queryParams = {},
+  method = "GET",
+  headers = {},
+  body = "",
   tabId,
   requiredFrameUrlIncludes = []
 }) {
   const normalizedBaseUrl = String(baseUrl || "").trim();
   const normalizedPath = String(path || "").trim();
   const bearerToken = String(accessToken || "").trim();
+  const normalizedMethod = String(method || "GET").trim().toUpperCase() || "GET";
   if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
     throw new Error("Console request is missing required context.");
   }
@@ -3132,8 +3136,12 @@ async function fetchConsoleJsonViaAdobePageContext({
   const result = await executeFetchViaAdobePageContextTarget({
     tabId,
     requestUrl: url.toString(),
-    method: "GET",
-    headers: buildConsoleRequestHeaders(bearerToken, csrfToken),
+    method: normalizedMethod,
+    headers: {
+      ...buildConsoleRequestHeaders(bearerToken, csrfToken),
+      ...(headers && typeof headers === "object" ? headers : {})
+    },
+    bodyText: normalizedMethod === "GET" ? "" : String(body || ""),
     requiredFrameOrigins: CONSOLE_PAGE_CONTEXT_ALLOWED_ORIGINS,
     requiredFrameUrlIncludes
   });
@@ -3161,6 +3169,9 @@ async function fetchConsoleJsonWithFallback({
   accessToken,
   csrfToken = "NO-TOKEN",
   queryParams = {},
+  method = "GET",
+  headers = {},
+  body = "",
   environmentId = CONSOLE_DEFAULT_ENVIRONMENT,
   pageContextTargetRef = null
 }) {
@@ -3170,7 +3181,10 @@ async function fetchConsoleJsonWithFallback({
       path,
       accessToken,
       csrfToken,
-      queryParams
+      queryParams,
+      method,
+      headers,
+      body
     })
   );
   if (directResult.ok) {
@@ -3206,6 +3220,9 @@ async function fetchConsoleJsonWithFallback({
         accessToken,
         csrfToken,
         queryParams,
+        method,
+        headers,
+        body,
         tabId: consoleTabId,
         requiredFrameUrlIncludes: [`/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG}/`]
       })
@@ -3580,10 +3597,20 @@ async function resolveQualifiedCmConsoleAccessToken(session = null, previousToke
   throw lastError || new Error("Login Button could not auto-hydrate a cm-console-ui bearer from the current Adobe IMS session.");
 }
 
-async function fetchConsoleJson({ baseUrl, path, accessToken, csrfToken = "NO-TOKEN", queryParams = {} }) {
+async function fetchConsoleJson({
+  baseUrl,
+  path,
+  accessToken,
+  csrfToken = "NO-TOKEN",
+  queryParams = {},
+  method = "GET",
+  headers = {},
+  body = ""
+}) {
   const normalizedBaseUrl = String(baseUrl || "").trim();
   const normalizedPath = String(path || "").trim();
   const bearerToken = String(accessToken || "").trim();
+  const normalizedMethod = String(method || "GET").trim().toUpperCase() || "GET";
   if (!normalizedBaseUrl || !normalizedPath || !bearerToken) {
     throw new Error("Console request is missing required context.");
   }
@@ -3593,10 +3620,14 @@ async function fetchConsoleJson({ baseUrl, path, accessToken, csrfToken = "NO-TO
   let response;
   try {
     response = await fetch(url.toString(), {
-      method: "GET",
+      method: normalizedMethod,
       mode: "cors",
       credentials: "include",
-      headers: buildConsoleRequestHeaders(bearerToken, csrfToken)
+      headers: {
+        ...buildConsoleRequestHeaders(bearerToken, csrfToken),
+        ...(headers && typeof headers === "object" ? headers : {})
+      },
+      ...(normalizedMethod === "GET" ? {} : { body: String(body || "") })
     });
   } catch (error) {
     throw new Error(`Unable to reach ${url.pathname}: ${serializeError(error)}`);
@@ -3611,6 +3642,7 @@ async function fetchConsoleJson({ baseUrl, path, accessToken, csrfToken = "NO-TO
 
   return {
     data: parsed ?? (text ? text.trim() : null),
+    rawText: text,
     csrfToken: firstNonEmptyString([response.headers.get("x-csrf-token"), csrfToken])
   };
 }
@@ -4439,6 +4471,116 @@ function buildRegisteredApplicationDetailPaths(applicationId = "") {
   ];
 }
 
+function normalizeRegisteredApplicationEntityRef(value = "") {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const normalizedValue = rawValue.replace(/^@+/, "");
+  const match = normalizedValue.match(/^RegisteredApplication:(.+)$/i);
+  const applicationId = String(match ? match[1] : normalizedValue).trim();
+  return applicationId ? `RegisteredApplication:${applicationId}` : "";
+}
+
+function buildRegisteredApplicationBulkRetrieveRequest(entityRefs = [], configurationVersion = "") {
+  const entities = dedupeCandidateStrings((Array.isArray(entityRefs) ? entityRefs : [entityRefs]).map((entityRef) =>
+    normalizeRegisteredApplicationEntityRef(entityRef).replace(/^@+/, "")
+  )).filter(Boolean);
+  if (entities.length === 0) {
+    return null;
+  }
+
+  const payload = { entities };
+  const normalizedConfigurationVersion = Number(configurationVersion || 0);
+  if (Number.isFinite(normalizedConfigurationVersion) && normalizedConfigurationVersion > 0) {
+    payload.configVersion = normalizedConfigurationVersion;
+  }
+
+  return {
+    path: "/entity/bulkRetrieve",
+    body: JSON.stringify(payload),
+    entities
+  };
+}
+
+function resolveRegisteredApplicationIdFromEntityData(entityData = null) {
+  if (!entityData || typeof entityData !== "object") {
+    return "";
+  }
+
+  return firstNonEmptyString([entityData.id, entityData.key, entityData.guid]);
+}
+
+function extractRegisteredApplicationFromBulkPayload(payload = null, applicationId = "") {
+  const normalizedApplicationId = String(applicationId || "").trim();
+  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  if (entities.length === 0) {
+    return null;
+  }
+
+  const normalizedEntities = entities
+    .map((entity) => normalizeRegisteredApplicationDetailPayload(entity))
+    .filter(Boolean);
+  if (!normalizedApplicationId) {
+    return normalizedEntities[0] || null;
+  }
+
+  return (
+    normalizedEntities.find(
+      (entity) => resolveRegisteredApplicationIdFromEntityData(entity) === normalizedApplicationId
+    ) ||
+    normalizedEntities[0] ||
+    null
+  );
+}
+
+async function fetchRegisteredApplicationBulkRetrieve(
+  session = null,
+  applicationId = "",
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const accessToken = firstNonEmptyString([currentSession?.accessToken]);
+  const baseUrl = firstNonEmptyString([consoleContext?.baseUrl]);
+  const configurationVersion = firstNonEmptyString([consoleContext?.configurationVersion]);
+  const environmentId = firstNonEmptyString([
+    consoleContext?.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const normalizedApplicationId = String(applicationId || "").trim();
+  const nextCsrfToken = firstNonEmptyString([csrfToken, consoleContext?.csrfToken, "NO-TOKEN"]);
+  const bulkRetrieveRequest = buildRegisteredApplicationBulkRetrieveRequest([normalizedApplicationId], configurationVersion);
+
+  if (!accessToken || !baseUrl || !normalizedApplicationId || !bulkRetrieveRequest) {
+    throw new Error("Registered Application bulk detail request is missing console context.");
+  }
+
+  const result = await fetchConsoleJsonWithFallback({
+    baseUrl,
+    path: bulkRetrieveRequest.path,
+    accessToken,
+    csrfToken: nextCsrfToken,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: bulkRetrieveRequest.body,
+    environmentId,
+    pageContextTargetRef
+  });
+
+  return {
+    application: extractRegisteredApplicationFromBulkPayload(result?.data, normalizedApplicationId),
+    csrfToken: firstNonEmptyString([result?.csrfToken, nextCsrfToken]),
+    transport: firstNonEmptyString([result?.transport]),
+    pageContext: result?.pageContext || null,
+    rawText: String(result?.rawText || "")
+  };
+}
+
 async function fetchTextWithTimeout(resource = "", { headers = {}, timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS } = {}) {
   const requestUrl = String(resource || "").trim();
   if (!requestUrl) {
@@ -4567,6 +4709,25 @@ async function fetchRegisteredApplicationDetails(
   const pathCandidates = buildRegisteredApplicationDetailPaths(normalizedApplicationId);
   let lastError = null;
 
+  const bulkResult = await settle(() =>
+    fetchRegisteredApplicationBulkRetrieve(session, normalizedApplicationId, {
+      csrfToken: nextCsrfToken,
+      pageContextTargetRef
+    })
+  );
+  if (bulkResult.ok && bulkResult.value?.application) {
+    return {
+      application: bulkResult.value.application,
+      csrfToken: firstNonEmptyString([bulkResult.value.csrfToken, nextCsrfToken]),
+      transport: firstNonEmptyString([bulkResult.value.transport]),
+      pageContext: bulkResult.value.pageContext || null,
+      rawText: String(bulkResult.value.rawText || "")
+    };
+  }
+  if (!bulkResult.ok) {
+    lastError = bulkResult.error;
+  }
+
   for (const path of pathCandidates) {
     const result = await settle(() =>
       fetchConsoleJsonWithFallback({
@@ -4626,6 +4787,28 @@ async function fetchRegisteredApplicationSoftwareStatement(
   const queryParams = configurationVersion ? { configurationVersion } : {};
   const pathCandidates = buildRegisteredApplicationDetailPaths(normalizedApplicationId);
   let lastError = null;
+
+  const bulkResult = await settle(() =>
+    fetchRegisteredApplicationBulkRetrieve(session, normalizedApplicationId, {
+      csrfToken: nextCsrfToken,
+      pageContextTargetRef
+    })
+  );
+  if (bulkResult.ok) {
+    nextCsrfToken = firstNonEmptyString([bulkResult.value?.csrfToken, nextCsrfToken]);
+    const bulkStatement = firstNonEmptyString([
+      extractSoftwareStatementFromApplicationData(bulkResult.value?.application),
+      extractSoftwareStatementFromText(bulkResult.value?.rawText)
+    ]);
+    if (bulkStatement) {
+      return {
+        softwareStatement: bulkStatement,
+        csrfToken: nextCsrfToken
+      };
+    }
+  } else {
+    lastError = bulkResult.error;
+  }
 
   for (const path of pathCandidates) {
     const result = await settle(() =>
@@ -7307,11 +7490,15 @@ function buildPremiumServiceClientReadyMessage(definition = null, serviceRecord 
 
   if (!normalizedDefinition || !clientId || !clientSecret || !accessToken) {
     return [
-      `${firstNonEmptyString([normalizedDefinition?.label, "Premium service"])} is not fully hydrated yet.`,
+      `${firstNonEmptyString([normalizedDefinition?.label, "Premium service"])} hydration failed.`,
       `Registered Application: ${applicationName}`,
       `Required scope: ${firstNonEmptyString([normalizedDefinition?.requiredScope, "Unavailable"])}`,
       `Hydration path: DCR /register + client_credentials token.`,
-      `Result: ${firstNonEmptyString([client.error, normalizedServiceRecord?.status, "LoginButton could not finish the DCR /register flow yet."])}`
+      `DCR client: not created`,
+      `Result: ${firstNonEmptyString([
+        client.error,
+        "LoginButton did not mint a DCR client_id for this premium service yet."
+      ])}`
     ].join("\n");
   }
 
