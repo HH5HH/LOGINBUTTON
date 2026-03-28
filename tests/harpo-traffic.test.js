@@ -227,6 +227,29 @@ test("HARPO maps legacy sp.auth regcode and indiv device calls to legacy migrati
   assert.match(indivClassification.pass.migration.replacementCalls[0].doc.url, /sso-service/);
 });
 
+test("HARPO treats sp.auth SAMLAssertionConsumer as legacy background Adobe Pass plumbing", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const classification = helpers.classifyHarpoEntry({
+    request: {
+      method: "POST",
+      url: "https://sp.auth.adobe.com/sp/saml/SAMLAssertionConsumer"
+    },
+    _resourceType: "Document"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    mvpdGateOpen: true
+  });
+
+  assert.equal(classification.phase, "SSO");
+  assert.equal(classification.pass.family, "legacy-v1");
+  assert.equal(classification.pass.endpointId, "legacy-sp-saml-assertion-consumer");
+  assert.equal(classification.pass.support.status, "legacy");
+  assert.equal(classification.pass.migration.title, "Modern correlation");
+  assert.match(String(classification.pass.notes[0] || ""), /do not treat this as an active REST API V2 learning endpoint/i);
+});
+
 test("HARPO drops known Adobe analytics noise before generic Adobe classification", async () => {
   const helpers = await loadHarpoTrafficHelpers();
   const classification = helpers.classifyHarpoEntry({

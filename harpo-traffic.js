@@ -176,6 +176,14 @@ const PASS_DOCS = Object.freeze({
   legacyFreePreview: {
     label: "Legacy TempPass free preview",
     url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/legacy/rest-api-v1/rest-api-v1-apis/free-preview-for-temp-pass-and-promotional-temp-pass"
+  },
+  legacyMonitoring: {
+    label: "Legacy monitoring guidance",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/legacy/tech-notes/troubleshooting/monitoring-adobe-pay-tv-pass"
+  },
+  legacyPassiveAuthn: {
+    label: "Legacy passive authentication",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/legacy/sso-access/sso-passive-authn"
   }
 });
 
@@ -412,6 +420,44 @@ const PASS_RULES = [
     match({ hostname, pathname }) {
       return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) &&
         matchPath(pathname, /^\/reggie\/v1\/([^/]+)\/regcode(?:\/([^/]+))?\/?$/);
+    }
+  },
+  {
+    id: "legacy-sp-saml-assertion-consumer",
+    methods: ["GET", "POST"],
+    phase: "SSO",
+    label: "Legacy SAML Assertion Consumer",
+    family: "legacy-v1",
+    familyLabel: "Legacy Host / V1",
+    pathTemplate: "/sp/saml/SAMLAssertionConsumer",
+    summary: "Background SAML assertion consumer on the legacy sp.auth host.",
+    purpose: "Accept MVPD SAML responses for older Adobe Pass browser and passive-authentication flows running behind the scenes.",
+    docs: [PASS_DOCS.legacyMonitoring, PASS_DOCS.legacyPassiveAuthn, PASS_DOCS.legacyOverview],
+    notes: [
+      "Do not treat this as an active REST API V2 learning endpoint in HARPO.",
+      "Adobe documents that this endpoint should not be monitored because it requires a real MVPD SAML response and otherwise returns 503.",
+      "This is legacy Adobe Pass SAML plumbing, not a customer-facing DCR or REST API V2 operation."
+    ],
+    migration: {
+      title: "Modern correlation",
+      summary: "Correlate this legacy callback to the supported REST API V2 authentication flow, but do not model the ACS callback itself as a learnable REST V2 call.",
+      replacementCalls: [
+        {
+          method: "GUIDE",
+          pathTemplate: "REST API V2 create authentication session",
+          label: "Create authentication session",
+          doc: PASS_DOCS.sessionsCreate
+        },
+        {
+          method: "GUIDE",
+          pathTemplate: "REST API V2 perform authentication in user agent",
+          label: "Perform authentication in user agent",
+          doc: PASS_DOCS.authenticateUserAgent
+        }
+      ]
+    },
+    match({ hostname, pathname }) {
+      return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) && pathname === "/sp/saml/SAMLAssertionConsumer";
     }
   },
   {
