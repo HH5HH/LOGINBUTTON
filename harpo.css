@@ -1,0 +1,991 @@
+/* ─── HARPO Workspace ─────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body.harpo-body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--spectrum-background-pasteboard-color);
+  color: var(--spectrum-neutral-content-color-default);
+  font-family: var(--spectrum-body-font-family, sans-serif);
+}
+
+/* ─── Top Bar ─────────────────────────────────────────────────────────────── */
+
+.harpo-topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "identity meta actions"
+    "filters filters filters";
+  align-items: center;
+  gap: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-400);
+  min-height: 48px;
+  background: var(--spectrum-background-layer-1-color);
+  border-bottom: 1px solid var(--spectrum-gray-300);
+  flex-shrink: 0;
+}
+
+.harpo-topbar-identity {
+  grid-area: identity;
+  display: flex;
+  align-items: baseline;
+  gap: var(--spectrum-spacing-200);
+  flex-shrink: 0;
+}
+
+.harpo-wordmark {
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--spectrum-accent-color-900);
+  text-transform: uppercase;
+}
+
+.harpo-subtitle {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-topbar-meta {
+  grid-area: meta;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harpo-topbar-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-200);
+  flex-shrink: 0;
+  justify-self: end;
+}
+
+/* ─── Filter Bar ──────────────────────────────────────────────────────────── */
+
+.harpo-filterBar {
+  grid-area: filters;
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-200);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.harpo-filterLabel {
+  flex-shrink: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-filterPicker {
+  position: relative;
+  width: min(340px, 100%);
+  max-width: 100%;
+}
+
+.harpo-filterPicker::after {
+  content: "▾";
+  position: absolute;
+  top: 50%;
+  right: var(--spectrum-spacing-200);
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  pointer-events: none;
+}
+
+.harpo-filterSelect {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 calc(var(--spectrum-spacing-300) + 14px) 0 var(--spectrum-spacing-200);
+  border: 1px solid var(--spectrum-gray-400);
+  border-radius: var(--spectrum-corner-radius-200);
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-content-color-default);
+  font: inherit;
+  font-size: 0.78rem;
+  appearance: none;
+  cursor: pointer;
+}
+
+.harpo-filterSelect:hover {
+  border-color: var(--spectrum-gray-500);
+}
+
+.harpo-filterSelect:focus {
+  outline: 2px solid var(--spectrum-accent-color-700);
+  outline-offset: 1px;
+}
+
+.harpo-statusFilters {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-150);
+  min-width: 0;
+}
+
+.harpo-statusFilterPills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.harpo-filterPill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--spectrum-gray-300);
+  border-radius: 999px;
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-content-color-default);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.08s, border-color 0.08s, color 0.08s;
+}
+
+.harpo-filterPill:hover {
+  background: var(--spectrum-gray-100);
+  border-color: var(--spectrum-gray-400);
+}
+
+.harpo-filterPill--active {
+  background: var(--spectrum-accent-color-800);
+  border-color: var(--spectrum-accent-color-800);
+  color: #fff;
+}
+
+.harpo-filterPill-label {
+  white-space: nowrap;
+}
+
+/* ─── Workspace Layout ────────────────────────────────────────────────────── */
+
+.harpo-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+
+.harpo-sidebar {
+  width: 340px;
+  min-width: 260px;
+  max-width: 420px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--spectrum-gray-300);
+  background: var(--spectrum-background-layer-1-color);
+  overflow: hidden;
+}
+
+/* ─── Phase Chips (used inline in call list items) ────────────────────────── */
+
+.harpo-phaseChip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.1s;
+}
+
+/* ─── Call List ───────────────────────────────────────────────────────────── */
+
+.harpo-callList {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--spectrum-background-layer-1-color);
+}
+
+.harpo-callItem {
+  --harpo-callItem-bg: var(--spectrum-background-layer-1-color);
+  display: grid;
+  grid-template-columns: 38px 1fr 42px;
+  grid-template-rows: auto auto;
+  gap: 0 6px;
+  padding: 7px var(--spectrum-spacing-300);
+  background: var(--harpo-callItem-bg);
+  border-bottom: 1px solid var(--spectrum-gray-200);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.08s, box-shadow 0.08s;
+}
+
+.harpo-callItem:nth-child(even) {
+  --harpo-callItem-bg: var(--spectrum-gray-75, var(--spectrum-gray-100));
+}
+
+.harpo-callItem:hover {
+  --harpo-callItem-bg: var(--spectrum-gray-100);
+}
+
+.harpo-callItem--selected {
+  --harpo-callItem-bg: var(--spectrum-accent-color-200);
+}
+
+.harpo-callItem--error {
+  --harpo-callItem-bg: var(--spectrum-negative-color-100);
+  border-left-color: var(--spectrum-negative-color-700);
+  box-shadow: inset 0 0 0 1px var(--spectrum-negative-color-200);
+}
+
+.harpo-callItem--error:hover,
+.harpo-callItem--selected.harpo-callItem--error {
+  --harpo-callItem-bg: var(--spectrum-negative-color-200);
+}
+
+.harpo-callItem--selected.harpo-callItem--error {
+  box-shadow: inset 0 0 0 1px var(--spectrum-negative-color-400);
+}
+
+.harpo-callMethod {
+  grid-row: 1 / 3;
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+  border-radius: 3px;
+  text-align: center;
+  line-height: 1;
+}
+
+.harpo-callMethod--GET    { background: #d4edda; color: #1a5c2a; }
+.harpo-callMethod--POST   { background: #cce5ff; color: #003d80; }
+.harpo-callMethod--DELETE { background: #f8d7da; color: #721c24; }
+.harpo-callMethod--PUT    { background: #fff3cd; color: #856404; }
+.harpo-callMethod--OTHER  { background: var(--spectrum-gray-200); color: var(--spectrum-gray-700); }
+
+.harpo-callPath {
+  grid-row: 1;
+  grid-column: 2;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--spectrum-neutral-content-color-default);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.harpo-callClassification {
+  grid-row: 2;
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 0.65rem;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  line-height: 1.3;
+}
+
+.harpo-callClassificationText {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harpo-domainChip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 150px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--spectrum-gray-300);
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harpo-callStatus {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.harpo-callStatus--2xx { color: #1a5c2a; }
+.harpo-callStatus--3xx { color: #856404; }
+.harpo-callStatus--4xx { color: #721c24; }
+.harpo-callStatus--5xx { color: #6f1010; }
+.harpo-callStatus--0   { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* ─── Empty / Loading States ──────────────────────────────────────────────── */
+
+.harpo-empty {
+  padding: var(--spectrum-spacing-600) var(--spectrum-spacing-400);
+  text-align: center;
+}
+
+.harpo-empty-title {
+  margin: 0 0 var(--spectrum-spacing-200);
+}
+
+.harpo-empty-body {
+  margin: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+/* ─── Detail Panel ────────────────────────────────────────────────────────── */
+
+.harpo-detail {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--spectrum-spacing-400);
+  background: var(--spectrum-background-pasteboard-color);
+}
+
+.harpo-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--spectrum-spacing-200);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  text-align: center;
+}
+
+.harpo-detail-emptyTitle,
+.harpo-detail-emptyBody {
+  margin: 0;
+}
+
+/* ─── Detail Card ─────────────────────────────────────────────────────────── */
+
+.harpo-detailCard {
+  background: var(--spectrum-background-layer-1-color);
+  border: 1px solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-200);
+  margin-bottom: var(--spectrum-spacing-300);
+  overflow: hidden;
+}
+
+.harpo-detailCard-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-200);
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  background: var(--spectrum-gray-100);
+  border-bottom: 1px solid var(--spectrum-gray-200);
+  cursor: pointer;
+  user-select: none;
+}
+
+.harpo-detailCard-title {
+  flex: 1;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-detailCard-toggle {
+  font-size: 0.7rem;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  transition: transform 0.15s;
+}
+
+.harpo-detailCard-toggle--open {
+  transform: rotate(180deg);
+}
+
+.harpo-detailCard-body {
+  padding: var(--spectrum-spacing-300);
+}
+
+.harpo-detailCard-body[hidden] {
+  display: none;
+}
+
+/* ─── Detail URL Row ──────────────────────────────────────────────────────── */
+
+.harpo-detailUrl {
+  background: var(--spectrum-background-layer-1-color);
+  border: 1px solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-200);
+  padding: var(--spectrum-spacing-300);
+  margin-bottom: var(--spectrum-spacing-300);
+}
+
+.harpo-detailUrl-method-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-200);
+  margin-bottom: var(--spectrum-spacing-200);
+  flex-wrap: wrap;
+}
+
+.harpo-methodBadge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+
+.harpo-statusBadge {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.harpo-statusBadge--2xx { color: #1a5c2a; }
+.harpo-statusBadge--3xx { color: #856404; }
+.harpo-statusBadge--4xx { color: #b00020; }
+.harpo-statusBadge--5xx { color: #6f1010; }
+
+.harpo-timingBadge {
+  font-size: 0.72rem;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-detailDomainRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-200);
+  flex-wrap: wrap;
+}
+
+.harpo-detailUrl-full {
+  font-size: 0.76rem;
+  font-family: monospace;
+  word-break: break-all;
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border-radius: 3px;
+  user-select: all;
+}
+
+/* ─── Analysis Card ───────────────────────────────────────────────────────── */
+
+.harpo-analysisCard {
+  border-left: 4px solid var(--spectrum-accent-color-700);
+}
+
+.harpo-analysisCard--legacy {
+  border-left-color: var(--spectrum-negative-color-700);
+}
+
+.harpo-analysisBadgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-200);
+}
+
+.harpo-analysisBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.harpo-analysisBadge--modern {
+  background: var(--spectrum-accent-color-200);
+  color: var(--spectrum-accent-color-900);
+}
+
+.harpo-analysisBadge--dcr {
+  background: var(--spectrum-positive-color-100);
+  color: var(--spectrum-positive-color-900);
+}
+
+.harpo-analysisBadge--legacy,
+.harpo-analysisBadge--unsupported {
+  background: var(--spectrum-negative-color-100);
+  color: var(--spectrum-negative-color-900);
+}
+
+.harpo-analysisBadge--supported {
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-neutral-content-color-default);
+  border-color: var(--spectrum-gray-300);
+}
+
+.harpo-analysisBadge--phase {
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-neutral-content-color-default);
+  border-color: var(--spectrum-gray-300);
+}
+
+.harpo-analysisLead {
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-analysisSection {
+  margin-top: var(--spectrum-spacing-300);
+}
+
+.harpo-analysisSection-title {
+  margin-bottom: var(--spectrum-spacing-100);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-analysisParagraph {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-analysisPhase {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-bottom: var(--spectrum-spacing-100);
+}
+
+.harpo-analysisDesc {
+  font-size: 0.82rem;
+  color: var(--spectrum-neutral-content-color-default);
+  line-height: 1.5;
+}
+
+.harpo-analysisDesc--spaced {
+  margin-left: 8px;
+}
+
+.harpo-analysisAnnotations {
+  margin-top: var(--spectrum-spacing-200);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.harpo-analysisList {
+  margin: 0;
+  padding-left: var(--spectrum-spacing-300);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spectrum-spacing-100);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.harpo-annotation {
+  display: flex;
+  gap: var(--spectrum-spacing-100);
+  font-size: 0.76rem;
+}
+
+.harpo-annotation-key {
+  font-weight: 600;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  flex-shrink: 0;
+}
+
+.harpo-annotation-value {
+  color: var(--spectrum-neutral-content-color-default);
+  word-break: break-all;
+  font-family: monospace;
+}
+
+.harpo-docLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spectrum-spacing-150);
+}
+
+.harpo-docLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--spectrum-spacing-200);
+  border-radius: 999px;
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-accent-color-900);
+  border: 1px solid var(--spectrum-gray-300);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.harpo-docLink:hover {
+  background: var(--spectrum-accent-color-200);
+  border-color: var(--spectrum-accent-color-400);
+}
+
+.harpo-docLink--inline {
+  align-self: flex-start;
+}
+
+.harpo-inlineLink {
+  color: var(--spectrum-accent-color-900);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.harpo-inlineLink:hover {
+  color: var(--spectrum-accent-color-1000, var(--spectrum-accent-color-900));
+}
+
+.harpo-migrationBox {
+  margin-top: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-300);
+  border-radius: var(--spectrum-corner-radius-200);
+  border: 1px solid var(--spectrum-negative-color-300);
+  background: var(--spectrum-negative-color-100);
+}
+
+.harpo-migrationBox-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--spectrum-negative-color-900);
+}
+
+.harpo-migrationBox-copy {
+  margin: var(--spectrum-spacing-100) 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-migrationCalls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spectrum-spacing-200);
+  margin-top: var(--spectrum-spacing-200);
+}
+
+.harpo-migrationCall {
+  padding: var(--spectrum-spacing-200);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--spectrum-negative-color-200);
+}
+
+.harpo-migrationCall-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-100);
+}
+
+.harpo-migrationMethod {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--spectrum-negative-color-200);
+  color: var(--spectrum-negative-color-900);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.harpo-migrationLabel {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-migrationPath {
+  margin-bottom: var(--spectrum-spacing-100);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-150);
+  border-radius: 4px;
+  background: var(--spectrum-gray-100);
+  font-size: 0.75rem;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+/* ─── Headers / Body Tables ───────────────────────────────────────────────── */
+
+.harpo-kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.harpo-kv-table tr:not(:last-child) td {
+  border-bottom: 1px solid var(--spectrum-gray-200);
+}
+
+.harpo-kv-table td {
+  padding: 4px 6px;
+  vertical-align: top;
+  line-height: 1.4;
+}
+
+.harpo-kv-table td:first-child {
+  font-weight: 600;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  white-space: nowrap;
+  width: 38%;
+  word-break: break-word;
+}
+
+.harpo-kv-table td:last-child {
+  font-family: monospace;
+  word-break: break-all;
+  color: var(--spectrum-neutral-content-color-default);
+}
+
+.harpo-detailSubsection + .harpo-detailSubsection {
+  margin-top: var(--spectrum-spacing-300);
+  padding-top: var(--spectrum-spacing-300);
+  border-top: 1px solid var(--spectrum-gray-200);
+}
+
+.harpo-detailSubsection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spectrum-spacing-200);
+  margin-bottom: var(--spectrum-spacing-150);
+}
+
+.harpo-detailSubsection-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-detailSubsection-meta {
+  font-size: 0.72rem;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-detailEmptyNote,
+.harpo-payloadNotice {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+.harpo-payloadNotice {
+  padding: var(--spectrum-spacing-200);
+  border-radius: 4px;
+  background: var(--spectrum-gray-100);
+}
+
+.harpo-payloadMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-200);
+}
+
+.harpo-payloadBadge,
+.harpo-payloadMetaItem {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+}
+
+.harpo-payloadBadge {
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-neutral-content-color-default);
+  border: 1px solid var(--spectrum-gray-300);
+  font-weight: 700;
+}
+
+.harpo-payloadMetaItem {
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+/* ─── Body / JSON viewer ──────────────────────────────────────────────────── */
+
+.harpo-bodyViewer {
+  font-family: monospace;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--spectrum-gray-100);
+  padding: var(--spectrum-spacing-200);
+  border-radius: 4px;
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.harpo-bodyViewer--xml {
+  border: 1px solid var(--spectrum-blue-300);
+  background: var(--spectrum-blue-50);
+}
+
+.harpo-samlMessages {
+  display: grid;
+  gap: var(--spectrum-spacing-300);
+}
+
+.harpo-samlMessage {
+  padding: var(--spectrum-spacing-250);
+  border-radius: 8px;
+  border: 1px solid var(--spectrum-blue-200);
+  background: var(--spectrum-background-layer-2-color);
+}
+
+.harpo-samlMessage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spectrum-spacing-150);
+  margin-bottom: var(--spectrum-spacing-150);
+}
+
+.harpo-samlFieldName {
+  font-family: monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--spectrum-blue-800);
+  word-break: break-all;
+}
+
+.harpo-samlDecodeMethod {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--spectrum-blue-100);
+  color: var(--spectrum-blue-800);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.harpo-samlLabel {
+  margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-100);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+/* ─── Phase color tokens ──────────────────────────────────────────────────── */
+
+.harpo-phase--DCR      { background: #d4edda; color: #1a5c2a; }
+.harpo-phase--Config   { background: #e2d9f3; color: #3a0ca3; }
+.harpo-phase--AuthN    { background: #cce5ff; color: #003d80; }
+.harpo-phase--Profiles { background: #d1ecf1; color: #0c5460; }
+.harpo-phase--PreAuth  { background: #fff3cd; color: #856404; }
+.harpo-phase--AuthZ    { background: #ffe0b2; color: #7a3900; }
+.harpo-phase--Logout   { background: #f8d7da; color: #721c24; }
+.harpo-phase--SSO      { background: #e8f5e9; color: #1b5e20; }
+.harpo-phase--IMS      { background: #fce4ec; color: #880e4f; }
+.harpo-phase--MVPD     { background: #ede7f6; color: #4527a0; }
+.harpo-phase--Pass     { background: #e9e7ff; color: #4338ca; }
+.harpo-phase--Other       { background: var(--spectrum-gray-200); color: var(--spectrum-gray-700); }
+.harpo-phase--Programmer  { background: #e3f2fd; color: #0d47a1; }
+
+@media (max-width: 900px) {
+  .harpo-topbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "identity"
+      "meta"
+      "actions"
+      "filters";
+    align-items: start;
+  }
+
+  .harpo-topbar-actions {
+    justify-self: start;
+  }
+
+  .harpo-filterBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .harpo-filterPicker {
+    width: 100%;
+  }
+
+  .harpo-statusFilters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ─── Side Panel HARPO Section ─────────────────────────────────────────────── */
+
+.harpo-modeRow {
+  display: flex;
+  justify-content: center;
+  gap: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-200) 0;
+}
+
+.harpo-modeSlot {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.harpo-modeBtn {
+  width: 100%;
+}

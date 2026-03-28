@@ -6,6 +6,7 @@
     <title>Login Button</title>
     <link rel="stylesheet" href="spectrum.css">
     <link rel="stylesheet" href="app.css">
+    <link rel="stylesheet" href="harpo.css">
   </head>
   <body class="spectrum spectrum--medium spectrum--light">
     <main class="app-shell">
@@ -307,6 +308,108 @@
                 </div>
               </div>
 
+              <!-- ═══════════════════════════════════════════════════════════
+                   HARPO — HAR & Pass Observatory
+                   Visible only when selected Programmer has REST API V2.
+                   Controlled by syncHarpoSection() in app.js.
+                   ═══════════════════════════════════════════════════════════ -->
+              <div id="harpoContainer" class="org-pickerCompact harpo-sidePanelSection" hidden>
+                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">HARPO</p>
+
+                <div class="harpo-sidePanelSurface" aria-live="polite">
+                  <article class="premium-serviceCard harpo-card" id="harpoCard">
+                    <button
+                      id="harpoToggle"
+                      type="button"
+                      class="premium-serviceToggle"
+                      aria-expanded="false"
+                      aria-controls="harpoBody"
+                    >
+                      <span class="premium-serviceHeaderCopy">
+                        <span class="premium-serviceTitle">HARPO</span>
+                        <span class="premium-serviceMeta" id="harpoToggleMeta">HAR &amp; Pass Observatory — analyze Pass traffic</span>
+                      </span>
+                      <span class="premium-serviceIcon" aria-hidden="true">▼</span>
+                    </button>
+
+                    <div id="harpoBody" class="premium-serviceBody" hidden>
+
+                      <!-- HAR / REPRO mode buttons -->
+                      <div class="harpo-modeRow">
+                        <div
+                          id="harpoHarDropZone"
+                          class="harpo-modeSlot"
+                          role="button"
+                          tabindex="0"
+                          aria-label="Upload a HAR file"
+                          title="Click to browse or drop a .har file"
+                        >
+                          <input id="harpoHarFileInput" type="file" accept=".har,application/json" hidden>
+                          <button
+                            id="harpoHarButton"
+                            type="button"
+                            class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                          >
+                            <span class="spectrum-Button-label">⬆ HAR</span>
+                          </button>
+                        </div>
+
+                        <div class="harpo-modeSlot">
+                          <button
+                            id="harpoReproButton"
+                            type="button"
+                            class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                          >
+                            <span class="spectrum-Button-label">▶ REPRO</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <!-- REPRO domain picker (shown when REPRO clicked) -->
+                      <div id="harpoReproSection" class="harpo-reproSection" hidden>
+                        <div class="org-pickerControl" style="margin-top: var(--spectrum-spacing-200)">
+                          <select id="harpoDomainPicker" class="org-pickerSelect" aria-label="Select a programmer domain">
+                            <option value="">Choose a domain…</option>
+                          </select>
+                          <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                        </div>
+
+                        <button
+                          id="harpoLaunchButton"
+                          type="button"
+                          class="spectrum-Button spectrum-Button--fill spectrum-Button--accent spectrum-Button--sizeM harpo-launchBtn"
+                          disabled
+                        >
+                          <span class="spectrum-Button-label">LAUNCH &amp; RECORD</span>
+                        </button>
+                      </div>
+
+                      <!-- Recording active state -->
+                      <div id="harpoRecordingSection" class="harpo-recordingSection" hidden>
+                        <div class="harpo-recordingIndicator">
+                          <span class="harpo-recordingDot" aria-hidden="true"></span>
+                          <span class="spectrum-Body spectrum-Body--sizeS harpo-recordingLabel">
+                            Recording — <span id="harpoCallCount">0</span> calls captured
+                          </span>
+                        </div>
+                        <button
+                          id="harpoStopButton"
+                          type="button"
+                          class="spectrum-Button spectrum-Button--fill spectrum-Button--negative spectrum-Button--sizeM harpo-stopBtn"
+                        >
+                          <span class="spectrum-Button-label">⬛ STOP &amp; OPEN WORKSPACE</span>
+                        </button>
+                      </div>
+
+                      <!-- Status / error line -->
+                      <p id="harpoStatus" class="spectrum-Body spectrum-Body--sizeS harpo-status" hidden></p>
+
+                    </div>
+                  </article>
+                </div>
+              </div>
+              <!-- ═══════════════════════════════════════════════ END HARPO -->
+
               <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
                 <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
 
@@ -314,6 +417,7 @@
                   <div id="premiumServicesList" class="premium-servicesList" hidden></div>
                 </div>
               </div>
+
             </section>
 
             <p id="organizationPickerMeta" class="spectrum-Body spectrum-Body--sizeS org-pickerMeta" hidden>

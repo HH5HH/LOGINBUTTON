@@ -153,6 +153,11 @@ test("authenticated CM and Programmer controls live in separate field containers
   assert.match(appMarkup, /id="registeredApplicationPickerContainer"/);
   assert.match(appMarkup, /id="requestorPickerContainer"/);
   assert.match(appMarkup, /id="premiumServicesContainer"/);
+  assert.match(appMarkup, /id="harpoContainer"/);
+  assert.ok(
+    appMarkup.indexOf('id="harpoContainer"') < appMarkup.indexOf('id="premiumServicesContainer"'),
+    "HARPO should render before Premium Services in the sidepanel"
+  );
   assert.match(appSource, /function syncAuthenticatedFieldGroups\(\)/);
   assert.match(appSource, /cmFieldGroup\.hidden = \[cmuTokenSection, cmTenantPickerSection\]/);
   assert.match(

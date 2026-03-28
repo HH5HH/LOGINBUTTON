@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HARPO Workspace</title>
+    <link rel="stylesheet" href="spectrum.css">
+    <link rel="stylesheet" href="harpo.css">
+  </head>
+  <body class="spectrum spectrum--medium spectrum--light harpo-body">
+
+    <header class="harpo-topbar">
+      <div class="harpo-topbar-identity">
+        <span class="harpo-wordmark">HARPO</span>
+        <span class="harpo-subtitle spectrum-Detail spectrum-Detail--sizeM">HAR &amp; Pass Observatory</span>
+      </div>
+      <div id="harpoMeta" class="harpo-topbar-meta"></div>
+      <div class="harpo-topbar-actions">
+        <button id="harpoDownloadBtn" class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM" type="button" hidden>
+          <span class="spectrum-Button-label">⬇ DOWNLOAD HAR</span>
+        </button>
+      </div>
+      <div id="harpoFilterBar" class="harpo-filterBar" hidden>
+        <label for="harpoDomainFilter" class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Domain</label>
+        <div class="harpo-filterPicker">
+          <select id="harpoDomainFilter" class="harpo-filterSelect" aria-label="Domain filter">
+            <option value="all">ALL</option>
+          </select>
+        </div>
+        <div id="harpoStatusFilters" class="harpo-statusFilters" aria-label="Status filters">
+          <span class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Status</span>
+          <div id="harpoStatusFilterPills" class="harpo-statusFilterPills" role="group" aria-label="HTTP status filters"></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="harpo-workspace">
+
+      <aside class="harpo-sidebar">
+        <div id="harpoCallList" class="harpo-callList" role="list" aria-label="Network calls">
+          <div class="harpo-empty">
+            <p class="spectrum-Heading spectrum-Heading--sizeM harpo-empty-title">Loading HAR…</p>
+            <p class="spectrum-Body spectrum-Body--sizeS harpo-empty-body" id="harpoLoadStatus">Reading session data.</p>
+          </div>
+        </div>
+      </aside>
+
+      <main class="harpo-detail" id="harpoDetail">
+        <div class="harpo-detail-empty">
+          <p class="spectrum-Heading spectrum-Heading--sizeL harpo-detail-emptyTitle">Select a call</p>
+          <p class="spectrum-Body spectrum-Body--sizeM harpo-detail-emptyBody">Click any network entry on the left to inspect its request, response, and Pass analysis.</p>
+        </div>
+      </main>
+
+    </div>
+
+    <script src="adobe-pass-decode-helpers.js"></script>
+    <script type="module" src="harpo.js"></script>
+  </body>
+</html>
