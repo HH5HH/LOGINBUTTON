@@ -86,6 +86,8 @@ const REGISTERED_APPLICATION_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_re
 const REGISTERED_APPLICATION_PICKER_UNAVAILABLE_VALUE = "__loginbutton_registered_application_unavailable__";
 const REQUESTOR_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_requestor__";
 const REQUESTOR_PICKER_UNAVAILABLE_VALUE = "__loginbutton_requestor_unavailable__";
+const MVPD_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_mvpd__";
+const MVPD_PICKER_UNAVAILABLE_VALUE = "__loginbutton_mvpd_unavailable__";
 const IMS_ORG_DISCOVERY_SCOPE = "read_organizations";
 const ADOBE_PASS_TENANT_ID = "adobepass";
 const ADOBE_PASS_DISPLAY_NAME = "Adobe Pass";
@@ -100,6 +102,9 @@ const UNIFIED_SHELL_OPERATION_NAME = "loginButtonShellInitDataQuery";
 const CM_BASE_URL = "https://config.adobeprimetime.com";
 const CM_REPORTS_BASE_URL = "https://cm-reports.adobeprimetime.com";
 const ADOBE_SP_BASE_URL = "https://sp.auth.adobe.com";
+const ADOBE_SP_STAGING_BASE_URL = "https://sp.auth-staging.adobe.com";
+const ADOBE_API_BASE_URL = "https://api.auth.adobe.com";
+const ADOBE_API_STAGING_BASE_URL = "https://api.auth-staging.adobe.com";
 const CM_TENANTS_PATH = "/core/tenants";
 const DCR_REGISTER_PATH = "/o/client/register";
 const DCR_TOKEN_PATH = "/o/client/token";
@@ -137,6 +142,7 @@ const HARPO_MESSAGE_STOP   = "harpo:stopRecording";
 const HARPO_MESSAGE_STATUS = "harpo:recordingStatus";
 const HARPO_STORAGE_PREFIX = "harpo:";
 const HARPO_DOMAIN_PICKER_PLACEHOLDER = "__harpo_choose_domain__";
+const LOGINBUTTON_REST_V2_DEVICE_ID_STORAGE_KEY = "loginbutton_restv2_device_id_v1";
 const REGISTERED_APPLICATION_SCOPE_LABELS = {
   "api:client:v2": "REST API V2",
   "analytics:client": "ESM",
@@ -146,6 +152,83 @@ const REGISTERED_APPLICATION_SCOPE_LABELS = {
   "idp:owner": "Proxy MVPD push",
   "cmu:analytics:client": "CMU"
 };
+const REGISTERED_APPLICATION_SCOPE_ALIAS_BY_LABEL = Object.freeze(
+  Object.fromEntries(
+    Object.entries(REGISTERED_APPLICATION_SCOPE_LABELS).flatMap(([scope, label]) => [
+      [String(scope || "").trim().toLowerCase(), scope],
+      [String(label || "").trim().toLowerCase(), scope]
+    ])
+  )
+);
+const KNOWN_REGISTERED_APPLICATION_SCOPES = Object.freeze(Object.keys(REGISTERED_APPLICATION_SCOPE_LABELS));
+const REGISTERED_APPLICATION_SCOPE_FIELD_PATHS = Object.freeze([
+  ["scopes"],
+  ["scope"],
+  ["scopeSet"],
+  ["scopeList"],
+  ["permissions"],
+  ["client", "scopes"],
+  ["client", "scope"],
+  ["client", "scopeSet"],
+  ["client", "scopeList"],
+  ["client", "permissions"],
+  ["clientApplication", "scopes"],
+  ["clientApplication", "scope"],
+  ["clientApplication", "scopeSet"],
+  ["clientApplication", "scopeList"],
+  ["clientApplication", "permissions"],
+  ["credentials", "scopes"],
+  ["credentials", "scope"],
+  ["credentials", "scopeSet"],
+  ["credentials", "scopeList"],
+  ["credentials", "permissions"],
+  ["dcr", "scopes"],
+  ["dcr", "scope"],
+  ["dcr", "scopeSet"],
+  ["dcr", "scopeList"],
+  ["dcr", "permissions"],
+  ["oauth", "scopes"],
+  ["oauth", "scope"],
+  ["oauth", "scopeSet"],
+  ["oauth", "scopeList"],
+  ["oauth", "permissions"],
+  ["registeredClient", "scopes"],
+  ["registeredClient", "scope"],
+  ["registeredClient", "scopeSet"],
+  ["registeredClient", "scopeList"],
+  ["registeredClient", "permissions"],
+  ["__rawEnvelope", "entityData", "scopes"],
+  ["__rawEnvelope", "entityData", "scope"],
+  ["__rawEnvelope", "entityData", "scopeSet"],
+  ["__rawEnvelope", "entityData", "scopeList"],
+  ["__rawEnvelope", "entityData", "permissions"],
+  ["__rawEnvelope", "scopes"],
+  ["__rawEnvelope", "scope"],
+  ["__rawEnvelope", "scopeSet"],
+  ["__rawEnvelope", "scopeList"],
+  ["__rawEnvelope", "permissions"]
+]);
+const REGISTERED_APPLICATION_SCOPE_RELEVANT_FIELD_PATHS = Object.freeze([
+  ["client"],
+  ["clientApplication"],
+  ["registeredClient"],
+  ["credentials"],
+  ["dcr"],
+  ["oauth"],
+  ["software"],
+  ["claims"],
+  ["softwareStatementClaims"],
+  ["software_statement_claims"],
+  ["__rawEnvelope"],
+  ["__rawEnvelope", "entityData"],
+  ["__rawEnvelope", "entityData", "client"],
+  ["__rawEnvelope", "entityData", "clientApplication"],
+  ["__rawEnvelope", "entityData", "registeredClient"],
+  ["__rawEnvelope", "entityData", "credentials"],
+  ["__rawEnvelope", "entityData", "dcr"],
+  ["__rawEnvelope", "entityData", "oauth"],
+  ["__rawEnvelope", "entityData", "software"]
+]);
 const CMU_TOKEN_HEADER_NAME = "Authorization";
 const CMU_TOKEN_HEADER_SCHEME = "Bearer";
 const CM_TOKEN_REFRESH_SKEW_MS = 45 * 1000;
@@ -246,17 +329,23 @@ const avatarMenuUserDataList = document.getElementById("avatarMenuUserDataList")
 const detectedOrganizationPicker = document.getElementById("detectedOrganizationPicker");
 const detectedOrganizationPickerSection = document.getElementById("detectedOrganizationPickerContainer");
 const cmFieldGroup = document.getElementById("cmFieldGroup");
+const cmFieldGroupToggle = document.getElementById("cmFieldGroupToggle");
+const cmFieldGroupBody = document.getElementById("cmFieldGroupBody");
 const cmuTokenSection = document.getElementById("cmuTokenContainer");
 const cmuTokenHeaderValue = document.getElementById("cmuTokenValue");
 const cmTenantPicker = document.getElementById("cmTenantPicker");
 const cmTenantPickerSection = document.getElementById("cmTenantPickerContainer");
 const organizationPicker = document.getElementById("organizationPicker");
 const programmerFieldGroup = document.getElementById("programmerFieldGroup");
+const programmerFieldGroupToggle = document.getElementById("programmerFieldGroupToggle");
+const programmerFieldGroupBody = document.getElementById("programmerFieldGroupBody");
 const programmerPickerSection = document.getElementById("programmerPickerContainer");
 const premiumServicesSection = document.getElementById("premiumServicesContainer");
 const premiumServicesList = document.getElementById("premiumServicesList");
 const requestorPicker = document.getElementById("requestorPicker");
 const requestorPickerSection = document.getElementById("requestorPickerContainer");
+const mvpdPicker = document.getElementById("mvpdPicker");
+const mvpdPickerSection = document.getElementById("mvpdPickerContainer");
 const registeredApplicationPicker = document.getElementById("registeredApplicationPicker");
 const registeredApplicationPickerSection = document.getElementById("registeredApplicationPickerContainer");
 const organizationCardList = document.getElementById("organizationCardList");
@@ -287,9 +376,10 @@ const harpoHarDropZone      = document.getElementById("harpoHarDropZone");
 const harpoReproButton      = document.getElementById("harpoReproButton");
 const harpoReproSection     = document.getElementById("harpoReproSection");
 const harpoDomainPicker     = document.getElementById("harpoDomainPicker");
-const harpoLaunchButton     = document.getElementById("harpoLaunchButton");
+const harpoRecordToggleButton = document.getElementById("harpoRecordToggleButton");
+const harpoRecordToggleIcon = document.getElementById("harpoRecordToggleIcon");
+const harpoRecordToggleLabel = document.getElementById("harpoRecordToggleLabel");
 const harpoRecordingSection = document.getElementById("harpoRecordingSection");
-const harpoStopButton       = document.getElementById("harpoStopButton");
 const harpoCallCount        = document.getElementById("harpoCallCount");
 const harpoStatus           = document.getElementById("harpoStatus");
 
@@ -300,6 +390,24 @@ const INTERACTIVE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const INTERACTIVE_AUTH_POPUP_WIDTH = 560;
 const INTERACTIVE_AUTH_POPUP_HEIGHT = 760;
 const COPY_DEBUG_RESET_DELAY_MS = 1600;
+
+function createEmptyHarpoRequestorConfiguration() {
+  return {
+    key: "",
+    programmerId: "",
+    requestorId: "",
+    requestorLabel: "",
+    status: "idle",
+    domains: [],
+    reproDomains: [],
+    safeDomains: [],
+    mvpds: [],
+    fetchedAt: "",
+    requestUrl: "",
+    error: "",
+    raw: null
+  };
+}
 
 const state = {
   session: null,
@@ -340,10 +448,13 @@ const state = {
   dragActive: false,
   postLoginHydrationInFlight: false,
   vaultTransferBusy: false,
+  programmerFieldGroupCollapsed: false,
+  cmFieldGroupCollapsed: false,
   selectedCmTenantId: "",
   selectedProgrammerId: "",
   selectedRegisteredApplicationId: "",
   selectedRequestorId: "",
+  selectedMvpdId: "",
   programmerApplicationsLoadingFor: "",
   selectedProgrammerVaultRecord: null,
   premiumServiceExpandedKeys: [],
@@ -364,12 +475,202 @@ const state = {
   harpoExpanded: false,
   harpoReproOpen: false,
   harpoRecording: false,
+  harpoRecordingStarting: false,
+  harpoRecordingStopping: false,
   harpoRecordingCount: 0,
+  harpoRequestorConfiguration: createEmptyHarpoRequestorConfiguration(),
   logs: []
 };
 let dragDepth = 0;
 let copyDebugResetTimer = 0;
 let backgroundHydrationRequestId = 0;
+const programmerPremiumHydrationPromiseByKey = new Map();
+const harpoRestV2PreferredAppIdByRequestorKey = new Map();
+const harpoRequestorConfigurationByKey = new Map();
+const harpoRequestorConfigurationPromiseByKey = new Map();
+const programmerApplicationsSnapshotById = new Map();
+const programmerPremiumServicesSnapshotById = new Map();
+
+function buildHarpoRequestorConfigurationKey(programmerId = "", requestorId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedRequestorId = String(requestorId || "").trim();
+  return normalizedProgrammerId && normalizedRequestorId
+    ? `${normalizedProgrammerId}::${normalizedRequestorId}`
+    : "";
+}
+
+function resetHarpoRequestorConfiguration() {
+  state.harpoRequestorConfiguration = createEmptyHarpoRequestorConfiguration();
+}
+
+function invalidateHarpoRequestorConfiguration(programmerId = "", requestorId = "") {
+  const key = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!key) {
+    return;
+  }
+
+  harpoRequestorConfigurationByKey.delete(key);
+  harpoRequestorConfigurationPromiseByKey.delete(key);
+  if (String(state.harpoRequestorConfiguration?.key || "").trim() === key) {
+    resetHarpoRequestorConfiguration();
+  }
+}
+
+function getHarpoCachedRequestorConfiguration(programmerId = "", requestorId = "") {
+  const key = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!key) {
+    return null;
+  }
+
+  const cachedConfiguration = harpoRequestorConfigurationByKey.get(key);
+  return cachedConfiguration && typeof cachedConfiguration === "object" ? cachedConfiguration : null;
+}
+
+function setHarpoCachedRequestorConfiguration(programmerId = "", requestorId = "", configuration = null) {
+  const key = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!key) {
+    return null;
+  }
+
+  if (!configuration || typeof configuration !== "object") {
+    harpoRequestorConfigurationByKey.delete(key);
+    return null;
+  }
+
+  const normalizedConfiguration = {
+    ...configuration,
+    key,
+    programmerId: String(programmerId || configuration?.programmerId || "").trim(),
+    requestorId: String(requestorId || configuration?.requestorId || "").trim()
+  };
+  harpoRequestorConfigurationByKey.set(key, normalizedConfiguration);
+  return normalizedConfiguration;
+}
+
+function getHarpoRequestorConfigurationLoadPromise(programmerId = "", requestorId = "") {
+  const key = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!key) {
+    return null;
+  }
+
+  return harpoRequestorConfigurationPromiseByKey.get(key) || null;
+}
+
+function setHarpoRequestorConfigurationLoadPromise(programmerId = "", requestorId = "", promise = null) {
+  const key = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!key) {
+    return null;
+  }
+
+  if (!promise || typeof promise.then !== "function") {
+    harpoRequestorConfigurationPromiseByKey.delete(key);
+    return null;
+  }
+
+  harpoRequestorConfigurationPromiseByKey.set(key, promise);
+  return promise;
+}
+
+function clearHarpoRequestorRuntimeState(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId) {
+    harpoRequestorConfigurationByKey.clear();
+    harpoRequestorConfigurationPromiseByKey.clear();
+    harpoRestV2PreferredAppIdByRequestorKey.clear();
+    resetHarpoRequestorConfiguration();
+    return;
+  }
+
+  const keyPrefix = `${normalizedProgrammerId}::`;
+  [harpoRequestorConfigurationByKey, harpoRequestorConfigurationPromiseByKey, harpoRestV2PreferredAppIdByRequestorKey].forEach((collection) => {
+    for (const key of collection.keys()) {
+      if (String(key || "").startsWith(keyPrefix)) {
+        collection.delete(key);
+      }
+    }
+  });
+
+  if (String(state.harpoRequestorConfiguration?.programmerId || "").trim() === normalizedProgrammerId) {
+    resetHarpoRequestorConfiguration();
+  }
+}
+
+function clearProgrammerRuntimeSnapshots(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (normalizedProgrammerId) {
+    programmerApplicationsSnapshotById.delete(normalizedProgrammerId);
+    programmerPremiumServicesSnapshotById.delete(normalizedProgrammerId);
+    clearHarpoRequestorRuntimeState(normalizedProgrammerId);
+    return;
+  }
+
+  programmerApplicationsSnapshotById.clear();
+  programmerPremiumServicesSnapshotById.clear();
+  clearHarpoRequestorRuntimeState();
+}
+
+function getCurrentProgrammerApplicationsSnapshot(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId) {
+    return null;
+  }
+
+  const snapshot = programmerApplicationsSnapshotById.get(normalizedProgrammerId);
+  return Array.isArray(snapshot) ? snapshot : null;
+}
+
+function setCurrentProgrammerApplicationsSnapshot(programmerId = "", applications = []) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId) {
+    return null;
+  }
+
+  const normalizedApplications = Array.isArray(applications) ? applications.filter(Boolean) : [];
+  programmerApplicationsSnapshotById.set(normalizedProgrammerId, normalizedApplications);
+  return normalizedApplications;
+}
+
+function getCurrentPremiumAppsSnapshot(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId) {
+    return null;
+  }
+
+  const snapshot = programmerPremiumServicesSnapshotById.get(normalizedProgrammerId);
+  return snapshot && typeof snapshot === "object" ? snapshot : null;
+}
+
+function setCurrentPremiumAppsSnapshot(programmerId = "", premiumApps = null) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId || !premiumApps || typeof premiumApps !== "object") {
+    return null;
+  }
+
+  programmerPremiumServicesSnapshotById.set(normalizedProgrammerId, premiumApps);
+  return premiumApps;
+}
+
+function buildProgrammerPremiumHydrationKey(
+  programmerId = "",
+  { serviceKeys = null, serviceApplicationOverrides = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedServiceKeys = dedupeCandidateStrings(
+    (Array.isArray(serviceKeys) ? serviceKeys : []).map((serviceKey) => String(serviceKey || "").trim())
+  )
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  const overrideSignature = Object.entries(
+    serviceApplicationOverrides && typeof serviceApplicationOverrides === "object" ? serviceApplicationOverrides : {}
+  )
+    .map(([serviceKey, application]) =>
+      `${String(serviceKey || "").trim()}:${firstNonEmptyString([application?.id, application?.key])}`
+    )
+    .filter((value) => !/:\s*$/.test(value))
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
+    .join("|");
+  return [normalizedProgrammerId, normalizedServiceKeys.join(","), overrideSignature].join("::");
+}
 
 applyThemePreferenceToDocument(state.theme);
 initializeThemeSwatchGrid();
@@ -408,6 +709,18 @@ if (getLatestButton) {
   });
 }
 
+if (programmerFieldGroupToggle) {
+  programmerFieldGroupToggle.addEventListener("click", () => {
+    setFieldClusterCollapsed("programmer", !state.programmerFieldGroupCollapsed);
+  });
+}
+
+if (cmFieldGroupToggle) {
+  cmFieldGroupToggle.addEventListener("click", () => {
+    setFieldClusterCollapsed("cm", !state.cmFieldGroupCollapsed);
+  });
+}
+
 organizationPicker.addEventListener("change", (event) => {
   const nextValue = String(event.currentTarget?.value || "").trim();
   if (
@@ -418,7 +731,9 @@ organizationPicker.addEventListener("change", (event) => {
     state.selectedProgrammerId = "";
     state.selectedRegisteredApplicationId = "";
     state.selectedRequestorId = "";
+    state.selectedMvpdId = "";
     state.selectedProgrammerVaultRecord = null;
+    resetHarpoRequestorConfiguration();
     render();
     return;
   }
@@ -426,7 +741,9 @@ organizationPicker.addEventListener("change", (event) => {
   state.selectedProgrammerId = nextValue;
   state.selectedRegisteredApplicationId = "";
   state.selectedRequestorId = "";
+  state.selectedMvpdId = "";
   state.selectedProgrammerVaultRecord = null;
+  resetHarpoRequestorConfiguration();
   render();
   void ensureSelectedProgrammerApplicationsLoaded(nextValue);
 });
@@ -454,20 +771,45 @@ if (registeredApplicationPicker) {
 if (requestorPicker) {
   requestorPicker.addEventListener("change", (event) => {
     const nextValue = String(event.currentTarget?.value || "").trim();
+    const programmerId = firstNonEmptyString([state.selectedProgrammerId]);
     if (
       !nextValue ||
       nextValue === REQUESTOR_PICKER_PLACEHOLDER_VALUE ||
       nextValue === REQUESTOR_PICKER_UNAVAILABLE_VALUE
     ) {
       state.selectedRequestorId = "";
+      state.selectedMvpdId = "";
+      resetHarpoRequestorConfiguration();
       render();
-      void persistSelectedProgrammerVaultSelections();
       return;
     }
 
     state.selectedRequestorId = nextValue;
+    state.selectedMvpdId = "";
+    resetHarpoRequestorConfiguration();
+    invalidateHarpoRequestorConfiguration(programmerId, nextValue);
     render();
-    void persistSelectedProgrammerVaultSelections();
+    void hydrateSelectedRequestorConfiguration({
+      forceRefresh: true
+    });
+  });
+}
+
+if (mvpdPicker) {
+  mvpdPicker.addEventListener("change", (event) => {
+    const nextValue = String(event.currentTarget?.value || "").trim();
+    if (
+      !nextValue ||
+      nextValue === MVPD_PICKER_PLACEHOLDER_VALUE ||
+      nextValue === MVPD_PICKER_UNAVAILABLE_VALUE
+    ) {
+      state.selectedMvpdId = "";
+      render();
+      return;
+    }
+
+    state.selectedMvpdId = nextValue;
+    render();
   });
 }
 
@@ -612,8 +954,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       state.selectedProgrammerId = "";
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
+      state.selectedMvpdId = "";
       state.programmerApplicationsLoadingFor = "";
       state.selectedProgrammerVaultRecord = null;
+      resetHarpoRequestorConfiguration();
     }
   }
 
@@ -691,30 +1035,24 @@ if (harpoReproButton) {
   });
 }
 
-// HARPO — domain picker enables LAUNCH
+// HARPO — domain picker syncs record toggle state
 if (harpoDomainPicker) {
   harpoDomainPicker.addEventListener("change", () => {
-    if (harpoLaunchButton) {
-      harpoLaunchButton.disabled =
-        !harpoDomainPicker.value ||
-        harpoDomainPicker.value === HARPO_DOMAIN_PICKER_PLACEHOLDER;
-    }
+    render();
   });
 }
 
-// HARPO — LAUNCH starts recording
-if (harpoLaunchButton) {
-  harpoLaunchButton.addEventListener("click", async () => {
+// HARPO — record toggle starts/stops recording
+if (harpoRecordToggleButton) {
+  harpoRecordToggleButton.addEventListener("click", async () => {
+    if (state.harpoRecordingStarting || state.harpoRecordingStopping) return;
+    if (state.harpoRecording) {
+      await harpoStopRecordingFromPanel();
+      return;
+    }
     const domain = harpoDomainPicker?.value;
     if (!domain || domain === HARPO_DOMAIN_PICKER_PLACEHOLDER) return;
     await harpoStartRecordingFromPanel(domain);
-  });
-}
-
-// HARPO — STOP recording
-if (harpoStopButton) {
-  harpoStopButton.addEventListener("click", async () => {
-    await harpoStopRecordingFromPanel();
   });
 }
 void initialize();
@@ -726,6 +1064,7 @@ async function initialize() {
   try {
     const stored = await chrome.storage.local.get([SESSION_KEY, THEME_STORAGE_KEY]);
     state.session = null;
+    clearProgrammerRuntimeSnapshots();
     state.theme = normalizeThemePreference(stored[THEME_STORAGE_KEY] || DEFAULT_THEME);
     applyThemePreferenceToDocument(state.theme);
     if (stored[SESSION_KEY]) {
@@ -1035,14 +1374,17 @@ async function logout() {
   try {
     await chrome.storage.local.remove(SESSION_KEY);
     state.session = null;
+    clearProgrammerRuntimeSnapshots();
     state.postLoginHydrationInFlight = false;
     state.selectedCmTenantId = "";
     state.selectedProgrammerId = "";
     state.selectedRegisteredApplicationId = "";
     state.selectedRequestorId = "";
+    state.selectedMvpdId = "";
     state.programmerApplicationsLoadingFor = "";
     state.selectedProgrammerVaultRecord = null;
     state.selectedOrganizationSwitchKey = "";
+    resetHarpoRequestorConfiguration();
     log("Local Adobe IMS session cleared.");
   } catch (error) {
     log(`Unable to clear the stored session: ${serializeError(error)}`);
@@ -2140,9 +2482,33 @@ async function fetchProgrammerRegisteredApplications(session, programmerId) {
       pageContextTargetRef: consolePageContextRef
     });
 
+    const baseApplications = normalizeConsoleRegisteredApplications(result?.data);
+    const programmerRefHydrationResult = await hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
+      currentSession,
+      normalizedProgrammerId,
+      baseApplications,
+      {
+        csrfToken: firstNonEmptyString([result?.csrfToken, csrfToken]),
+        pageContextTargetRef: consolePageContextRef
+      }
+    );
+    if (programmerRefHydrationResult?.error) {
+      log(
+        `LoginButton Registered Application ref hydration failed for ${normalizedProgrammerId}: ${serializeError(
+          programmerRefHydrationResult.error
+        )}`
+      );
+    }
+
     return {
-      applications: normalizeConsoleRegisteredApplications(result?.data),
-      csrfToken: firstNonEmptyString([result?.csrfToken, csrfToken]),
+      applications: Array.isArray(programmerRefHydrationResult?.applications)
+        ? programmerRefHydrationResult.applications
+        : baseApplications,
+      csrfToken: firstNonEmptyString([
+        programmerRefHydrationResult?.csrfToken,
+        result?.csrfToken,
+        csrfToken
+      ]),
       pageContext: result?.pageContext || null,
       transport: firstNonEmptyString([result?.transport])
     };
@@ -2172,6 +2538,57 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
     return;
   }
   if (existingApplications) {
+    let readySession = currentSession;
+    let readyApplications = existingApplications;
+    const catalogHydrationResult = await settle(() =>
+      hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, existingApplications, {
+        csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"])
+      })
+    );
+    if (catalogHydrationResult.ok) {
+      readySession = catalogHydrationResult.value?.session || readySession;
+      readyApplications = Array.isArray(catalogHydrationResult.value?.applications)
+        ? catalogHydrationResult.value.applications
+        : readyApplications;
+      if (catalogHydrationResult.value?.changed) {
+        state.session = readySession;
+        void persistProgrammerVaultSnapshot(readySession, normalizedProgrammerId, {
+          registeredApplications: readyApplications,
+          source: "programmer-selection"
+        }).catch((error) => {
+          log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+        });
+      }
+    } else {
+      log(
+        `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+          catalogHydrationResult.error
+        )}`
+      );
+    }
+
+    const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: readySession,
+      registeredApplications: readyApplications,
+      vaultRecord: state.selectedProgrammerVaultRecord
+    });
+    const premiumHydrationResult = await settle(() =>
+      ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+        registeredApplications: readyApplications,
+        source: "programmer-selection"
+      })
+    );
+    if (!premiumHydrationResult.ok) {
+      log(`LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(premiumHydrationResult.error)}`);
+    }
+    if (
+      maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+        registeredApplications: runtimeSnapshot?.registeredApplications,
+        runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
+      })
+    ) {
+      void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
+    }
     render();
     return;
   }
@@ -2190,6 +2607,60 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
           `LoginButton VAULT ${vaultAssessment.stale ? "stale hit" : "hit"} for ${normalizedProgrammerId} (${vaultAssessment.reason}).`
         );
         if (!vaultAssessment.needsRefresh) {
+          let readySession = currentSession;
+          let readyApplications = hydrateProgrammerApplicationsFromVault(vaultReadResult.value);
+          const catalogHydrationResult = await settle(() =>
+            hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, readyApplications, {
+              csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"])
+            })
+          );
+          if (catalogHydrationResult.ok) {
+            readySession = catalogHydrationResult.value?.session || readySession;
+            readyApplications = Array.isArray(catalogHydrationResult.value?.applications)
+              ? catalogHydrationResult.value.applications
+              : readyApplications;
+            if (catalogHydrationResult.value?.changed) {
+              state.session = readySession;
+              void persistProgrammerVaultSnapshot(readySession, normalizedProgrammerId, {
+                registeredApplications: readyApplications,
+                source: "programmer-selection"
+              }).catch((error) => {
+                log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+              });
+            }
+          } else {
+            log(
+              `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+                catalogHydrationResult.error
+              )}`
+            );
+          }
+
+          const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+            session: readySession,
+            registeredApplications: readyApplications,
+            vaultRecord: vaultReadResult.value
+          });
+          const vaultHydrationResult = await settle(() =>
+            ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+              registeredApplications: readyApplications,
+              source: "programmer-selection"
+            })
+          );
+          if (!vaultHydrationResult.ok) {
+            log(
+              `LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(
+                vaultHydrationResult.error
+              )}`
+            );
+          }
+          const selectedRestV2AppChanged = maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+            registeredApplications: runtimeSnapshot?.registeredApplications,
+            runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
+          });
+          if (selectedRestV2AppChanged) {
+            void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
+          }
           render();
           return;
         }
@@ -2210,14 +2681,14 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
 
   const liveSession = state.session && typeof state.session === "object" ? state.session : null;
 
-  state.programmerApplicationsLoadingFor = "";
-
   if (!liveSession) {
+    state.programmerApplicationsLoadingFor = "";
     render();
     return;
   }
 
   if (!result.ok) {
+    state.programmerApplicationsLoadingFor = "";
     log(`Adobe Pass registered applications fetch failed: ${serializeError(result.error)}`);
     state.session = mergeProgrammerApplicationsErrorIntoSession(liveSession, normalizedProgrammerId, result.error, {
       preserveExistingApplications: hydratedFromVault
@@ -2226,14 +2697,56 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
     return;
   }
 
-  const mergedSession = mergeProgrammerApplicationsIntoSession(liveSession, normalizedProgrammerId, result.value);
+  let mergedSession = mergeProgrammerApplicationsIntoSession(liveSession, normalizedProgrammerId, result.value);
+  let hydratedApplications = Array.isArray(result.value?.applications) ? result.value.applications : [];
+  const catalogHydrationResult = await settle(() =>
+    hydrateProgrammerRegisteredApplicationsForRuntime(mergedSession, normalizedProgrammerId, hydratedApplications, {
+      csrfToken: firstNonEmptyString([result.value?.csrfToken, liveSession?.console?.csrfToken, "NO-TOKEN"])
+    })
+  );
+  if (catalogHydrationResult.ok) {
+    mergedSession = catalogHydrationResult.value?.session || mergedSession;
+    hydratedApplications = Array.isArray(catalogHydrationResult.value?.applications)
+      ? catalogHydrationResult.value.applications
+      : hydratedApplications;
+  } else {
+    log(
+      `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+        catalogHydrationResult.error
+      )}`
+    );
+  }
+
   void persistProgrammerVaultSnapshot(mergedSession, normalizedProgrammerId, {
+    registeredApplications: hydratedApplications,
     source: "network"
   }).catch((error) => {
     log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
   });
   state.session = mergedSession;
+  const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+    session: mergedSession,
+    registeredApplications: hydratedApplications,
+    vaultRecord: state.selectedProgrammerVaultRecord
+  });
   autoSelectSingletonAuthenticatedOptions(mergedSession);
+  const hydrationResult = await settle(() =>
+    ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+      registeredApplications: hydratedApplications,
+      source: "programmer-selection"
+    })
+  );
+  if (!hydrationResult.ok) {
+    log(`LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(hydrationResult.error)}`);
+  }
+  const selectedRestV2AppChanged = maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+    registeredApplications: runtimeSnapshot?.registeredApplications,
+    runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
+  });
+  if (selectedRestV2AppChanged) {
+    void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
+  }
+  state.programmerApplicationsLoadingFor = "";
 
   if (state.selectedProgrammerId !== normalizedProgrammerId) {
     render();
@@ -2266,18 +2779,6 @@ function autoSelectSingletonAuthenticatedOptions(session = state.session) {
     state.selectedRegisteredApplicationId = firstNonEmptyString([
       authenticatedDataContext.registeredApplicationOptions[0]?.key,
       authenticatedDataContext.registeredApplicationOptions[0]?.id
-    ]);
-    changed = true;
-  }
-
-  if (
-    authenticatedDataContext?.selectedProgrammer &&
-    !String(state.selectedRequestorId || "").trim() &&
-    authenticatedDataContext.requestorOptions.length === 1
-  ) {
-    state.selectedRequestorId = firstNonEmptyString([
-      authenticatedDataContext.requestorOptions[0]?.key,
-      authenticatedDataContext.requestorOptions[0]?.id
     ]);
     changed = true;
   }
@@ -2322,7 +2823,9 @@ async function autoActivateAdobePassProgrammerContext(session = state.session, {
     state.selectedProgrammerId = firstNonEmptyString([selectedProgrammer?.key, selectedProgrammer?.id]);
     state.selectedRegisteredApplicationId = "";
     state.selectedRequestorId = "";
+    state.selectedMvpdId = "";
     state.selectedProgrammerVaultRecord = null;
+    resetHarpoRequestorConfiguration();
     log(
       `Auto-selected ${firstNonEmptyString([selectedProgrammer?.label, selectedProgrammer?.name, "the only programmer"])} after Adobe Pass org activation (${reason}).`
     );
@@ -2526,6 +3029,147 @@ function buildCmuReportRequestHeaders(accessToken = "") {
   };
 }
 
+function getLoginButtonAdobePassEnvironmentKey() {
+  return String(
+    firstNonEmptyString([
+      state.session?.console?.environmentId,
+      state.runtimeConfig?.consoleEnvironment,
+      CONSOLE_DEFAULT_ENVIRONMENT
+    ]) || CONSOLE_DEFAULT_ENVIRONMENT
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function getLoginButtonRestV2DeviceIdStorageKey(environmentKey = getLoginButtonAdobePassEnvironmentKey()) {
+  const normalizedEnvironmentKey = String(environmentKey || CONSOLE_DEFAULT_ENVIRONMENT).trim().toLowerCase();
+  return `${LOGINBUTTON_REST_V2_DEVICE_ID_STORAGE_KEY}:${normalizedEnvironmentKey || CONSOLE_DEFAULT_ENVIRONMENT}`;
+}
+
+function base64EncodeUtf8(value = "") {
+  return btoa(unescape(encodeURIComponent(String(value || ""))));
+}
+
+function encodeDevicePayload(value) {
+  const raw = typeof value === "string" ? value : JSON.stringify(value || {});
+  return base64EncodeUtf8(raw);
+}
+
+function getStableRestV2DeviceIdentifier() {
+  try {
+    const scopedStorageKey = getLoginButtonRestV2DeviceIdStorageKey();
+    const cached = localStorage.getItem(scopedStorageKey);
+    if (cached) {
+      return cached;
+    }
+
+    const generated =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`;
+    localStorage.setItem(scopedStorageKey, generated);
+    return generated;
+  } catch {
+    return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`;
+  }
+}
+
+function detectOsName() {
+  const ua = String(navigator.userAgent || "").toLowerCase();
+  if (ua.includes("android")) {
+    return "Android";
+  }
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod")) {
+    return "iOS";
+  }
+  if (ua.includes("cros")) {
+    return "Chrome OS";
+  }
+  if (ua.includes("windows")) {
+    return "Windows";
+  }
+  if (ua.includes("mac os") || ua.includes("macintosh")) {
+    return "Mac OS";
+  }
+  if (ua.includes("linux")) {
+    return "Linux";
+  }
+  return "Linux";
+}
+
+function detectBrowserInfo() {
+  const ua = String(navigator.userAgent || "");
+  const normalized = ua.toLowerCase();
+  if (normalized.includes("edg/")) {
+    const version = (ua.match(/Edg\/([\d.]+)/) || [])[1] || "";
+    return { name: "Edge", vendor: "Microsoft", version };
+  }
+  if (normalized.includes("chrome/") && !normalized.includes("edg/")) {
+    const version = (ua.match(/Chrome\/([\d.]+)/) || [])[1] || "";
+    return { name: "Chrome", vendor: "Google", version };
+  }
+  if (normalized.includes("safari/") && !normalized.includes("chrome/")) {
+    const version = (ua.match(/Version\/([\d.]+)/) || [])[1] || "";
+    return { name: "Safari", vendor: "Apple", version };
+  }
+  if (normalized.includes("firefox/")) {
+    const version = (ua.match(/Firefox\/([\d.]+)/) || [])[1] || "";
+    return { name: "Firefox", vendor: "Mozilla", version };
+  }
+  return { name: "Chrome", vendor: "Google", version: "" };
+}
+
+function buildLegacyDeviceInfoPayload(requestorId = "") {
+  const browser = detectBrowserInfo();
+  return {
+    primaryHardwareType: "Desktop",
+    model: navigator.platform || "Desktop",
+    version: "1.0",
+    osName: detectOsName(),
+    osVersion: navigator.userAgent || "",
+    browserName: browser.name,
+    browserVendor: browser.vendor,
+    browserVersion: browser.version,
+    userAgent: navigator.userAgent || "",
+    connectionType: navigator.connection?.effectiveType || "WiFi",
+    connectionSecure: window.location.protocol === "https:",
+    applicationId: requestorId || window.location.hostname || "LoginButton"
+  };
+}
+
+function buildDeviceIdentifierPayload() {
+  return `fingerprint ${base64EncodeUtf8(getStableRestV2DeviceIdentifier())}`;
+}
+
+function buildRestV2Headers(requestorId, extraHeaders = {}) {
+  return {
+    Accept: "application/json",
+    "AP-Device-Identifier": buildDeviceIdentifierPayload(),
+    "X-Device-Info": encodeDevicePayload(buildLegacyDeviceInfoPayload(requestorId)),
+    ...extraHeaders
+  };
+}
+
+function resolveAdobePassServiceBaseUrl(surface = "sp", session = state.session) {
+  const consoleBaseUrl = firstNonEmptyString([
+    session?.console?.baseUrl,
+    state.runtimeConfig?.consoleBaseUrl
+  ]);
+  const useStaging = /(^|\.)auth-staging\.adobe\.com$/i.test((() => {
+    try {
+      return new URL(consoleBaseUrl).hostname;
+    } catch {
+      return "";
+    }
+  })());
+  if (String(surface || "").trim().toLowerCase() === "api") {
+    return useStaging ? ADOBE_API_STAGING_BASE_URL : ADOBE_API_BASE_URL;
+  }
+  return useStaging ? ADOBE_SP_STAGING_BASE_URL : ADOBE_SP_BASE_URL;
+}
+
 function normalizeBearerTokenValue(value) {
   return String(value || "")
     .trim()
@@ -2581,6 +3225,98 @@ function dedupeCandidateStrings(values = []) {
     output.push(normalized);
   });
   return output;
+}
+
+const PASS_VAULT_SERVICE_PROVIDER_HINT_KEYS = Object.freeze([
+  "serviceproviders",
+  "contentproviders",
+  "requestors",
+  "requestorids",
+  "requestor",
+  "serviceprovider"
+]);
+
+const PASS_VAULT_PRIMARY_REQUESTOR_HINT_KEYS = Object.freeze([
+  "requestor",
+  "serviceprovider"
+]);
+
+function sanitizePassVaultHintList(...values) {
+  const collected = [];
+  const append = (value) => {
+    if (value == null) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry) => append(entry));
+      return;
+    }
+    if (typeof value === "object") {
+      append(value?.value);
+      append(value?.id);
+      append(value?.key);
+      append(value?.guid);
+      return;
+    }
+    const normalized = String(value || "").trim();
+    if (normalized) {
+      collected.push(normalized);
+    }
+  };
+  values.forEach((value) => append(value));
+  return dedupeCandidateStrings(collected).sort((left, right) =>
+    String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base" })
+  );
+}
+
+function normalizePassVaultHintKey(value = "") {
+  return String(value || "")
+    .replace(/[^a-z0-9]+/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+function collectPassVaultHintValuesFromObject(source = null, matchingKeys = []) {
+  if (!source || typeof source !== "object") {
+    return [];
+  }
+
+  const normalizedKeys = new Set(
+    (Array.isArray(matchingKeys) ? matchingKeys : [])
+      .map((key) => normalizePassVaultHintKey(key))
+      .filter(Boolean)
+  );
+  if (normalizedKeys.size === 0) {
+    return [];
+  }
+
+  const collected = [];
+  const seenObjects = new Set();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    if (seenObjects.has(value)) {
+      return;
+    }
+    seenObjects.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry));
+      return;
+    }
+
+    Object.entries(value).forEach(([key, nested]) => {
+      if (normalizedKeys.has(normalizePassVaultHintKey(key))) {
+        collected.push(...sanitizePassVaultHintList(nested));
+      }
+      visit(nested);
+    });
+  };
+
+  visit(source);
+  return dedupeCandidateStrings(collected).sort((left, right) =>
+    String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base" })
+  );
 }
 
 function collectCmConsoleUserIdCandidates(session = null, seedToken = "") {
@@ -3009,6 +3745,24 @@ async function resolveAdobeConsolePageContextTarget({
   };
 }
 
+function isRetryableAdobePageContextScriptingError(error = null) {
+  const normalizedMessage = String(error instanceof Error ? error.message : error || "").trim().toLowerCase();
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    normalizedMessage.includes("about:blank") ||
+    normalizedMessage.includes("cannot access contents of url") ||
+    normalizedMessage.includes("document was unloaded") ||
+    normalizedMessage.includes("frame with id") ||
+    normalizedMessage.includes("frame was removed") ||
+    normalizedMessage.includes("no frame with id") ||
+    normalizedMessage.includes("the tab was closed") ||
+    normalizedMessage.includes("web contents not found")
+  );
+}
+
 async function executeFetchViaAdobePageContextTarget({
   tabId,
   requestUrl,
@@ -3200,6 +3954,11 @@ async function executeFetchViaAdobePageContextTarget({
         }
       };
     } catch (error) {
+      if (isRetryableAdobePageContextScriptingError(error) && Date.now() < deadline) {
+        lastError = error;
+        await sleep(150);
+        continue;
+      }
       lastError = error;
       break;
     }
@@ -4328,7 +5087,18 @@ function extractConsoleAuthorities(extendedProfile) {
 }
 
 function computeEntityReferenceId(reference = "") {
-  const normalizedReference = String(reference || "").trim();
+  const rawReference =
+    reference && typeof reference === "object"
+      ? firstNonEmptyString([
+          reference.ref,
+          reference.entityRef,
+          reference.entityReference,
+          reference.id,
+          reference.key,
+          reference.value
+        ])
+      : reference;
+  const normalizedReference = String(rawReference || "").trim();
   if (!normalizedReference) {
     return "";
   }
@@ -4472,6 +5242,26 @@ function extractSoftwareStatementFromApplicationData(applicationData = null) {
   return "";
 }
 
+function collectPassVaultServiceProviderHintsFromApplicationData(applicationData = null, softwareStatement = "") {
+  const statement = firstNonEmptyString([softwareStatement, extractSoftwareStatementFromApplicationData(applicationData)]);
+  if (!statement) {
+    return [];
+  }
+  const claims = decodeJwtPayload(statement);
+  return collectPassVaultHintValuesFromObject(claims, PASS_VAULT_SERVICE_PROVIDER_HINT_KEYS);
+}
+
+function extractPassVaultPrimaryRequestorHintFromApplicationData(applicationData = null, softwareStatement = "") {
+  const statement = firstNonEmptyString([softwareStatement, extractSoftwareStatementFromApplicationData(applicationData)]);
+  if (!statement) {
+    return "";
+  }
+  const claims = decodeJwtPayload(statement);
+  return firstNonEmptyString(
+    collectPassVaultHintValuesFromObject(claims, PASS_VAULT_PRIMARY_REQUESTOR_HINT_KEYS)
+  );
+}
+
 function extractJwtAndUrlsFromValue(value = null) {
   const seen = new Set();
   const jwtCandidates = [];
@@ -4538,8 +5328,276 @@ function extractJwtAndUrlsFromValue(value = null) {
   };
 }
 
+function normalizeRegisteredApplicationScope(scope = "") {
+  const normalizedScope = String(scope || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!normalizedScope) {
+    return "";
+  }
+
+  return REGISTERED_APPLICATION_SCOPE_ALIAS_BY_LABEL[normalizedScope] || normalizedScope;
+}
+
+function tokenizeRegisteredApplicationScopeCandidate(value = "") {
+  const normalizedValue = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalizedValue) {
+    return [];
+  }
+
+  const tokens = new Set();
+  const pushToken = (candidate = "") => {
+    const normalizedCandidate = String(candidate || "").replace(/\s+/g, " ").trim();
+    if (normalizedCandidate) {
+      tokens.add(normalizedCandidate);
+    }
+  };
+
+  pushToken(normalizedValue);
+  normalizedValue
+    .split(/[,\n;]+/)
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      pushToken(part);
+      if (!/\s/.test(part)) {
+        return;
+      }
+      const pieces = part.split(/\s+/).filter(Boolean);
+      if (pieces.length > 1 && pieces.every((piece) => /[:._-]/.test(piece))) {
+        pieces.forEach((piece) => pushToken(piece));
+      }
+    });
+
+  return [...tokens];
+}
+
+function getRegisteredApplicationValueAtPath(source = null, path = []) {
+  let current = source;
+  for (const key of Array.isArray(path) ? path : []) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function collectRegisteredApplicationScopeValues(value = null, target = [], seenObjects = new Set()) {
+  if (value == null) {
+    return target;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectRegisteredApplicationScopeValues(item, target, seenObjects));
+    return target;
+  }
+
+  if (typeof value === "object") {
+    if (seenObjects.has(value)) {
+      return target;
+    }
+    seenObjects.add(value);
+    collectRegisteredApplicationScopeValues(value.key, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.value, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.scope, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.scopes, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.scopeSet, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.scopeList, target, seenObjects);
+    collectRegisteredApplicationScopeValues(value.permissions, target, seenObjects);
+    return target;
+  }
+
+  if (typeof value === "string") {
+    tokenizeRegisteredApplicationScopeCandidate(value).forEach((part) => target.push(part));
+  }
+  return target;
+}
+
+function getExplicitScopesFromApplicationData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return [];
+  }
+
+  const rawCandidates = [];
+  const seenObjects = new Set();
+  REGISTERED_APPLICATION_SCOPE_FIELD_PATHS.forEach((path) => {
+    collectRegisteredApplicationScopeValues(
+      getRegisteredApplicationValueAtPath(applicationData, path),
+      rawCandidates,
+      seenObjects
+    );
+  });
+
+  return Array.from(
+    new Set(rawCandidates.map((scope) => normalizeRegisteredApplicationScope(scope)).filter(Boolean))
+  );
+}
+
+function collectKnownRegisteredApplicationScopeMatches(value = null, target = new Set(), seenObjects = new Set()) {
+  if (value == null) {
+    return target;
+  }
+
+  if (typeof value === "object") {
+    if (seenObjects.has(value)) {
+      return target;
+    }
+    seenObjects.add(value);
+    try {
+      const serialized = JSON.stringify(value).toLowerCase();
+      KNOWN_REGISTERED_APPLICATION_SCOPES.forEach((scope) => {
+        if (serialized.includes(scope)) {
+          target.add(scope);
+        }
+      });
+    } catch {
+      // Ignore serialization failures while harvesting scope hints.
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectKnownRegisteredApplicationScopeMatches(item, target, seenObjects));
+    } else {
+      Object.values(value).forEach((item) => collectKnownRegisteredApplicationScopeMatches(item, target, seenObjects));
+    }
+    return target;
+  }
+
+  const normalizedText = String(value || "").trim().toLowerCase();
+  if (!normalizedText) {
+    return target;
+  }
+
+  KNOWN_REGISTERED_APPLICATION_SCOPES.forEach((scope) => {
+    if (normalizedText.includes(scope)) {
+      target.add(scope);
+    }
+  });
+  return target;
+}
+
+function getRelevantSerializedScopeMatchesFromApplicationData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return [];
+  }
+
+  const matches = new Set();
+  const seenObjects = new Set();
+  REGISTERED_APPLICATION_SCOPE_RELEVANT_FIELD_PATHS.forEach((path) => {
+    collectKnownRegisteredApplicationScopeMatches(
+      getRegisteredApplicationValueAtPath(applicationData, path),
+      matches,
+      seenObjects
+    );
+  });
+  return [...matches];
+}
+
+function getLegacySerializedScopeMatchesFromApplicationData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return [];
+  }
+
+  try {
+    const serialized = JSON.stringify(applicationData).toLowerCase();
+    return KNOWN_REGISTERED_APPLICATION_SCOPES.filter((scope) => serialized.includes(scope));
+  } catch {
+    return [];
+  }
+}
+
+function extractRegisteredApplicationScopesFromTokenClaims(claims = null) {
+  if (!claims || typeof claims !== "object") {
+    return [];
+  }
+
+  const values = new Set();
+  const appendValue = (value = null) => {
+    if (value == null) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => appendValue(item));
+      return;
+    }
+    if (typeof value === "object") {
+      if (typeof value.value === "string") {
+        appendValue(value.value);
+      }
+      Object.values(value).forEach((item) => appendValue(item));
+      return;
+    }
+    if (typeof value === "string") {
+      tokenizeRegisteredApplicationScopeCandidate(value)
+        .map((scope) => normalizeRegisteredApplicationScope(scope))
+        .filter(Boolean)
+        .forEach((scope) => values.add(scope));
+    }
+  };
+
+  appendValue(claims.scope);
+  appendValue(claims.scopes);
+  appendValue(claims.scopeSet);
+  appendValue(claims.permissions);
+  return [...values];
+}
+
+function getScopesFromSoftwareStatement(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return [];
+  }
+
+  const softwareStatement = extractSoftwareStatementFromApplicationData(applicationData);
+  if (!softwareStatement) {
+    return [];
+  }
+
+  return extractRegisteredApplicationScopesFromTokenClaims(decodeJwtPayload(softwareStatement) || null);
+}
+
+function getScopesFromApplicationData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return [];
+  }
+
+  const resolvedScopes = Array.from(
+    new Set(
+      [
+        ...getExplicitScopesFromApplicationData(applicationData),
+        ...getScopesFromSoftwareStatement(applicationData),
+        ...getRelevantSerializedScopeMatchesFromApplicationData(applicationData)
+      ].filter(Boolean)
+    )
+  );
+  if (resolvedScopes.length > 0) {
+    return resolvedScopes;
+  }
+  return getLegacySerializedScopeMatchesFromApplicationData(applicationData);
+}
+
+function resolveRegisteredApplicationScopes(...sources) {
+  return Array.from(
+    new Set(
+      sources
+        .flatMap((source) =>
+          source && typeof source === "object"
+            ? getScopesFromApplicationData(source)
+            : Array.isArray(source)
+              ? source
+              : []
+        )
+        .map((scope) => normalizeRegisteredApplicationScope(scope))
+        .filter(Boolean)
+    )
+  );
+}
+
 function buildRegisteredApplicationScopeLabels(scopes = []) {
-  const normalizedScopes = Array.isArray(scopes) ? scopes.map((scope) => String(scope || "").trim()).filter(Boolean) : [];
+  const normalizedScopes = Array.isArray(scopes)
+    ? scopes
+        .map((scope) => normalizeRegisteredApplicationScope(scope) || String(scope || "").trim())
+        .filter(Boolean)
+    : [];
   return [
     "DEFAULT",
     ...normalizedScopes.map((scope) => REGISTERED_APPLICATION_SCOPE_LABELS[scope] || scope)
@@ -4550,6 +5608,142 @@ function buildRegisteredApplicationLabel(name = "", scopeLabels = [], fallbackLa
   const normalizedName = firstNonEmptyString([name]);
   const scopeSummary = (Array.isArray(scopeLabels) ? scopeLabels : []).filter(Boolean).join(", ");
   return scopeSummary ? `${normalizedName} | ${scopeSummary}` : firstNonEmptyString([fallbackLabel, normalizedName]);
+}
+
+function extractApplicationGuid(value = "") {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const prefixedMatch = normalizedValue.match(/^@?RegisteredApplication:(.+)$/i);
+  if (prefixedMatch) {
+    return String(prefixedMatch[1] || "").trim();
+  }
+
+  const tokenMatch = normalizedValue.match(/@?RegisteredApplication:([A-Za-z0-9-]+)/i);
+  if (tokenMatch) {
+    return String(tokenMatch[1] || "").trim();
+  }
+
+  return normalizedValue;
+}
+
+function resolveApplicationGuidFromEntityData(applicationData = null) {
+  if (!applicationData || typeof applicationData !== "object") {
+    return "";
+  }
+
+  const rawEnvelope =
+    applicationData?.__rawEnvelope && typeof applicationData.__rawEnvelope === "object" ? applicationData.__rawEnvelope : null;
+  const envelopeEntityData =
+    rawEnvelope?.entityData && typeof rawEnvelope.entityData === "object" ? rawEnvelope.entityData : null;
+  const candidates = [
+    applicationData.id,
+    applicationData.guid,
+    applicationData.applicationId,
+    applicationData.application_id,
+    applicationData.appId,
+    applicationData.registeredApplicationId,
+    applicationData.registered_application_id,
+    applicationData.entityId,
+    applicationData.key,
+    rawEnvelope?.key,
+    rawEnvelope?.id,
+    envelopeEntityData?.id,
+    envelopeEntityData?.guid,
+    envelopeEntityData?.applicationId,
+    envelopeEntityData?.application_id,
+    envelopeEntityData?.appId,
+    envelopeEntityData?.registeredApplicationId,
+    envelopeEntityData?.registered_application_id,
+    envelopeEntityData?.entityId,
+    envelopeEntityData?.key
+  ];
+
+  for (const candidate of candidates) {
+    const guid = extractApplicationGuid(candidate);
+    if (guid) {
+      return guid;
+    }
+  }
+
+  return "";
+}
+
+function normalizeRegisteredApplicationRuntimeRecord(item = null) {
+  const source = item && typeof item === "object" && !Array.isArray(item) ? item : null;
+  if (!source) {
+    return null;
+  }
+
+  const rawEnvelope =
+    source?.__rawEnvelope && typeof source.__rawEnvelope === "object" && !Array.isArray(source.__rawEnvelope)
+      ? source.__rawEnvelope
+      : null;
+  const envelopeEntityData =
+    rawEnvelope?.entityData && typeof rawEnvelope.entityData === "object" && !Array.isArray(rawEnvelope.entityData)
+      ? rawEnvelope.entityData
+      : null;
+  const appDataSource =
+    source?.appData && typeof source.appData === "object" && !Array.isArray(source.appData) ? source.appData : source;
+  const appData = {
+    ...(envelopeEntityData ? envelopeEntityData : {}),
+    ...(appDataSource && typeof appDataSource === "object" ? appDataSource : {})
+  };
+  delete appData.appData;
+
+  const guid = resolveApplicationGuidFromEntityData(source);
+  const id = firstNonEmptyString([guid, source?.id, source?.key, source?.guid]);
+  const key = firstNonEmptyString([guid, source?.key, id]);
+  if (!id && !key) {
+    return null;
+  }
+
+  const scopes = resolveRegisteredApplicationScopes(
+    Array.isArray(source?.scopes) ? source.scopes : [],
+    appData,
+    source,
+    rawEnvelope,
+    envelopeEntityData
+  );
+  const scopeLabels = buildRegisteredApplicationScopeLabels(scopes);
+  const name = firstNonEmptyString([
+    appData?.displayName,
+    appData?.name,
+    appData?.clientId,
+    appData?.label,
+    appData?.title,
+    source?.displayName,
+    source?.name,
+    source?.clientId,
+    source?.label,
+    source?.title,
+    id ? `Registered Application ${id}` : ""
+  ]);
+  const softwareStatement = firstNonEmptyString([
+    extractSoftwareStatementFromApplicationData(appData),
+    String(source?.softwareStatement || "").trim()
+  ]);
+
+  return {
+    ...source,
+    guid: firstNonEmptyString([guid, id, key]),
+    id: firstNonEmptyString([id, key]),
+    key: firstNonEmptyString([key, id]),
+    name,
+    label: buildRegisteredApplicationLabel(name, scopeLabels, firstNonEmptyString([source?.label, name])),
+    clientId: firstNonEmptyString([appData?.clientId, appData?.client_id, source?.clientId, source?.client_id]),
+    type: firstNonEmptyString([source?.type, source?.applicationType, appData?.type, appData?.applicationType]),
+    scopes,
+    scopeLabels,
+    softwareStatement,
+    raw:
+      source?.raw && typeof source.raw === "object" && !Array.isArray(source.raw)
+        ? source.raw
+        : appData,
+    appData
+  };
 }
 
 function normalizeRegisteredApplicationDetailPayload(payload = null) {
@@ -4572,7 +5766,7 @@ function normalizeRegisteredApplicationDetailPayload(payload = null) {
 }
 
 function buildRegisteredApplicationDetailPaths(applicationId = "") {
-  const normalizedApplicationId = String(applicationId || "").trim();
+  const normalizedApplicationId = extractApplicationGuid(applicationId);
   if (!normalizedApplicationId) {
     return [];
   }
@@ -4585,15 +5779,25 @@ function buildRegisteredApplicationDetailPaths(applicationId = "") {
 }
 
 function normalizeRegisteredApplicationEntityRef(value = "") {
-  const rawValue = String(value || "").trim();
-  if (!rawValue) {
+  const applicationId = extractApplicationGuid(value);
+  if (!applicationId) {
     return "";
   }
 
-  const normalizedValue = rawValue.replace(/^@+/, "");
-  const match = normalizedValue.match(/^RegisteredApplication:(.+)$/i);
-  const applicationId = String(match ? match[1] : normalizedValue).trim();
   return applicationId ? `RegisteredApplication:${applicationId}` : "";
+}
+
+function extractRegisteredApplicationsFromBulkPayload(payload = null) {
+  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  if (entities.length === 0) {
+    return [];
+  }
+
+  return entities
+    .map((entity) => normalizeRegisteredApplicationDetailPayload(entity))
+    .filter(Boolean)
+    .map((entity) => normalizeRegisteredApplicationRuntimeRecord(entity))
+    .filter(Boolean);
 }
 
 function buildRegisteredApplicationBulkRetrieveRequest(entityRefs = [], configurationVersion = "") {
@@ -4622,7 +5826,12 @@ function resolveRegisteredApplicationIdFromEntityData(entityData = null) {
     return "";
   }
 
-  return firstNonEmptyString([entityData.id, entityData.key, entityData.guid]);
+  return firstNonEmptyString([
+    resolveApplicationGuidFromEntityData(entityData),
+    entityData.id,
+    entityData.key,
+    entityData.guid
+  ]);
 }
 
 function extractRegisteredApplicationFromBulkPayload(payload = null, applicationId = "") {
@@ -4694,6 +5903,59 @@ async function fetchRegisteredApplicationBulkRetrieve(
   };
 }
 
+async function fetchRegisteredApplicationsByIds(
+  session = null,
+  applicationIds = [],
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const accessToken = firstNonEmptyString([currentSession?.accessToken]);
+  const baseUrl = firstNonEmptyString([consoleContext?.baseUrl]);
+  const configurationVersion = firstNonEmptyString([consoleContext?.configurationVersion]);
+  const environmentId = firstNonEmptyString([
+    consoleContext?.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const normalizedApplicationIds = dedupeCandidateStrings(
+    (Array.isArray(applicationIds) ? applicationIds : [applicationIds])
+      .map((applicationId) => extractApplicationGuid(applicationId))
+      .filter(Boolean)
+  );
+  const nextCsrfToken = firstNonEmptyString([csrfToken, consoleContext?.csrfToken, "NO-TOKEN"]);
+  const bulkRetrieveRequest = buildRegisteredApplicationBulkRetrieveRequest(
+    normalizedApplicationIds,
+    configurationVersion
+  );
+
+  if (!accessToken || !baseUrl || normalizedApplicationIds.length === 0 || !bulkRetrieveRequest) {
+    throw new Error("Registered Application bulk hydrate request is missing console context.");
+  }
+
+  const result = await fetchConsoleJsonWithFallback({
+    baseUrl,
+    path: bulkRetrieveRequest.path,
+    accessToken,
+    csrfToken: nextCsrfToken,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: bulkRetrieveRequest.body,
+    environmentId,
+    pageContextTargetRef
+  });
+
+  return {
+    applications: extractRegisteredApplicationsFromBulkPayload(result?.data),
+    csrfToken: firstNonEmptyString([result?.csrfToken, nextCsrfToken]),
+    transport: firstNonEmptyString([result?.transport]),
+    pageContext: result?.pageContext || null,
+    rawText: String(result?.rawText || "")
+  };
+}
+
 async function fetchTextWithTimeout(resource = "", { headers = {}, timeoutMs = ADOBE_PAGE_CONTEXT_TIMEOUT_MS } = {}) {
   const requestUrl = String(resource || "").trim();
   if (!requestUrl) {
@@ -4750,49 +6012,179 @@ function extractSoftwareStatementFromText(text = "") {
 function mergeHydratedRegisteredApplication(application = null, detailData = null, softwareStatement = "") {
   const baseApplication = application && typeof application === "object" ? application : {};
   const normalizedDetail = detailData && typeof detailData === "object" ? detailData : null;
-  const applicationId = firstNonEmptyString([baseApplication.id, baseApplication.key, normalizedDetail?.id]);
-  const applicationKey = firstNonEmptyString([baseApplication.key, baseApplication.id, normalizedDetail?.id]);
-  const applicationName = firstNonEmptyString([
-    normalizedDetail?.displayName,
-    normalizedDetail?.name,
-    normalizedDetail?.label,
-    normalizedDetail?.title,
-    baseApplication.name,
-    baseApplication.label,
-    applicationId
-  ]);
-  const scopes = Array.isArray(normalizedDetail?.scopes)
-    ? normalizedDetail.scopes.filter(Boolean)
-    : Array.isArray(baseApplication.scopes)
-      ? baseApplication.scopes.filter(Boolean)
-      : [];
-  const scopeLabels = buildRegisteredApplicationScopeLabels(scopes);
+  const mergedAppData = {
+    ...(baseApplication?.appData && typeof baseApplication.appData === "object" && !Array.isArray(baseApplication.appData)
+      ? baseApplication.appData
+      : {}),
+    ...(normalizedDetail && typeof normalizedDetail === "object" ? normalizedDetail : {})
+  };
   const normalizedSoftwareStatement = firstNonEmptyString([
     softwareStatement,
     extractSoftwareStatementFromApplicationData(normalizedDetail),
+    extractSoftwareStatementFromApplicationData(mergedAppData),
     extractSoftwareStatementFromApplicationData(baseApplication.raw || baseApplication),
     baseApplication.softwareStatement
   ]);
+  const runtimeRecord =
+    normalizeRegisteredApplicationRuntimeRecord({
+      ...baseApplication,
+      ...(normalizedDetail || {}),
+      appData: mergedAppData,
+      softwareStatement: normalizedSoftwareStatement
+    }) || {};
+  const persistedMetadata = buildPersistableRegisteredApplicationMetadata(
+    {
+      ...runtimeRecord,
+      softwareStatement: normalizedSoftwareStatement
+    },
+    {
+      softwareStatement: normalizedSoftwareStatement
+    }
+  );
 
   return {
-    key: applicationKey,
-    id: applicationId,
-    name: applicationName,
-    label: buildRegisteredApplicationLabel(applicationName, scopeLabels, baseApplication.label),
-    clientId: firstNonEmptyString([
-      normalizedDetail?.clientId,
-      normalizedDetail?.client_id,
-      baseApplication.clientId
-    ]),
-    scopes,
-    scopeLabels,
-    type: firstNonEmptyString([
-      normalizedDetail?.type,
-      normalizedDetail?.applicationType,
-      baseApplication.type
-    ]),
+    ...baseApplication,
+    ...runtimeRecord,
+    key: firstNonEmptyString([runtimeRecord?.key, baseApplication.key, baseApplication.id]),
+    id: firstNonEmptyString([runtimeRecord?.id, baseApplication.id, baseApplication.key]),
+    serviceProviders: persistedMetadata.serviceProviders,
+    requestor: persistedMetadata.requestor,
     softwareStatement: normalizedSoftwareStatement,
-    raw: normalizedDetail || baseApplication.raw || null
+    raw:
+      runtimeRecord?.raw && typeof runtimeRecord.raw === "object"
+        ? runtimeRecord.raw
+        : normalizedDetail || baseApplication.raw || null,
+    appData:
+      runtimeRecord?.appData && typeof runtimeRecord.appData === "object"
+        ? runtimeRecord.appData
+        : mergedAppData
+  };
+}
+
+function mergeHydratedRegisteredApplicationsIntoCollection(applications = [], hydratedApplications = []) {
+  const hydratedById = new Map(
+    (Array.isArray(hydratedApplications) ? hydratedApplications : [])
+      .map((application) => [buildCompactRegisteredApplicationIdentity(application), application])
+      .filter(([applicationId]) => Boolean(applicationId))
+  );
+
+  return (Array.isArray(applications) ? applications : []).map((application) => {
+    const applicationId = buildCompactRegisteredApplicationIdentity(application);
+    const hydratedApplication = hydratedById.get(applicationId);
+    if (!hydratedApplication) {
+      return application;
+    }
+
+    return mergeHydratedRegisteredApplication(
+      application,
+      hydratedApplication.raw || hydratedApplication,
+      hydratedApplication.softwareStatement
+    );
+  });
+}
+
+function getProgrammerRegisteredApplicationReferenceIds(programmer = null) {
+  const normalizedProgrammer = programmer && typeof programmer === "object" ? programmer : null;
+  const sourceReferences = []
+    .concat(Array.isArray(normalizedProgrammer?.applications) ? normalizedProgrammer.applications : [])
+    .concat(Array.isArray(normalizedProgrammer?.raw?.applications) ? normalizedProgrammer.raw.applications : [])
+    .concat(
+      Array.isArray(normalizedProgrammer?.raw?.registeredApplications)
+        ? normalizedProgrammer.raw.registeredApplications
+        : []
+    );
+
+  return dedupeCandidateStrings(
+    sourceReferences.map((reference) => extractApplicationGuid(computeEntityReferenceId(reference))).filter(Boolean)
+  );
+}
+
+function getMissingProgrammerRegisteredApplicationReferenceIds(
+  session = null,
+  programmerId = "",
+  registeredApplications = []
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const programmers = Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
+  const selectedProgrammer = resolveSelectedProgrammer(programmers, normalizedProgrammerId);
+  const referenceIds = getProgrammerRegisteredApplicationReferenceIds(selectedProgrammer);
+  if (!normalizedProgrammerId || referenceIds.length === 0) {
+    return [];
+  }
+
+  const hydratedIds = new Set(
+    (Array.isArray(registeredApplications) ? registeredApplications : [])
+      .flatMap((application) => [
+        buildCompactRegisteredApplicationIdentity(application),
+        resolveApplicationGuidFromEntityData(application),
+        firstNonEmptyString([application?.id, application?.key])
+      ])
+      .map((applicationId) => extractApplicationGuid(applicationId))
+      .filter(Boolean)
+  );
+
+  return referenceIds.filter((applicationId) => !hydratedIds.has(applicationId));
+}
+
+async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
+  session = null,
+  programmerId = "",
+  registeredApplications = [],
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications.filter(Boolean) : [];
+  const nextCsrfToken = firstNonEmptyString([csrfToken, currentSession?.console?.csrfToken, "NO-TOKEN"]);
+  const missingApplicationIds = getMissingProgrammerRegisteredApplicationReferenceIds(
+    currentSession,
+    normalizedProgrammerId,
+    normalizedApplications
+  );
+
+  if (!currentSession || !normalizedProgrammerId || missingApplicationIds.length === 0) {
+    return {
+      session: currentSession,
+      applications: normalizedApplications,
+      csrfToken: nextCsrfToken,
+      changed: false
+    };
+  }
+
+  const bulkHydrationResult = await settle(() =>
+    fetchRegisteredApplicationsByIds(currentSession, missingApplicationIds, {
+      csrfToken: nextCsrfToken,
+      pageContextTargetRef
+    })
+  );
+  if (!bulkHydrationResult.ok) {
+    return {
+      session: currentSession,
+      applications: normalizedApplications,
+      csrfToken: nextCsrfToken,
+      changed: false,
+      error: bulkHydrationResult.error
+    };
+  }
+
+  const bulkHydration = bulkHydrationResult.value;
+  const mergedApplications = mergeRegisteredApplicationCatalogs(
+    normalizedApplications,
+    bulkHydration?.applications
+  );
+  const mergedSession = mergeProgrammerApplicationsIntoSession(currentSession, normalizedProgrammerId, {
+    csrfToken: nextCsrfToken,
+    applications: mergedApplications,
+    csrfToken: firstNonEmptyString([bulkHydration?.csrfToken, nextCsrfToken])
+  });
+
+  return {
+    session: mergedSession,
+    applications: mergedApplications,
+    csrfToken: firstNonEmptyString([bulkHydration?.csrfToken, nextCsrfToken]),
+    changed: mergedApplications.length !== normalizedApplications.length
   };
 }
 
@@ -5045,6 +6437,191 @@ async function enrichRegisteredApplicationForHydration(
   };
 }
 
+async function enrichRegisteredApplicationsForHydration(
+  session = null,
+  applications = [],
+  { csrfToken = "NO-TOKEN" } = {}
+) {
+  const normalizedApplications = Array.isArray(applications) ? applications.filter(Boolean) : [];
+  if (normalizedApplications.length === 0) {
+    return {
+      applications: [],
+      csrfToken: firstNonEmptyString([csrfToken, "NO-TOKEN"])
+    };
+  }
+
+  const pageContextTargetRef = {
+    target: null
+  };
+  const hydratedApplications = [];
+  let nextCsrfToken = firstNonEmptyString([csrfToken, "NO-TOKEN"]);
+
+  try {
+    for (const application of normalizedApplications) {
+      const enrichmentResult = await enrichRegisteredApplicationForHydration(session, application, {
+        csrfToken: nextCsrfToken,
+        pageContextTargetRef
+      });
+      hydratedApplications.push(
+        enrichmentResult?.application || mergeHydratedRegisteredApplication(application)
+      );
+      nextCsrfToken = firstNonEmptyString([enrichmentResult?.csrfToken, nextCsrfToken]);
+    }
+  } finally {
+    await closeTemporaryAdobePageContextTarget(pageContextTargetRef.target?.temporaryTarget);
+  }
+
+  return {
+    applications: hydratedApplications,
+    csrfToken: nextCsrfToken
+  };
+}
+
+function programmerRegisteredApplicationsNeedHydration(
+  registeredApplications = [],
+  { requestorId = "", programmerId = "" } = {}
+) {
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications.filter(Boolean) : [];
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  const missingProgrammerReferences = getMissingProgrammerRegisteredApplicationReferenceIds(
+    currentSession,
+    programmerId,
+    normalizedApplications
+  );
+  if (missingProgrammerReferences.length > 0) {
+    return true;
+  }
+
+  if (normalizedApplications.length === 0) {
+    return false;
+  }
+
+  const missingSoftwareStatement = normalizedApplications.some((application) =>
+    !firstNonEmptyString([
+      application?.softwareStatement,
+      extractSoftwareStatementFromApplicationData(application?.raw || application),
+      extractSoftwareStatementFromApplicationData(application?.appData || null)
+    ])
+  );
+  if (missingSoftwareStatement) {
+    return true;
+  }
+
+  const normalizedRequestorId = String(requestorId || "").trim();
+  if (!normalizedRequestorId) {
+    return false;
+  }
+
+  const restV2Candidates = collectRestV2CandidateApplications(normalizedApplications);
+  if (restV2Candidates.length <= 1) {
+    return true;
+  }
+
+  return !restV2Candidates.some((application) =>
+    registeredApplicationSupportsRequestor(application, normalizedRequestorId, programmerId)
+  );
+}
+
+async function hydrateProgrammerRegisteredApplicationsForRuntime(
+  session = null,
+  programmerId = "",
+  registeredApplications = [],
+  { csrfToken = "NO-TOKEN", requestorId = "", force = false } = {}
+) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications.filter(Boolean) : [];
+  let nextCsrfToken = firstNonEmptyString([csrfToken, currentSession?.console?.csrfToken, "NO-TOKEN"]);
+  const missingProgrammerReferences = getMissingProgrammerRegisteredApplicationReferenceIds(
+    currentSession,
+    normalizedProgrammerId,
+    normalizedApplications
+  );
+
+  if (!currentSession || !normalizedProgrammerId || (normalizedApplications.length === 0 && missingProgrammerReferences.length === 0)) {
+    return {
+      session: currentSession,
+      applications: normalizedApplications,
+      csrfToken: nextCsrfToken,
+      changed: false
+    };
+  }
+
+  const pageContextTargetRef = {
+    target: null
+  };
+
+  try {
+    const programmerRefHydrationNeeded =
+      force === true ||
+      missingProgrammerReferences.length > 0;
+    let applications = normalizedApplications;
+    let workingSession = currentSession;
+    let changed = false;
+
+    if (programmerRefHydrationNeeded) {
+      const programmerRefHydrationResult = await hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
+        currentSession,
+        normalizedProgrammerId,
+        normalizedApplications,
+        {
+          csrfToken: nextCsrfToken,
+          pageContextTargetRef
+        }
+      );
+      if (programmerRefHydrationResult?.error) {
+        log(
+          `LoginButton Registered Application ref hydration failed for ${normalizedProgrammerId}: ${serializeError(
+            programmerRefHydrationResult.error
+          )}`
+        );
+      }
+      applications = Array.isArray(programmerRefHydrationResult?.applications)
+        ? programmerRefHydrationResult.applications
+        : applications;
+      workingSession = programmerRefHydrationResult?.session || workingSession;
+      nextCsrfToken = firstNonEmptyString([programmerRefHydrationResult?.csrfToken, nextCsrfToken]);
+      changed = programmerRefHydrationResult?.changed === true;
+    }
+
+    if (
+      force !== true &&
+      !programmerRegisteredApplicationsNeedHydration(applications, {
+        requestorId,
+        programmerId: normalizedProgrammerId
+      })
+    ) {
+      return {
+        session: workingSession,
+        applications,
+        csrfToken: nextCsrfToken,
+        changed
+      };
+    }
+
+    const enrichmentResult = await enrichRegisteredApplicationsForHydration(workingSession, applications, {
+      csrfToken: nextCsrfToken
+    });
+    const hydratedApplications = mergeHydratedRegisteredApplicationsIntoCollection(
+      applications,
+      enrichmentResult?.applications
+    );
+    const mergedSession = mergeProgrammerApplicationsIntoSession(workingSession, normalizedProgrammerId, {
+      applications: hydratedApplications,
+      csrfToken: firstNonEmptyString([enrichmentResult?.csrfToken, nextCsrfToken])
+    });
+
+    return {
+      session: mergedSession,
+      applications: hydratedApplications,
+      csrfToken: firstNonEmptyString([enrichmentResult?.csrfToken, nextCsrfToken]),
+      changed: true
+    };
+  } finally {
+    await closeTemporaryAdobePageContextTarget(pageContextTargetRef.target?.temporaryTarget);
+  }
+}
+
 function parseDcrResponsePayload(text = "") {
   const normalizedText = String(text || "").trim();
   if (!normalizedText) {
@@ -5070,15 +6647,26 @@ function buildVaultCompactRegisteredApplication(application = null) {
     return null;
   }
 
+  const persistedMetadata = buildPersistableRegisteredApplicationMetadata(application);
+  const applicationGuid = resolveApplicationGuidFromEntityData(application);
+  const scopes = resolveRegisteredApplicationScopes(
+    Array.isArray(application?.scopes) ? application.scopes : [],
+    application?.appData || null,
+    application?.raw || null,
+    application
+  );
   const normalizedApplication = {
-    key: firstNonEmptyString([application.key, application.id]),
-    id: firstNonEmptyString([application.id, application.key]),
+    key: firstNonEmptyString([applicationGuid, application.key, application.id]),
+    id: firstNonEmptyString([applicationGuid, application.id, application.key]),
+    guid: firstNonEmptyString([applicationGuid, application.guid, application.id, application.key]),
     name: firstNonEmptyString([application.name]),
     label: firstNonEmptyString([application.label, application.name, application.id]),
     clientId: firstNonEmptyString([application.clientId]),
-    scopes: Array.isArray(application.scopes) ? application.scopes.filter(Boolean) : [],
-    scopeLabels: Array.isArray(application.scopeLabels) ? application.scopeLabels.filter(Boolean) : [],
+    scopes,
+    scopeLabels: buildRegisteredApplicationScopeLabels(scopes),
     type: firstNonEmptyString([application.type]),
+    serviceProviders: persistedMetadata.serviceProviders,
+    requestor: persistedMetadata.requestor,
     softwareStatement: extractSoftwareStatementFromApplicationData(application.raw || application)
   };
 
@@ -5095,18 +6683,26 @@ function resolveVaultDcrServiceDefinition(serviceKey = "") {
 }
 
 function registeredApplicationMatchesRequiredScope(application = null, requiredScope = "") {
-  const normalizedRequiredScope = String(requiredScope || "").trim();
+  const normalizedRequiredScope = normalizeRegisteredApplicationScope(requiredScope);
   if (!application || !normalizedRequiredScope) {
     return false;
   }
 
-  return (Array.isArray(application?.scopes) ? application.scopes : [])
-    .map((scope) => String(scope || "").trim())
-    .includes(normalizedRequiredScope);
+  return resolveRegisteredApplicationScopes(
+    Array.isArray(application?.scopes) ? application.scopes : [],
+    application?.appData || null,
+    application?.raw || null,
+    application
+  ).includes(normalizedRequiredScope);
 }
 
 function buildCompactRegisteredApplicationIdentity(application = null) {
-  return firstNonEmptyString([application?.id, application?.key]);
+  return firstNonEmptyString([
+    resolveApplicationGuidFromEntityData(application),
+    application?.guid,
+    application?.id,
+    application?.key
+  ]);
 }
 
 function compactRegisteredApplicationsMatch(left = null, right = null) {
@@ -5115,15 +6711,485 @@ function compactRegisteredApplicationsMatch(left = null, right = null) {
   return Boolean(leftIdentity) && leftIdentity === rightIdentity;
 }
 
+function normalizeEntityToken(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function extractEntityIdFromToken(value = "") {
+  const text = String(value || "").trim();
+  const prefixed = text.match(/^@[^:]+:(.+)$/);
+  if (prefixed) {
+    return String(prefixed[1] || "").trim();
+  }
+  return text;
+}
+
+function collectRestV2CandidateApplications(registeredApplications = []) {
+  return (Array.isArray(registeredApplications) ? registeredApplications : []).filter((application) =>
+    registeredApplicationMatchesRequiredScope(application, "api:client:v2")
+  );
+}
+
+function collectRestV2AppCandidatesFromPremiumApps(premiumApps = null) {
+  const candidates = [];
+  const seen = new Set();
+
+  const pushCandidate = (application = null) => {
+    if (!registeredApplicationMatchesRequiredScope(application, "api:client:v2")) {
+      return;
+    }
+    const applicationId = buildCompactRegisteredApplicationIdentity(application);
+    if (!applicationId || seen.has(applicationId)) {
+      return;
+    }
+    seen.add(applicationId);
+    candidates.push(application);
+  };
+
+  (Array.isArray(premiumApps?.restV2Apps) ? premiumApps.restV2Apps : []).forEach((application) => pushCandidate(application));
+  pushCandidate(premiumApps?.restV2);
+  return candidates;
+}
+
+function collectRestV2ServiceProviderCandidatesFromApplication(application = null, programmerId = "") {
+  const normalizedApplication = application && typeof application === "object" ? application : {};
+  const candidates = [];
+  const seen = new Set();
+  const softwareStatement = firstNonEmptyString([
+    normalizedApplication?.softwareStatement,
+    extractSoftwareStatementFromApplicationData(normalizedApplication?.raw || null),
+    extractSoftwareStatementFromApplicationData(normalizedApplication)
+  ]);
+
+  const pushValue = (value) => {
+    if (value == null) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => pushValue(item));
+      return;
+    }
+    if (typeof value === "object") {
+      Object.values(value).forEach((item) => pushValue(item));
+      return;
+    }
+
+    const id = extractEntityIdFromToken(value);
+    if (!id) {
+      return;
+    }
+
+    const key = normalizeEntityToken(id);
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    candidates.push(id);
+  };
+
+  pushValue(normalizedApplication?.serviceProviders);
+  pushValue(normalizedApplication?.contentProviders);
+  pushValue(normalizedApplication?.requestors);
+  pushValue(normalizedApplication?.requestorIds);
+  pushValue(normalizedApplication?.requestor);
+  pushValue(normalizedApplication?.serviceProvider);
+  pushValue(normalizedApplication?.appData?.serviceProviders);
+  pushValue(normalizedApplication?.appData?.contentProviders);
+  pushValue(normalizedApplication?.appData?.requestors);
+  pushValue(normalizedApplication?.appData?.requestorIds);
+  pushValue(normalizedApplication?.appData?.requestor);
+  pushValue(normalizedApplication?.appData?.serviceProvider);
+  pushValue(normalizedApplication?.raw?.serviceProviders);
+  pushValue(normalizedApplication?.raw?.contentProviders);
+  pushValue(normalizedApplication?.raw?.requestors);
+  pushValue(normalizedApplication?.raw?.requestorIds);
+  pushValue(normalizedApplication?.raw?.requestor);
+  pushValue(normalizedApplication?.raw?.serviceProvider);
+  pushValue(normalizedApplication?.raw?.appData?.serviceProviders);
+  pushValue(normalizedApplication?.raw?.appData?.contentProviders);
+  pushValue(normalizedApplication?.raw?.appData?.requestors);
+  pushValue(normalizedApplication?.raw?.appData?.requestorIds);
+  pushValue(normalizedApplication?.raw?.appData?.requestor);
+  pushValue(normalizedApplication?.raw?.appData?.serviceProvider);
+  pushValue(
+    collectPassVaultServiceProviderHintsFromApplicationData(normalizedApplication?.raw || null, softwareStatement)
+  );
+  pushValue(
+    collectPassVaultServiceProviderHintsFromApplicationData(normalizedApplication?.appData || null, softwareStatement)
+  );
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.serviceProviders);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.contentProviders);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.requestors);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.requestorIds);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.requestor);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.serviceProvider);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.serviceProviders);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.contentProviders);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.requestors);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.requestorIds);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.requestor);
+  pushValue(normalizedApplication?.raw?.__rawEnvelope?.entityData?.appData?.serviceProvider);
+  pushValue(
+    extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication?.raw || null, softwareStatement)
+  );
+  pushValue(
+    extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication?.appData || null, softwareStatement)
+  );
+  pushValue(
+    collectPassVaultServiceProviderHintsFromApplicationData(normalizedApplication, softwareStatement)
+  );
+  pushValue(
+    extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication, softwareStatement)
+  );
+
+  if (programmerId) {
+    pushValue(programmerId);
+  }
+
+  return candidates;
+}
+
+function registeredApplicationSupportsRequestor(application = null, requestorId = "", programmerId = "") {
+  const normalizedRequestorId = normalizeEntityToken(requestorId);
+  if (!normalizedRequestorId) {
+    return false;
+  }
+
+  return collectRestV2ServiceProviderCandidatesFromApplication(application, programmerId).some((candidate) =>
+    normalizeEntityToken(candidate) === normalizedRequestorId
+  );
+}
+
+function buildOrderedRestV2CandidateApplications(
+  registeredApplications = [],
+  requestorId = "",
+  programmerId = "",
+  preferredRegisteredApplication = null
+) {
+  const candidates = collectRestV2CandidateApplications(registeredApplications);
+  const ordered = [];
+  const seen = new Set();
+
+  const pushCandidate = (application = null) => {
+    const applicationId = buildCompactRegisteredApplicationIdentity(application);
+    if (!applicationId || seen.has(applicationId)) {
+      return;
+    }
+    seen.add(applicationId);
+    ordered.push(application);
+  };
+
+  pushCandidate(preferredRegisteredApplication);
+
+  if (requestorId) {
+    candidates
+      .filter((application) => registeredApplicationSupportsRequestor(application, requestorId, programmerId))
+      .sort((left, right) =>
+        firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
+          firstNonEmptyString([right?.label, right?.name, right?.id]),
+          undefined,
+          { sensitivity: "base" }
+        )
+      )
+      .forEach((application) => pushCandidate(application));
+  }
+
+  candidates
+    .sort((left, right) =>
+      firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
+        firstNonEmptyString([right?.label, right?.name, right?.id]),
+        undefined,
+        { sensitivity: "base" }
+      )
+    )
+    .forEach((application) => pushCandidate(application));
+
+  return ordered;
+}
+
+function buildOrderedRestV2CandidateApplicationsFromPremiumApps(
+  premiumApps = null,
+  requestorId = "",
+  programmerId = "",
+  preferredRegisteredApplication = null
+) {
+  const candidates = collectRestV2AppCandidatesFromPremiumApps(premiumApps);
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const ordered = [];
+  const seen = new Set();
+
+  const pushCandidate = (application = null) => {
+    const applicationId = buildCompactRegisteredApplicationIdentity(application);
+    if (!applicationId || seen.has(applicationId)) {
+      return;
+    }
+    seen.add(applicationId);
+    ordered.push(application);
+  };
+
+  pushCandidate(preferredRegisteredApplication);
+
+  if (requestorId) {
+    candidates
+      .filter((application) => registeredApplicationSupportsRequestor(application, requestorId, programmerId))
+      .sort((left, right) =>
+        firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
+          firstNonEmptyString([right?.label, right?.name, right?.id]),
+          undefined,
+          { sensitivity: "base" }
+        )
+      )
+      .forEach((application) => pushCandidate(application));
+  }
+
+  candidates.forEach((application) => pushCandidate(application));
+  return ordered;
+}
+
+function mergeUniquePremiumServiceApplications(...collections) {
+  return mergeRegisteredApplicationCatalogs(...collections);
+}
+
+function orderRegisteredApplicationHealthServiceCandidates(
+  programmerId = "",
+  requestorId = "",
+  candidates = [],
+  { preferredApplication = null, preferredGuid = "", currentApplication = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedRequestorId = String(requestorId || "").trim();
+  const normalizedPreferredId = String(
+    firstNonEmptyString([preferredGuid, buildCompactRegisteredApplicationIdentity(preferredApplication)])
+  ).trim();
+  const normalizedCurrentId = String(buildCompactRegisteredApplicationIdentity(currentApplication) || "").trim();
+  const orderedCandidates = mergeUniquePremiumServiceApplications(candidates).filter(Boolean);
+
+  return orderedCandidates.sort((leftApplication, rightApplication) => {
+    const leftId = String(buildCompactRegisteredApplicationIdentity(leftApplication) || "").trim();
+    const rightId = String(buildCompactRegisteredApplicationIdentity(rightApplication) || "").trim();
+    const leftPreferred = Number(Boolean(normalizedPreferredId && leftId === normalizedPreferredId));
+    const rightPreferred = Number(Boolean(normalizedPreferredId && rightId === normalizedPreferredId));
+    if (leftPreferred !== rightPreferred) {
+      return rightPreferred - leftPreferred;
+    }
+
+    const leftCurrent = Number(Boolean(normalizedCurrentId && leftId === normalizedCurrentId));
+    const rightCurrent = Number(Boolean(normalizedCurrentId && rightId === normalizedCurrentId));
+    if (leftCurrent !== rightCurrent) {
+      return rightCurrent - leftCurrent;
+    }
+
+    const leftRequestorMatch = Number(
+      Boolean(normalizedRequestorId) &&
+        registeredApplicationSupportsRequestor(leftApplication, normalizedRequestorId, normalizedProgrammerId)
+    );
+    const rightRequestorMatch = Number(
+      Boolean(normalizedRequestorId) &&
+        registeredApplicationSupportsRequestor(rightApplication, normalizedRequestorId, normalizedProgrammerId)
+    );
+    if (leftRequestorMatch !== rightRequestorMatch) {
+      return rightRequestorMatch - leftRequestorMatch;
+    }
+
+    return firstNonEmptyString([leftApplication?.label, leftApplication?.name, leftId]).localeCompare(
+      firstNonEmptyString([rightApplication?.label, rightApplication?.name, rightId]),
+      undefined,
+      { sensitivity: "base" }
+    );
+  });
+}
+
+function buildRegisteredApplicationHealthServiceCandidates(
+  serviceKey = "",
+  programmerId = "",
+  runtimeServices = null,
+  registeredApplications = [],
+  { requestorId = "", preferredApplication = null, preferredGuid = "" } = {}
+) {
+  const normalizedServiceKey = String(serviceKey || "").trim();
+  if (!normalizedServiceKey) {
+    return [];
+  }
+
+  const serviceDefinition = resolveVaultDcrServiceDefinition(normalizedServiceKey);
+  if (!serviceDefinition) {
+    return [];
+  }
+
+  const normalizedRuntimeServices = runtimeServices && typeof runtimeServices === "object" ? runtimeServices : {};
+  const normalizedRegisteredApplications = Array.isArray(registeredApplications)
+    ? registeredApplications.filter(Boolean)
+    : [];
+  const scopeCandidates = normalizedRegisteredApplications.filter((application) =>
+    registeredApplicationMatchesRequiredScope(application, serviceDefinition.requiredScope)
+  );
+  const currentCandidates = collectPremiumServiceCandidateApplications(
+    normalizedRuntimeServices,
+    normalizedServiceKey,
+    normalizedRegisteredApplications
+  ).filter((application) => registeredApplicationMatchesRequiredScope(application, serviceDefinition.requiredScope));
+  const currentApplication = registeredApplicationMatchesRequiredScope(
+    normalizedRuntimeServices?.[normalizedServiceKey] || null,
+    serviceDefinition.requiredScope
+  )
+    ? normalizedRuntimeServices?.[normalizedServiceKey] || null
+    : null;
+
+  return orderRegisteredApplicationHealthServiceCandidates(
+    programmerId,
+    requestorId,
+    [preferredApplication, currentApplication, ...currentCandidates, ...scopeCandidates],
+    {
+      preferredApplication,
+      preferredGuid,
+      currentApplication
+    }
+  );
+}
+
+function resolveMappedRestV2ApplicationForRequestor(registeredApplications = [], requestorId = "", programmerId = "") {
+  const normalizedRequestorId = String(requestorId || "").trim();
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedRequestorId) {
+    return null;
+  }
+
+  const configurationKey = buildHarpoRequestorConfigurationKey(normalizedProgrammerId, normalizedRequestorId);
+  const preferredApplicationId = String(harpoRestV2PreferredAppIdByRequestorKey.get(configurationKey) || "").trim();
+  const restV2Candidates = collectRestV2CandidateApplications(registeredApplications);
+  if (restV2Candidates.length === 0) {
+    return null;
+  }
+
+  const preferredApplication = preferredApplicationId
+    ? restV2Candidates.find(
+        (application) => buildCompactRegisteredApplicationIdentity(application) === preferredApplicationId
+      ) || null
+    : null;
+
+  return (
+    buildRegisteredApplicationHealthServiceCandidates(
+      "restV2",
+      normalizedProgrammerId,
+      { restV2Apps: restV2Candidates, restV2: preferredApplication || null },
+      registeredApplications,
+      {
+        requestorId: normalizedRequestorId,
+        preferredApplication,
+        preferredGuid: preferredApplicationId
+      }
+    )[0] || null
+  );
+}
+
+function maybeAlignSelectedRegisteredApplicationToRequestor(
+  requestorId = "",
+  programmerId = state.selectedProgrammerId,
+  registeredApplications = null,
+  { force = false } = {}
+) {
+  const normalizedRequestorId = String(requestorId || "").trim();
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedRequestorId || !normalizedProgrammerId) {
+    return false;
+  }
+
+  const snapshotContext = buildProgrammerVaultSnapshotContext(state.session, normalizedProgrammerId, {
+    registeredApplications: Array.isArray(registeredApplications) ? registeredApplications : null
+  });
+  if (!snapshotContext?.selectedProgrammer) {
+    return false;
+  }
+
+  const currentSelectedApplication = resolveSelectedRegisteredApplication(
+    snapshotContext.registeredApplications,
+    state.selectedRegisteredApplicationId
+  );
+  const currentSelectedMatchesRequestor = registeredApplicationSupportsRequestor(
+    currentSelectedApplication,
+    normalizedRequestorId,
+    normalizedProgrammerId
+  );
+  const currentSelectedIsRestV2 = registeredApplicationMatchesRequiredScope(
+    currentSelectedApplication,
+    "api:client:v2"
+  );
+  if (!force && currentSelectedApplication && (!currentSelectedIsRestV2 || currentSelectedMatchesRequestor)) {
+    return false;
+  }
+
+  const mappedApplication = resolveMappedRestV2ApplicationForRequestor(
+    snapshotContext.registeredApplications,
+    normalizedRequestorId,
+    normalizedProgrammerId
+  );
+  const mappedApplicationId = firstNonEmptyString([mappedApplication?.key, mappedApplication?.id]);
+  if (!mappedApplicationId || mappedApplicationId === String(state.selectedRegisteredApplicationId || "").trim()) {
+    return false;
+  }
+
+  state.selectedRegisteredApplicationId = mappedApplicationId;
+  return true;
+}
+
+function buildPersistableRegisteredApplicationMetadata(application = null, { softwareStatement = "" } = {}) {
+  const normalizedApplication = application && typeof application === "object" ? application : null;
+  if (!normalizedApplication) {
+    return {
+      serviceProviders: [],
+      requestor: ""
+    };
+  }
+
+  const normalizedSoftwareStatement = firstNonEmptyString([
+    softwareStatement,
+    normalizedApplication?.softwareStatement,
+    extractSoftwareStatementFromApplicationData(normalizedApplication?.raw || normalizedApplication),
+    extractSoftwareStatementFromApplicationData(normalizedApplication)
+  ]);
+  const serviceProviders = dedupeCandidateStrings(
+    collectRestV2ServiceProviderCandidatesFromApplication(
+      {
+        ...normalizedApplication,
+        softwareStatement: normalizedSoftwareStatement
+      },
+      ""
+    )
+      .map((candidate) => extractEntityIdFromToken(candidate))
+      .filter(Boolean)
+  );
+  const requestor = firstNonEmptyString([
+    extractEntityIdFromToken(firstNonEmptyString([normalizedApplication?.requestor, normalizedApplication?.serviceProvider])),
+    extractEntityIdFromToken(
+      extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication?.raw || normalizedApplication, normalizedSoftwareStatement)
+    )
+  ]);
+
+  return {
+    serviceProviders,
+    requestor
+  };
+}
+
 function resolvePreferredVaultServiceApplication({
   definition = null,
   registeredApplications = [],
   selectedRegisteredApplication = null,
-  existingService = null
+  existingService = null,
+  serviceApplicationOverride = null
 } = {}) {
   const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
   if (!normalizedDefinition) {
     return null;
+  }
+
+  const normalizedOverride = buildVaultCompactRegisteredApplication(serviceApplicationOverride);
+  if (normalizedOverride) {
+    return normalizedOverride;
   }
 
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
@@ -5197,12 +7263,161 @@ function buildProgrammerCmVaultService(selectedProgrammer = null, cmTenants = []
   };
 }
 
+function collectPremiumServiceCandidateApplications(runtimeServices = null, serviceKey = "", registeredApplications = []) {
+  const normalizedServiceKey = String(serviceKey || "").trim();
+  if (!normalizedServiceKey) {
+    return [];
+  }
+
+  if (normalizedServiceKey === "restV2") {
+    return collectRestV2AppCandidatesFromPremiumApps(runtimeServices);
+  }
+
+  const listKey = `${normalizedServiceKey}Apps`;
+  const candidates = Array.isArray(runtimeServices?.[listKey]) ? runtimeServices[listKey] : [];
+  const primary = runtimeServices?.[normalizedServiceKey];
+  return mergeRegisteredApplicationCatalogs(candidates, primary ? [primary] : [], registeredApplications);
+}
+
+function selectPrimaryPremiumServiceApplication(candidates = [], ...preferredApplications) {
+  const normalizedCandidates = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+  for (const preferredApplication of preferredApplications) {
+    const preferredId = buildCompactRegisteredApplicationIdentity(preferredApplication);
+    if (!preferredId) {
+      continue;
+    }
+
+    const match =
+      normalizedCandidates.find(
+        (candidate) => buildCompactRegisteredApplicationIdentity(candidate) === preferredId
+      ) || null;
+    if (match) {
+      return match;
+    }
+  }
+
+  return normalizedCandidates[0] || preferredApplications.find(Boolean) || null;
+}
+
+function buildProgrammerPremiumRuntimeSnapshot({
+  selectedProgrammer = null,
+  registeredApplications = [],
+  cmTenants = [],
+  runtimeServices = null,
+  vaultRecord = null
+} = {}) {
+  const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications.filter(Boolean) : [];
+  if ((!selectedProgrammer || typeof selectedProgrammer !== "object") && normalizedApplications.length === 0) {
+    return null;
+  }
+
+  const resolvedRuntimeServices = runtimeServices && typeof runtimeServices === "object" ? runtimeServices : {};
+  const restV2Apps = mergeRegisteredApplicationCatalogs(
+    collectRestV2CandidateApplications(normalizedApplications),
+    collectRestV2AppCandidatesFromPremiumApps(resolvedRuntimeServices),
+    vaultRecord?.services?.restV2?.registeredApplication ? [vaultRecord.services.restV2.registeredApplication] : []
+  );
+  const esmApps = mergeRegisteredApplicationCatalogs(
+    normalizedApplications.filter((application) => registeredApplicationMatchesRequiredScope(application, "analytics:client")),
+    Array.isArray(resolvedRuntimeServices?.esmApps) ? resolvedRuntimeServices.esmApps : [],
+    vaultRecord?.services?.esm?.registeredApplication ? [vaultRecord.services.esm.registeredApplication] : []
+  );
+  const degradationApps = mergeRegisteredApplicationCatalogs(
+    normalizedApplications.filter((application) => registeredApplicationMatchesRequiredScope(application, "decisions:owner")),
+    Array.isArray(resolvedRuntimeServices?.degradationApps) ? resolvedRuntimeServices.degradationApps : [],
+    vaultRecord?.services?.degradation?.registeredApplication ? [vaultRecord.services.degradation.registeredApplication] : []
+  );
+  const resetTempPassApps = mergeRegisteredApplicationCatalogs(
+    normalizedApplications.filter((application) =>
+      registeredApplicationMatchesRequiredScope(application, "temporary:passes:owner")
+    ),
+    Array.isArray(resolvedRuntimeServices?.resetTempPassApps) ? resolvedRuntimeServices.resetTempPassApps : [],
+    vaultRecord?.services?.resetTempPass?.registeredApplication ? [vaultRecord.services.resetTempPass.registeredApplication] : []
+  );
+  const liveCmService = buildProgrammerCmVaultService(selectedProgrammer, cmTenants);
+  const vaultedCmService =
+    vaultRecord?.services?.cm && typeof vaultRecord.services.cm === "object" ? vaultRecord.services.cm : null;
+  const mergedCmTenants = [];
+  const seenCmTenantIds = new Set();
+  []
+    .concat(Array.isArray(vaultedCmService?.matchedTenants) ? vaultedCmService.matchedTenants : [])
+    .concat(Array.isArray(liveCmService?.matchedTenants) ? liveCmService.matchedTenants : [])
+    .forEach((tenant) => {
+      const tenantId = firstNonEmptyString([tenant?.id, tenant?.key]);
+      if (!tenantId || seenCmTenantIds.has(tenantId)) {
+        return;
+      }
+      seenCmTenantIds.add(tenantId);
+      mergedCmTenants.push(tenant);
+    });
+
+  return {
+    restV2Apps,
+    restV2: selectPrimaryPremiumServiceApplication(
+      restV2Apps,
+      resolvedRuntimeServices?.restV2,
+      vaultRecord?.services?.restV2?.registeredApplication
+    ),
+    esmApps,
+    esm: selectPrimaryPremiumServiceApplication(
+      esmApps,
+      resolvedRuntimeServices?.esm,
+      vaultRecord?.services?.esm?.registeredApplication
+    ),
+    degradationApps,
+    degradation: selectPrimaryPremiumServiceApplication(
+      degradationApps,
+      resolvedRuntimeServices?.degradation,
+      vaultRecord?.services?.degradation?.registeredApplication
+    ),
+    resetTempPassApps,
+    resetTempPass: selectPrimaryPremiumServiceApplication(
+      resetTempPassApps,
+      resolvedRuntimeServices?.resetTempPass,
+      vaultRecord?.services?.resetTempPass?.registeredApplication
+    ),
+    cm: {
+      ...(vaultedCmService && typeof vaultedCmService === "object" ? vaultedCmService : {}),
+      ...liveCmService,
+      matchedTenantCount: Math.max(
+        Number(vaultedCmService?.matchedTenantCount || 0),
+        Number(liveCmService?.matchedTenantCount || 0)
+      ),
+      matchedTenants: mergedCmTenants
+    }
+  };
+}
+
+function promoteHarpoResolvedRestV2Application(programmerId = "", registeredApplication = null) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const promotedApplication = buildVaultCompactRegisteredApplication(registeredApplication);
+  if (!normalizedProgrammerId || !promotedApplication) {
+    return null;
+  }
+
+  const currentServices = getCurrentPremiumAppsSnapshot(normalizedProgrammerId);
+  const registeredApplications = getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) || [];
+  const nextRestV2Apps = mergeRegisteredApplicationCatalogs(
+    [promotedApplication],
+    collectRestV2AppCandidatesFromPremiumApps(currentServices),
+    collectRestV2CandidateApplications(registeredApplications)
+  );
+  const nextServices = {
+    ...(currentServices && typeof currentServices === "object" ? currentServices : {}),
+    restV2: promotedApplication,
+    restV2Apps: nextRestV2Apps
+  };
+  setCurrentPremiumAppsSnapshot(normalizedProgrammerId, nextServices);
+  return nextServices;
+}
+
 function buildProgrammerServiceVaultEntries({
   registeredApplications = [],
   selectedProgrammer = null,
   cmTenants = [],
   existingVaultRecord = null,
-  selectedRegisteredApplication = null
+  selectedRegisteredApplication = null,
+  serviceApplicationOverrides = null
 } = {}) {
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
   const services = {};
@@ -5213,7 +7428,8 @@ function buildProgrammerServiceVaultEntries({
       definition,
       registeredApplications: normalizedApplications,
       selectedRegisteredApplication,
-      existingService
+      existingService,
+      serviceApplicationOverride: serviceApplicationOverrides?.[definition.serviceKey] || null
     });
     const client =
       compactRegisteredApplicationsMatch(registeredApplication, existingService?.registeredApplication) &&
@@ -5267,13 +7483,16 @@ function serviceClientNeedsTokenRefresh(client = null, requiredScope = "") {
   return requiredScope ? !scopeIncludes(grantedScope, requiredScope) : false;
 }
 
-async function registerDcrClientWithSoftwareStatement(softwareStatement = "") {
+async function registerDcrClientWithSoftwareStatement(softwareStatement = "", session = state.session) {
   const normalizedSoftwareStatement = String(softwareStatement || "").trim();
   if (!normalizedSoftwareStatement) {
     throw new Error("Registered application software statement is unavailable.");
   }
 
-  const requestUrl = new URL(DCR_REGISTER_PATH, `${ADOBE_SP_BASE_URL.replace(/\/+$/, "")}/`).toString();
+  const requestUrl = new URL(
+    DCR_REGISTER_PATH,
+    `${resolveAdobePassServiceBaseUrl("sp", session).replace(/\/+$/, "")}/`
+  ).toString();
   const attempts = [
     {
       headers: {
@@ -5345,7 +7564,7 @@ async function registerDcrClientWithSoftwareStatement(softwareStatement = "") {
   throw new Error(lastError);
 }
 
-async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", requiredScope = "") {
+async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", requiredScope = "", session = state.session) {
   const normalizedClientId = String(clientId || "").trim();
   const normalizedClientSecret = String(clientSecret || "").trim();
   if (!normalizedClientId || !normalizedClientSecret) {
@@ -5362,7 +7581,10 @@ async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", re
     body.set("scope", normalizedRequiredScope);
   }
 
-  const requestUrl = new URL(DCR_TOKEN_PATH, `${ADOBE_SP_BASE_URL.replace(/\/+$/, "")}/`).toString();
+  const requestUrl = new URL(
+    DCR_TOKEN_PATH,
+    `${resolveAdobePassServiceBaseUrl("sp", session).replace(/\/+$/, "")}/`
+  ).toString();
   const attempts = [
     {
       url: requestUrl,
@@ -5428,6 +7650,122 @@ async function requestDcrServiceAccessToken(clientId = "", clientSecret = "", re
   throw new Error(lastError);
 }
 
+function normalizeHarpoDomainCandidate(value = null) {
+  const rawValue =
+    value && typeof value === "object"
+      ? firstNonEmptyString([value.name, value.domainName, value.id, value.domain])
+      : String(value || "");
+  let normalizedValue = String(rawValue || "").trim().toLowerCase();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  normalizedValue = normalizedValue.replace(/^\*\./, "");
+  if (/^https?:\/\//i.test(normalizedValue)) {
+    try {
+      normalizedValue = new URL(normalizedValue).hostname.toLowerCase();
+    } catch {
+      normalizedValue = normalizedValue.replace(/^https?:\/\//i, "");
+    }
+  }
+
+  return normalizedValue
+    .replace(/\/.*$/, "")
+    .replace(/:\d+$/, "")
+    .replace(/\.$/, "")
+    .trim();
+}
+
+function normalizeHarpoMvpdList(mvpds = []) {
+  return (Array.isArray(mvpds) ? mvpds : [])
+    .map((mvpd) => ({
+      id: firstNonEmptyString([mvpd?.id, mvpd?.mvpd, mvpd?.platformMappingId]),
+      displayName: firstNonEmptyString([mvpd?.displayName, mvpd?.name, mvpd?.id]),
+      platformMappingId: firstNonEmptyString([mvpd?.platformMappingId, mvpd?.platformMappingID, mvpd?.providerId]),
+      boardingStatus: firstNonEmptyString([mvpd?.boardingStatus]),
+      isTempPass: mvpd?.isTempPass === true,
+      isProxy: mvpd?.isProxy === false ? false : true
+    }))
+    .filter((mvpd) => mvpd.id || mvpd.displayName);
+}
+
+function formatHarpoMvpdPickerLabel(mvpd = null) {
+  const normalizedMvpd = mvpd && typeof mvpd === "object" ? mvpd : {};
+  const mvpdId = String(firstNonEmptyString([normalizedMvpd.id]) || "").trim();
+  if (!mvpdId) {
+    return "";
+  }
+  const displayName = String(firstNonEmptyString([normalizedMvpd.displayName, normalizedMvpd.name, mvpdId]) || mvpdId).trim();
+  return `${displayName} (${mvpdId})`;
+}
+
+function normalizeHarpoRequestorConfigurationPayload(payload = null) {
+  const responsePayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const requestor =
+    responsePayload?.requestor && typeof responsePayload.requestor === "object" ? responsePayload.requestor : {};
+  const domains = dedupeCandidateStrings(
+    (Array.isArray(requestor?.domains) ? requestor.domains : []).map(normalizeHarpoDomainCandidate)
+  ).filter(Boolean);
+  const reproDomains = domains.filter((domain) => domain !== "adobe.com");
+  const safeDomains = dedupeCandidateStrings(["adobe.com", ...domains]).filter(Boolean);
+
+  return {
+    requestorId: firstNonEmptyString([requestor?.id]),
+    requestorName: firstNonEmptyString([requestor?.name, requestor?.displayName]),
+    domains,
+    reproDomains,
+    safeDomains,
+    mvpds: normalizeHarpoMvpdList(requestor?.mvpds || responsePayload?.mvpds || requestor?.mvpd),
+    raw: responsePayload
+  };
+}
+
+async function fetchHarpoRequestorConfigurationPayload(requestorId = "", accessToken = "", session = state.session) {
+  const normalizedRequestorId = String(requestorId || "").trim();
+  const normalizedAccessToken = normalizeBearerTokenValue(accessToken);
+  if (!normalizedRequestorId || !normalizedAccessToken) {
+    throw new Error("HARPO requestor configuration is missing the selected requestor or REST API V2 access token.");
+  }
+
+  const requestUrl = new URL(
+    `/api/v2/${encodeURIComponent(normalizedRequestorId)}/configuration`,
+    `${resolveAdobePassServiceBaseUrl("sp", session).replace(/\/+$/, "")}/`
+  ).toString();
+
+  let response;
+  try {
+    response = await fetch(requestUrl, {
+      method: "GET",
+      mode: "cors",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      headers: {
+        ...buildPrimetimeRequestHeaders(normalizedAccessToken),
+        ...buildRestV2Headers(normalizedRequestorId, {
+          Accept: "application/json;charset=utf-8"
+        })
+      }
+    });
+  } catch (error) {
+    throw new Error(`HARPO could not reach the REST V2 configuration endpoint: ${serializeError(error)}`);
+  }
+
+  const rawText = await response.text().catch(() => "");
+  const parsedPayload = parseJsonText(rawText, null);
+  if (!response.ok) {
+    const message = extractConsoleErrorMessage(parsedPayload, rawText);
+    throw new Error(
+      `HARPO requestor configuration returned ${response.status}${message ? `: ${message}` : ""}`
+    );
+  }
+
+  return {
+    ...normalizeHarpoRequestorConfigurationPayload(parsedPayload),
+    requestUrl,
+    fetchedAt: new Date().toISOString()
+  };
+}
+
 async function ensureVaultServiceClientHydrated(serviceRecord = null, definition = null) {
   return ensureVaultServiceClientHydratedWithContext(serviceRecord, definition, {});
 }
@@ -5483,7 +7821,10 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
     }
 
     try {
-      const registeredClient = await registerDcrClientWithSoftwareStatement(softwareStatement);
+      const registeredClient = await registerDcrClientWithSoftwareStatement(
+        softwareStatement,
+        hydrationContext?.session
+      );
       nextClient.clientId = registeredClient.clientId;
       nextClient.clientSecret = registeredClient.clientSecret;
       nextClient.error = "";
@@ -5506,7 +7847,8 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
       const token = await requestDcrServiceAccessToken(
         nextClient.clientId,
         nextClient.clientSecret,
-        normalizedDefinition.requiredScope
+        normalizedDefinition.requiredScope,
+        hydrationContext?.session
       );
       Object.assign(nextClient, token, {
         updatedAt: nowIso,
@@ -5576,6 +7918,37 @@ async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys =
   return nextServices;
 }
 
+function collectAvailableVaultServiceKeys(registeredApplications = []) {
+  return VAULT_DCR_SERVICE_DEFINITIONS.filter((definition) =>
+    (Array.isArray(registeredApplications) ? registeredApplications : []).some((application) =>
+      registeredApplicationMatchesRequiredScope(application, definition.requiredScope)
+    )
+  ).map((definition) => definition.serviceKey);
+}
+
+function vaultServiceRecordReadyForDefinition(serviceRecord = null, definition = null, applicationOverride = null) {
+  const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
+  if (!normalizedDefinition) {
+    return false;
+  }
+
+  const currentService = serviceRecord && typeof serviceRecord === "object" ? serviceRecord : null;
+  if (!currentService || currentService.status !== "ready" || !currentService.client) {
+    return false;
+  }
+
+  if (serviceClientNeedsTokenRefresh(currentService.client, normalizedDefinition.requiredScope)) {
+    return false;
+  }
+
+  const normalizedOverride = buildVaultCompactRegisteredApplication(applicationOverride);
+  if (normalizedOverride && !compactRegisteredApplicationsMatch(normalizedOverride, currentService.registeredApplication)) {
+    return false;
+  }
+
+  return true;
+}
+
 function normalizeConsoleProgrammers(payload) {
   const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
   const seen = new Set();
@@ -5601,6 +7974,17 @@ function normalizeConsoleProgrammers(payload) {
     }
 
     seen.add(key);
+    const programmerRequestorReferences = Array.isArray(entityData.serviceProviders)
+      ? entityData.serviceProviders
+      : Array.isArray(entityData.contentProviders)
+        ? entityData.contentProviders
+        : [];
+    const programmerApplicationReferences = Array.isArray(entityData.applications)
+      ? entityData.applications
+      : Array.isArray(entityData.registeredApplications)
+        ? entityData.registeredApplications
+        : [];
+
     programmers.push({
       key,
       id,
@@ -5617,10 +8001,10 @@ function normalizeConsoleProgrammers(payload) {
         entityData.organizationId,
         entityData.orgId
       ]),
-      requestorIds: Array.isArray(entityData.serviceProviders)
-        ? entityData.serviceProviders.map((reference) => computeEntityReferenceId(reference)).filter(Boolean)
-        : [],
-      requestorCount: Array.isArray(entityData.serviceProviders) ? entityData.serviceProviders.filter(Boolean).length : 0,
+      applications: programmerApplicationReferences.map((reference) => computeEntityReferenceId(reference)).filter(Boolean),
+      applicationCount: programmerApplicationReferences.filter(Boolean).length,
+      requestorIds: programmerRequestorReferences.map((reference) => computeEntityReferenceId(reference)).filter(Boolean),
+      requestorCount: programmerRequestorReferences.filter(Boolean).length,
       raw: entityData
     });
   });
@@ -5645,35 +8029,30 @@ function normalizeConsoleRegisteredApplications(payload) {
       return;
     }
 
-    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
-    const key = firstNonEmptyString([id, entity?.key, `registered-application-${index + 1}`]);
+    const runtimeRecord = normalizeRegisteredApplicationRuntimeRecord(
+      entity && typeof entity === "object" && entity !== entityData
+        ? {
+            ...entityData,
+            __rawEnvelope: entity
+          }
+        : entityData
+    );
+    const id = firstNonEmptyString([runtimeRecord?.id, entityData.id, entity?.id, entity?.key]);
+    const key = firstNonEmptyString([runtimeRecord?.key, id, entity?.key, `registered-application-${index + 1}`]);
     if (!key || seen.has(key)) {
       return;
     }
 
     seen.add(key);
-    const name = firstNonEmptyString([
-      entityData.displayName,
-      entityData.name,
-      entityData.clientId,
-      entityData.label,
-      entityData.title,
-      id ? `Registered Application ${id}` : `Registered Application ${index + 1}`
-    ]);
-    const clientId = firstNonEmptyString([entityData.clientId, entityData.client_id]);
-    const rawScopes = Array.isArray(entityData.scopes) ? entityData.scopes.filter(Boolean) : [];
-    const scopeLabels = buildRegisteredApplicationScopeLabels(rawScopes);
     applications.push({
+      ...(runtimeRecord || {}),
       key,
       id,
-      name,
-      label: buildRegisteredApplicationLabel(name, scopeLabels, name),
-      clientId,
-      scopes: rawScopes,
-      scopeLabels,
-      type: firstNonEmptyString([entityData.type, entityData.applicationType]),
-      softwareStatement: extractSoftwareStatementFromApplicationData(entityData),
-      raw: entityData
+      label: firstNonEmptyString([runtimeRecord?.label, runtimeRecord?.name, id]),
+      raw:
+        runtimeRecord?.raw && typeof runtimeRecord.raw === "object"
+          ? runtimeRecord.raw
+          : entityData
     });
   });
 
@@ -5729,6 +8108,7 @@ function derivePremiumServicesSummary({
   registeredApplicationLoading = false,
   cmTenants = [],
   selectedRegisteredApplication = null,
+  runtimeServices = null,
   vaultRecord = null
 } = {}) {
   if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
@@ -5750,6 +8130,7 @@ function derivePremiumServicesSummary({
   }
 
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
+  const resolvedRuntimeServices = runtimeServices && typeof runtimeServices === "object" ? runtimeServices : {};
   const items = [];
   const labels = [];
 
@@ -5762,10 +8143,20 @@ function derivePremiumServicesSummary({
       vaultServiceRecord?.registeredApplication && typeof vaultServiceRecord.registeredApplication === "object"
         ? vaultServiceRecord.registeredApplication
         : null;
-    const matchingApplication = normalizedApplications.find((application) =>
-      registeredApplicationMatchesRequiredScope(application, rule.scope)
+    const runtimeCandidates = collectPremiumServiceCandidateApplications(
+      resolvedRuntimeServices,
+      firstNonEmptyString([vaultServiceDefinition?.serviceKey]),
+      normalizedApplications
     );
-    if (!matchingApplication && !vaultRegisteredApplication) {
+    const runtimeRegisteredApplication =
+      resolvedRuntimeServices?.[firstNonEmptyString([vaultServiceDefinition?.serviceKey])] &&
+      typeof resolvedRuntimeServices[firstNonEmptyString([vaultServiceDefinition?.serviceKey])] === "object"
+        ? resolvedRuntimeServices[firstNonEmptyString([vaultServiceDefinition?.serviceKey])]
+        : null;
+    const matchingApplication =
+      runtimeCandidates.find((application) => registeredApplicationMatchesRequiredScope(application, rule.scope)) ||
+      normalizedApplications.find((application) => registeredApplicationMatchesRequiredScope(application, rule.scope));
+    if (!matchingApplication && !runtimeRegisteredApplication && !vaultRegisteredApplication) {
       return;
     }
 
@@ -5775,7 +8166,7 @@ function derivePremiumServicesSummary({
     );
     const effectiveApplication = selectedApplicationMatchesScope
       ? selectedRegisteredApplication
-      : matchingApplication || vaultRegisteredApplication;
+      : runtimeRegisteredApplication || matchingApplication || vaultRegisteredApplication;
 
     const applicationName = firstNonEmptyString([
       effectiveApplication?.name,
@@ -6043,8 +8434,8 @@ function render() {
   syncCmuTokenRow(authenticatedDataContext);
   syncCmTenantPicker(authenticatedDataContext);
   syncProgrammerPicker(authenticatedDataContext);
-  syncRegisteredApplicationPicker(authenticatedDataContext);
   syncRequestorPicker(authenticatedDataContext);
+  syncMvpdPicker(authenticatedDataContext);
   syncPremiumServicesSummary(authenticatedDataContext);
   syncAuthenticatedFieldGroups();
   syncHarpoSection(authenticatedDataContext);
@@ -6107,26 +8498,58 @@ function buildAuthenticatedUserDataContext(session = state.session) {
     String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === String(selectedProgrammer?.id || "").trim()
       ? state.selectedProgrammerVaultRecord
       : null;
+  const selectedProgrammerRuntimeContext = programmerAccess.eligible
+    ? buildProgrammerVaultSnapshotContext(currentSession, firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]))
+    : null;
   const registeredApplications = programmerAccess.eligible
-    ? resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer)
+    ? Array.isArray(selectedProgrammerRuntimeContext?.registeredApplications)
+      ? selectedProgrammerRuntimeContext.registeredApplications
+      : resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer)
     : [];
   const selectedRegisteredApplication = programmerAccess.eligible
     ? resolveSelectedRegisteredApplication(registeredApplications, state.selectedRegisteredApplicationId)
     : null;
   const premiumServices = programmerAccess.eligible
-    ? derivePremiumServicesSummary({
-        selectedProgrammer,
-        registeredApplications,
+    ? {
+        ...(selectedProgrammerRuntimeContext?.premiumServices && typeof selectedProgrammerRuntimeContext.premiumServices === "object"
+          ? selectedProgrammerRuntimeContext.premiumServices
+          : derivePremiumServicesSummary({
+              selectedProgrammer,
+              registeredApplications,
+              cmTenants,
+              selectedRegisteredApplication,
+              vaultRecord: selectedProgrammerVaultRecord
+            })),
         registeredApplicationLoading:
           Boolean(selectedProgrammer) &&
-          normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id),
-        cmTenants,
-        selectedRegisteredApplication,
-        vaultRecord: selectedProgrammerVaultRecord
-      })
+          normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id)
+      }
     : { labels: [], loading: false, summary: "" };
-  const requestors = programmerAccess.eligible ? deriveProgrammerRequestorOptions(channels, selectedProgrammer) : [];
+  if (premiumServices.registeredApplicationLoading === true) {
+    premiumServices.loading = true;
+    premiumServices.summary = "Loading premium services…";
+  }
+  const requestors = programmerAccess.eligible
+    ? Array.isArray(selectedProgrammerRuntimeContext?.requestors)
+      ? selectedProgrammerRuntimeContext.requestors
+      : deriveProgrammerRequestorOptions(channels, selectedProgrammer)
+    : [];
   const selectedRequestor = programmerAccess.eligible ? resolveSelectedRequestor(requestors, state.selectedRequestorId) : null;
+  const selectedProgrammerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  const selectedRequestorId = firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]);
+  const selectedHarpoConfigurationKey = buildHarpoRequestorConfigurationKey(selectedProgrammerId, selectedRequestorId);
+  const cachedHarpoRequestorConfiguration = selectedHarpoConfigurationKey
+    ? getHarpoCachedRequestorConfiguration(selectedProgrammerId, selectedRequestorId)
+    : null;
+  const harpoRequestorConfiguration =
+    selectedHarpoConfigurationKey && selectedHarpoConfigurationKey === String(state.harpoRequestorConfiguration?.key || "").trim()
+      ? state.harpoRequestorConfiguration
+      : cachedHarpoRequestorConfiguration || createEmptyHarpoRequestorConfiguration();
+  const mvpdOptions =
+    selectedRequestor && harpoRequestorConfiguration.status === "ready" && Array.isArray(harpoRequestorConfiguration.mvpds)
+      ? harpoRequestorConfiguration.mvpds.filter(Boolean)
+      : [];
+  const selectedMvpd = programmerAccess.eligible ? resolveSelectedMvpd(mvpdOptions, state.selectedMvpdId) : null;
   const name =
     firstNonEmptyString([
       profile?.name,
@@ -6153,6 +8576,7 @@ function buildAuthenticatedUserDataContext(session = state.session) {
       ? `${registeredApplications.length} registered app${registeredApplications.length === 1 ? "" : "s"}`
       : "",
     programmerAccess.eligible && requestors.length > 0 ? `${requestors.length} requestor${requestors.length === 1 ? "" : "s"}` : "",
+    programmerAccess.eligible && mvpdOptions.length > 0 ? `${mvpdOptions.length} MVPD${mvpdOptions.length === 1 ? "" : "s"}` : "",
     !programmerAccess.eligible ? `Programmers require ${programmerAccess.requiredLabel}` : "",
     roles.length > 0 ? roles.join(", ") : ""
   ]
@@ -6166,10 +8590,17 @@ function buildAuthenticatedUserDataContext(session = state.session) {
         programmers.length > 0 ? `Programmers ${programmers.length}` : firstNonEmptyString([consoleContext.status, "Programmers pending"]),
         selectedProgrammer
           ? state.programmerApplicationsLoadingFor === selectedProgrammer.id
-            ? "Registered Applications loading"
-            : `Registered Applications ${registeredApplications.length}`
-          : "Choose a programmer to load registered applications",
-        selectedProgrammer ? `Content providers ${requestors.length}` : "Choose a programmer to load content providers"
+            ? "Programmer hydration loading"
+            : `Premium services ${firstNonEmptyString([premiumServices?.summary, "pending"])}`
+          : "Choose a programmer to hydrate premium services",
+        selectedProgrammer ? `Content providers ${requestors.length}` : "Choose a programmer to load content providers",
+        selectedRequestor
+          ? harpoRequestorConfiguration.status === "loading"
+            ? "MVPDs loading"
+            : harpoRequestorConfiguration.status === "error"
+              ? "MVPDs pending"
+              : `MVPDs ${mvpdOptions.length}`
+          : "Choose a content provider to load MVPDs"
       ]
         .filter(Boolean)
         .join(" | ")
@@ -6185,15 +8616,18 @@ function buildAuthenticatedUserDataContext(session = state.session) {
     cmuTokenHeaderValue,
     selectedCmTenant,
     selectedProgrammer,
+    selectedProgrammerVaultRecord,
     selectedRegisteredApplication,
     selectedRequestor,
+    selectedMvpd,
+    harpoRequestorConfiguration,
     cmuTokenVisible: programmerAccess.eligible,
     cmTenantOptions: cmTenants,
     cmTenantPickerVisible: programmerAccess.eligible,
     programmerOptions: programmers,
     programmerPickerVisible: programmerAccess.eligible,
     registeredApplicationOptions: registeredApplications,
-    registeredApplicationPickerVisible: programmerAccess.eligible,
+    registeredApplicationPickerVisible: false,
     registeredApplicationLoading:
       Boolean(selectedProgrammer) &&
       normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id),
@@ -6202,6 +8636,8 @@ function buildAuthenticatedUserDataContext(session = state.session) {
     premiumServiceItems: Array.isArray(premiumServices?.items) ? premiumServices.items : [],
     requestorOptions: requestors,
     requestorPickerVisible: programmerAccess.eligible,
+    mvpdOptions,
+    mvpdPickerVisible: programmerAccess.eligible,
     workflowMode: adobePassWorkflowActive ? "adobe-pass" : "org-switch-only",
     showHero: true,
     showOrganizationMeta: false,
@@ -6423,6 +8859,24 @@ function resolveSelectedProgrammerApplications(applicationsByProgrammer = {}, se
   return Array.isArray(applicationsByProgrammer[normalizedProgrammerId]) ? applicationsByProgrammer[normalizedProgrammerId] : [];
 }
 
+function mergeRegisteredApplicationCatalogs(...collections) {
+  const merged = [];
+  const seen = new Set();
+
+  collections.forEach((collection) => {
+    (Array.isArray(collection) ? collection : []).forEach((application) => {
+      const applicationId = buildCompactRegisteredApplicationIdentity(application);
+      if (!applicationId || seen.has(applicationId)) {
+        return;
+      }
+      seen.add(applicationId);
+      merged.push(application);
+    });
+  });
+
+  return merged;
+}
+
 function resolveSelectedRegisteredApplication(applications = [], selectedApplicationId = "") {
   const options = Array.isArray(applications) ? applications : [];
   const selectedId = String(selectedApplicationId || "").trim();
@@ -6436,8 +8890,15 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
 
   const normalizedProgrammerId = normalizeOrganizationIdentifier(selectedProgrammer.id);
   const channelOptions = Array.isArray(channels) ? channels : [];
+  const programmerRequestorOptions = Array.isArray(selectedProgrammer?.requestorOptions)
+    ? selectedProgrammer.requestorOptions
+    : Array.isArray(selectedProgrammer?.raw?.requestorOptions)
+      ? selectedProgrammer.raw.requestorOptions
+      : [];
   const rawServiceProviders = Array.isArray(selectedProgrammer?.raw?.serviceProviders)
     ? selectedProgrammer.raw.serviceProviders
+    : Array.isArray(selectedProgrammer?.raw?.contentProviders)
+      ? selectedProgrammer.raw.contentProviders
     : Array.isArray(selectedProgrammer?.requestorIds)
       ? selectedProgrammer.requestorIds
       : [];
@@ -6476,6 +8937,33 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
       raw: option.raw || option
     });
   };
+
+  programmerRequestorOptions.forEach((option) => {
+    if (option && typeof option === "object") {
+      pushRequestor({
+        ...option,
+        programmerId: firstNonEmptyString([option.programmerId, selectedProgrammer.id]),
+        raw: option.raw || option
+      });
+      return;
+    }
+
+    const requestorId = computeEntityReferenceId(option);
+    if (!requestorId) {
+      return;
+    }
+
+    pushRequestor({
+      key: requestorId,
+      id: requestorId,
+      name: requestorId,
+      label: requestorId,
+      programmerId: selectedProgrammer.id,
+      raw: {
+        id: requestorId
+      }
+    });
+  });
 
   channelOptions.forEach((channel) => {
     const channelProgrammerId = normalizeOrganizationIdentifier(channel?.programmerId);
@@ -6517,6 +9005,12 @@ function resolveSelectedRequestor(requestors = [], selectedRequestorId = "") {
   return options.find((option) => option.key === selectedId || option.id === selectedId) || null;
 }
 
+function resolveSelectedMvpd(mvpds = [], selectedMvpdId = "") {
+  const options = Array.isArray(mvpds) ? mvpds : [];
+  const selectedId = String(selectedMvpdId || "").trim();
+  return options.find((option) => option.id === selectedId) || null;
+}
+
 function buildProgrammerVaultLookupContext(session = null, programmerId = "") {
   const normalizedProgrammerId = String(programmerId || "").trim();
   const currentSession = session && typeof session === "object" ? session : null;
@@ -6541,6 +9035,102 @@ function buildProgrammerVaultLookupContext(session = null, programmerId = "") {
   };
 }
 
+function updateProgrammerRuntimeSnapshots(
+  programmerId = "",
+  { session = null, registeredApplications = null, vaultRecord = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = session && typeof session === "object" ? session : state.session && typeof state.session === "object" ? state.session : null;
+  if (!normalizedProgrammerId || !currentSession) {
+    return null;
+  }
+
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  const cmContext = currentSession?.cm && typeof currentSession.cm === "object" ? currentSession.cm : {};
+  const programmers = Array.isArray(consoleContext.programmers) ? consoleContext.programmers : [];
+  const selectedProgrammer = resolveSelectedProgrammer(programmers, normalizedProgrammerId);
+  if (!selectedProgrammer) {
+    return null;
+  }
+
+  const applicationsByProgrammer =
+    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
+      ? consoleContext.applicationsByProgrammer
+      : {};
+  const liveRegisteredApplications = Array.isArray(registeredApplications)
+    ? registeredApplications
+    : getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) ||
+      resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
+  const effectiveVaultRecord =
+    vaultRecord ||
+    (String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+      ? state.selectedProgrammerVaultRecord
+      : null);
+  const vaultApplications = hydrateProgrammerApplicationsFromVault(effectiveVaultRecord);
+  const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs(liveRegisteredApplications, vaultApplications);
+  setCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, effectiveRegisteredApplications);
+
+  const runtimeServices = buildProgrammerPremiumRuntimeSnapshot({
+    selectedProgrammer,
+    registeredApplications: effectiveRegisteredApplications,
+    cmTenants: Array.isArray(cmContext.tenants) ? cmContext.tenants : [],
+    runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId),
+    vaultRecord: effectiveVaultRecord
+  });
+  if (runtimeServices) {
+    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, runtimeServices);
+  }
+
+  return {
+    registeredApplications: effectiveRegisteredApplications,
+    premiumServices: runtimeServices
+  };
+}
+
+function maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(
+  programmerId = "",
+  { registeredApplications = null, runtimeServices = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId || String(state.selectedProgrammerId || "").trim() !== normalizedProgrammerId) {
+    return false;
+  }
+
+  const applications = Array.isArray(registeredApplications)
+    ? registeredApplications
+    : getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) || [];
+  if (!Array.isArray(applications) || applications.length === 0) {
+    return false;
+  }
+
+  const resolvedRuntimeServices =
+    runtimeServices && typeof runtimeServices === "object"
+      ? runtimeServices
+      : getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || null;
+
+  const currentSelection = resolveSelectedRegisteredApplication(applications, state.selectedRegisteredApplicationId);
+  if (registeredApplicationMatchesRequiredScope(currentSelection, "api:client:v2")) {
+    return false;
+  }
+
+  const preferredApplication =
+    buildRegisteredApplicationHealthServiceCandidates(
+      "restV2",
+      normalizedProgrammerId,
+      resolvedRuntimeServices,
+      applications
+    )[0] ||
+    applications[0] ||
+    null;
+  const preferredApplicationId = firstNonEmptyString([preferredApplication?.key, preferredApplication?.id]);
+  if (!preferredApplicationId || preferredApplicationId === String(state.selectedRegisteredApplicationId || "").trim()) {
+    return false;
+  }
+
+  state.selectedRegisteredApplicationId = preferredApplicationId;
+  return true;
+}
+
 function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", { registeredApplications = null } = {}) {
   const normalizedProgrammerId = String(programmerId || "").trim();
   const currentSession = session && typeof session === "object" ? session : null;
@@ -6556,12 +9146,22 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
       ? consoleContext.applicationsByProgrammer
       : {};
+  const vaultCatalog =
+    String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+      ? hydrateProgrammerApplicationsFromVault(state.selectedProgrammerVaultRecord)
+      : [];
+  const liveRegisteredApplications = Array.isArray(registeredApplications)
+    ? registeredApplications
+    : getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) ||
+      resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
+  const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs(
+    liveRegisteredApplications,
+    vaultCatalog
+  );
   const hasHydratedApplications =
     Array.isArray(registeredApplications)
-      || Object.prototype.hasOwnProperty.call(applicationsByProgrammer, normalizedProgrammerId);
-  const effectiveRegisteredApplications = Array.isArray(registeredApplications)
-    ? registeredApplications
-    : resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
+      || Object.prototype.hasOwnProperty.call(applicationsByProgrammer, normalizedProgrammerId)
+      || vaultCatalog.length > 0;
   const channels = Array.isArray(consoleContext.channels) ? consoleContext.channels : [];
   const requestors = deriveProgrammerRequestorOptions(channels, selectedProgrammer);
   const cmTenants = Array.isArray(cmContext.tenants) ? cmContext.tenants : [];
@@ -6569,11 +9169,27 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     effectiveRegisteredApplications,
     state.selectedRegisteredApplicationId
   );
+  const runtimeServices =
+    getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+    buildProgrammerPremiumRuntimeSnapshot({
+      selectedProgrammer,
+      registeredApplications: effectiveRegisteredApplications,
+      cmTenants,
+      vaultRecord:
+        String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+          ? state.selectedProgrammerVaultRecord
+          : null
+    });
   const premiumServices = derivePremiumServicesSummary({
     selectedProgrammer,
     registeredApplications: effectiveRegisteredApplications,
     cmTenants,
-    selectedRegisteredApplication
+    selectedRegisteredApplication,
+    runtimeServices,
+    vaultRecord:
+      String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+        ? state.selectedProgrammerVaultRecord
+        : null
   });
 
   return {
@@ -6584,6 +9200,7 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     selectedRegisteredApplication,
     registeredApplicationsHydrated: hasHydratedApplications,
     registeredApplications: effectiveRegisteredApplications,
+    runtimeServices,
     requestors,
     premiumServices,
     environmentId: firstNonEmptyString([
@@ -6617,7 +9234,7 @@ function resolveVaultSelectedRegisteredApplicationId(applications = [], selected
 async function buildProgrammerVaultSnapshotInput(
   session = null,
   programmerId = "",
-  { registeredApplications = null, source = "network", serviceKeys = null } = {}
+  { registeredApplications = null, source = "network", serviceKeys = null, serviceApplicationOverrides = null } = {}
 ) {
   const snapshotContext = buildProgrammerVaultSnapshotContext(session, programmerId, {
     registeredApplications
@@ -6634,7 +9251,8 @@ async function buildProgrammerVaultSnapshotInput(
       selectedProgrammer: snapshotContext.selectedProgrammer,
       cmTenants: Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
       existingVaultRecord,
-      selectedRegisteredApplication: snapshotContext.selectedRegisteredApplication
+      selectedRegisteredApplication: snapshotContext.selectedRegisteredApplication,
+      serviceApplicationOverrides
     }),
     serviceKeys,
     {
@@ -6642,8 +9260,10 @@ async function buildProgrammerVaultSnapshotInput(
       csrfToken: firstNonEmptyString([snapshotContext.consoleContext?.csrfToken, "NO-TOKEN"])
     }
   );
-  const selectedApplications = VAULT_DCR_SERVICE_DEFINITIONS.map((definition) => services?.[definition.serviceKey]?.registeredApplication)
-    .filter(Boolean);
+  const selectedApplications = buildVaultProgrammerRegisteredApplicationCatalog(
+    snapshotContext.registeredApplications,
+    services
+  );
   const selectedCmTenantId = resolvePersistedSelectionId(
     Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
     state.selectedCmTenantId
@@ -6669,7 +9289,8 @@ async function buildProgrammerVaultSnapshotInput(
       selectedApplications,
       state.selectedRegisteredApplicationId
     ),
-    selectedRequestorId: resolvePersistedSelectionId(snapshotContext.requestors, state.selectedRequestorId),
+    selectedRequestorId: "",
+    selectedMvpdId: "",
     selectedCmTenantId,
     selectedApplications,
     services
@@ -6679,12 +9300,13 @@ async function buildProgrammerVaultSnapshotInput(
 async function persistProgrammerVaultSnapshot(
   session = null,
   programmerId = "",
-  { registeredApplications = null, source = "network", serviceKeys = null } = {}
+  { registeredApplications = null, source = "network", serviceKeys = null, serviceApplicationOverrides = null } = {}
 ) {
   const snapshotInput = await buildProgrammerVaultSnapshotInput(session, programmerId, {
     registeredApplications,
     source,
-    serviceKeys
+    serviceKeys,
+    serviceApplicationOverrides
   });
   if (!snapshotInput) {
     return null;
@@ -6694,6 +9316,11 @@ async function persistProgrammerVaultSnapshot(
   if (String(state.selectedProgrammerId || "").trim() === String(writtenRecord?.programmerId || "").trim()) {
     state.selectedProgrammerVaultRecord = writtenRecord;
   }
+  updateProgrammerRuntimeSnapshots(firstNonEmptyString([writtenRecord?.programmerId, programmerId]), {
+    session,
+    registeredApplications: Array.isArray(registeredApplications) ? registeredApplications : hydrateProgrammerApplicationsFromVault(writtenRecord),
+    vaultRecord: writtenRecord
+  });
   return writtenRecord;
 }
 
@@ -6710,7 +9337,8 @@ async function persistSelectedProgrammerVaultSelections(programmerId = state.sel
       snapshotContext.registeredApplications,
       state.selectedRegisteredApplicationId
     ),
-    selectedRequestorId: resolvePersistedSelectionId(snapshotContext.requestors, state.selectedRequestorId),
+    selectedRequestorId: "",
+    selectedMvpdId: "",
     selectedCmTenantId: resolvePersistedSelectionId(
       Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
       state.selectedCmTenantId
@@ -6747,6 +9375,87 @@ async function persistSelectedProgrammerVaultSelections(programmerId = state.sel
   });
 }
 
+async function ensureProgrammerPremiumServicesHydrated(
+  programmerId = "",
+  { registeredApplications = null, source = "programmer-selection", serviceKeys = null, serviceApplicationOverrides = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  if (!normalizedProgrammerId || !currentSession?.accessToken) {
+    return null;
+  }
+
+  const hydrationKey = buildProgrammerPremiumHydrationKey(normalizedProgrammerId, {
+    serviceKeys,
+    serviceApplicationOverrides
+  });
+  const existingPromise = programmerPremiumHydrationPromiseByKey.get(hydrationKey);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const workPromise = (async () => {
+    const snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId, {
+      registeredApplications
+    });
+    if (!snapshotContext?.selectedProgrammer || !snapshotContext.registeredApplicationsHydrated) {
+      return null;
+    }
+
+    const requestedServiceKeys = dedupeCandidateStrings(
+      (Array.isArray(serviceKeys) ? serviceKeys : collectAvailableVaultServiceKeys(snapshotContext.registeredApplications))
+        .map((serviceKey) => String(serviceKey || "").trim())
+    ).filter(Boolean);
+    if (requestedServiceKeys.length === 0) {
+      return null;
+    }
+
+    const currentVaultRecord =
+      String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+        ? state.selectedProgrammerVaultRecord
+        : await readProgrammerVaultRecord(buildProgrammerVaultLookupContext(currentSession, normalizedProgrammerId));
+
+    const requestedDefinitions = requestedServiceKeys
+      .map((serviceKey) => resolveVaultDcrServiceDefinition(serviceKey))
+      .filter(Boolean);
+    const allServicesReady = requestedDefinitions.length > 0 && requestedDefinitions.every((definition) =>
+      vaultServiceRecordReadyForDefinition(
+        currentVaultRecord?.services?.[definition.serviceKey],
+        definition,
+        serviceApplicationOverrides?.[definition.serviceKey] || null
+      )
+    );
+    updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: currentSession,
+      registeredApplications: snapshotContext.registeredApplications,
+      vaultRecord: currentVaultRecord
+    });
+    if (allServicesReady) {
+      return currentVaultRecord;
+    }
+
+    const writtenRecord = await persistProgrammerVaultSnapshot(currentSession, normalizedProgrammerId, {
+      registeredApplications: snapshotContext.registeredApplications,
+      source,
+      serviceKeys: requestedServiceKeys,
+      serviceApplicationOverrides
+    });
+    updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: currentSession,
+      registeredApplications: snapshotContext.registeredApplications,
+      vaultRecord: writtenRecord
+    });
+    return writtenRecord;
+  })().finally(() => {
+    if (programmerPremiumHydrationPromiseByKey.get(hydrationKey) === workPromise) {
+      programmerPremiumHydrationPromiseByKey.delete(hydrationKey);
+    }
+  });
+
+  programmerPremiumHydrationPromiseByKey.set(hydrationKey, workPromise);
+  return workPromise;
+}
+
 function hydrateSelectedProgrammerFromVaultRecord(vaultRecord = null, programmerId = "", { restoreSelections = false } = {}) {
   const normalizedProgrammerId = String(programmerId || vaultRecord?.programmerId || "").trim();
   const currentSession = state.session && typeof state.session === "object" ? state.session : null;
@@ -6754,15 +9463,25 @@ function hydrateSelectedProgrammerFromVaultRecord(vaultRecord = null, programmer
     return false;
   }
 
+  const hydratedApplications = hydrateProgrammerApplicationsFromVault(vaultRecord);
   const mergedSession = mergeProgrammerApplicationsIntoSession(currentSession, normalizedProgrammerId, {
-    applications: hydrateProgrammerApplicationsFromVault(vaultRecord)
+    applications: hydratedApplications
   });
   state.session = mergedSession;
   state.selectedProgrammerVaultRecord = vaultRecord;
+  const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+    session: mergedSession,
+    registeredApplications: hydratedApplications,
+    vaultRecord
+  });
 
   if (restoreSelections) {
     applyPersistedProgrammerSelections(vaultRecord, normalizedProgrammerId);
   }
+  maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+    registeredApplications: runtimeSnapshot?.registeredApplications,
+    runtimeServices: runtimeSnapshot?.premiumServices
+  });
 
   render();
   return true;
@@ -6783,10 +9502,8 @@ function applyPersistedProgrammerSelections(vaultRecord = null, programmerId = "
       hydratedApplications[0]?.id
     ])
   );
-  state.selectedRequestorId = resolvePersistedSelectionId(
-    snapshotContext.requestors,
-    firstNonEmptyString([vaultRecord?.selectedRequestorId])
-  );
+  state.selectedRequestorId = "";
+  state.selectedMvpdId = "";
   state.selectedCmTenantId = resolvePersistedSelectionId(
     Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
     firstNonEmptyString([vaultRecord?.selectedCmTenantId])
@@ -6899,20 +9616,59 @@ function buildPersistableProgrammer(programmer = null) {
 }
 
 function buildPersistableRegisteredApplications(applications = []) {
-  return (Array.isArray(applications) ? applications : []).map((application) => ({
-    key: firstNonEmptyString([application?.key, application?.id]),
-    id: firstNonEmptyString([application?.id, application?.key]),
-    name: firstNonEmptyString([application?.name]),
-    label: firstNonEmptyString([application?.label, application?.name, application?.id]),
-    clientId: firstNonEmptyString([application?.clientId]),
-    scopes: Array.isArray(application?.scopes) ? application.scopes.filter(Boolean) : [],
-    scopeLabels: Array.isArray(application?.scopeLabels) ? application.scopeLabels.filter(Boolean) : [],
-    type: firstNonEmptyString([application?.type]),
-    softwareStatement: firstNonEmptyString([
-      application?.softwareStatement,
-      extractSoftwareStatementFromApplicationData(application?.raw || application)
-    ])
-  }));
+  return (Array.isArray(applications) ? applications : []).map((application) => {
+    const persistedMetadata = buildPersistableRegisteredApplicationMetadata(application);
+    const applicationGuid = resolveApplicationGuidFromEntityData(application);
+    const scopes = resolveRegisteredApplicationScopes(
+      Array.isArray(application?.scopes) ? application.scopes : [],
+      application?.appData || null,
+      application?.raw || null,
+      application
+    );
+    return {
+      key: firstNonEmptyString([applicationGuid, application?.key, application?.id]),
+      id: firstNonEmptyString([applicationGuid, application?.id, application?.key]),
+      guid: firstNonEmptyString([applicationGuid, application?.guid, application?.id, application?.key]),
+      name: firstNonEmptyString([application?.name]),
+      label: firstNonEmptyString([application?.label, application?.name, application?.id]),
+      clientId: firstNonEmptyString([application?.clientId]),
+      scopes,
+      scopeLabels: buildRegisteredApplicationScopeLabels(scopes),
+      type: firstNonEmptyString([application?.type]),
+      serviceProviders: persistedMetadata.serviceProviders,
+      requestor: persistedMetadata.requestor,
+      softwareStatement: firstNonEmptyString([
+        application?.softwareStatement,
+        extractSoftwareStatementFromApplicationData(application?.raw || application)
+      ])
+    };
+  });
+}
+
+function buildVaultProgrammerRegisteredApplicationCatalog(
+  registeredApplications = [],
+  services = {}
+) {
+  const seen = new Set();
+  const catalog = [];
+  const pushApplication = (application = null) => {
+    const persistedApplication = buildPersistableRegisteredApplications([application])[0] || null;
+    const applicationId = firstNonEmptyString([persistedApplication?.id, persistedApplication?.key]);
+    if (!persistedApplication || !applicationId || seen.has(applicationId)) {
+      return;
+    }
+    seen.add(applicationId);
+    catalog.push(persistedApplication);
+  };
+
+  (Array.isArray(registeredApplications) ? registeredApplications : []).forEach((application) => {
+    pushApplication(application);
+  });
+  VAULT_DCR_SERVICE_DEFINITIONS.forEach((definition) => {
+    pushApplication(services?.[definition.serviceKey]?.registeredApplication || null);
+  });
+
+  return catalog;
 }
 
 function buildPersistableRequestors(requestors = []) {
@@ -7725,12 +10481,21 @@ async function buildPremiumServiceCheatSheetMessage(item = null) {
 
 function syncAuthenticatedFieldGroups() {
   if (cmFieldGroup) {
-    cmFieldGroup.hidden = [cmuTokenSection, cmTenantPickerSection].every((section) => section?.hidden !== false);
+    const cmVisible = [cmuTokenSection, cmTenantPickerSection].some((section) => section?.hidden === false);
+    cmFieldGroup.hidden = !cmVisible;
+    syncFieldClusterPresentation(cmFieldGroup, cmFieldGroupToggle, cmFieldGroupBody, state.cmFieldGroupCollapsed);
   }
 
   if (programmerFieldGroup) {
-    programmerFieldGroup.hidden = [programmerPickerSection, registeredApplicationPickerSection, requestorPickerSection, premiumServicesSection].every(
-      (section) => section?.hidden !== false
+    const programmerVisible = [programmerPickerSection, requestorPickerSection, mvpdPickerSection, premiumServicesSection].some(
+      (section) => section?.hidden === false
+    );
+    programmerFieldGroup.hidden = !programmerVisible;
+    syncFieldClusterPresentation(
+      programmerFieldGroup,
+      programmerFieldGroupToggle,
+      programmerFieldGroupBody,
+      state.programmerFieldGroupCollapsed
     );
   }
 }
@@ -7787,6 +10552,89 @@ function syncRequestorPicker(authenticatedDataContext = {}) {
 
   requestorPicker.value = nextValue;
   requestorPicker.disabled = state.busy || !authenticatedDataContext?.selectedProgrammer || options.length === 0;
+}
+
+function syncMvpdPicker(authenticatedDataContext = {}) {
+  if (!mvpdPicker) {
+    return;
+  }
+
+  const pickerVisible = authenticatedDataContext?.mvpdPickerVisible === true;
+  if (mvpdPickerSection) {
+    mvpdPickerSection.hidden = !pickerVisible;
+  }
+  if (!pickerVisible) {
+    mvpdPicker.disabled = true;
+    mvpdPicker.value = MVPD_PICKER_UNAVAILABLE_VALUE;
+    return;
+  }
+
+  const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  const configurationStatus =
+    selectedRequestor && (!requestorConfiguration.status || requestorConfiguration.status === "idle")
+      ? "loading"
+      : String(requestorConfiguration.status || "");
+  const options = Array.isArray(authenticatedDataContext?.mvpdOptions) ? authenticatedDataContext.mvpdOptions : [];
+  const selectedMvpd = authenticatedDataContext?.selectedMvpd || null;
+  const selectedValue = String(state.selectedMvpdId || "").trim();
+  if (selectedValue && !selectedMvpd && configurationStatus === "ready") {
+    state.selectedMvpdId = "";
+  }
+
+  const nextValue = firstNonEmptyString([
+    selectedMvpd?.id,
+    !selectedRequestor
+      ? MVPD_PICKER_UNAVAILABLE_VALUE
+      : options.length > 0
+        ? MVPD_PICKER_PLACEHOLDER_VALUE
+        : MVPD_PICKER_UNAVAILABLE_VALUE
+  ]);
+  const signature = [
+    firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]),
+    configurationStatus,
+    options.map((option) => `${option.id}:${formatHarpoMvpdPickerLabel(option)}`).join("|")
+  ].join("|");
+
+  if (mvpdPicker.dataset.optionsSignature !== signature) {
+    mvpdPicker.innerHTML = "";
+
+    const placeholderOption = document.createElement("option");
+    if (!selectedRequestor) {
+      placeholderOption.value = MVPD_PICKER_UNAVAILABLE_VALUE;
+      placeholderOption.textContent = "Choose a Content Provider first";
+    } else if (configurationStatus === "loading") {
+      placeholderOption.value = MVPD_PICKER_UNAVAILABLE_VALUE;
+      placeholderOption.textContent = "Loading MVPDs from REST V2 configuration…";
+    } else if (configurationStatus === "error") {
+      placeholderOption.value = MVPD_PICKER_UNAVAILABLE_VALUE;
+      placeholderOption.textContent = "Requestor REST V2 configuration failed. Re-select the Content Provider to retry.";
+    } else if (options.length === 0) {
+      placeholderOption.value = MVPD_PICKER_UNAVAILABLE_VALUE;
+      placeholderOption.textContent = "-- No MVPDs available --";
+    } else {
+      placeholderOption.value = MVPD_PICKER_PLACEHOLDER_VALUE;
+      placeholderOption.textContent = "Choose an MVPD";
+    }
+    mvpdPicker.appendChild(placeholderOption);
+
+    options.forEach((option) => {
+      const optionElement = document.createElement("option");
+      optionElement.value = option.id;
+      optionElement.textContent = formatHarpoMvpdPickerLabel(option);
+      optionElement.style.fontWeight = option.isProxy === false ? "700" : "400";
+      mvpdPicker.appendChild(optionElement);
+    });
+
+    mvpdPicker.dataset.optionsSignature = signature;
+  }
+
+  mvpdPicker.value = nextValue;
+  mvpdPicker.disabled =
+    state.busy ||
+    !selectedRequestor ||
+    configurationStatus !== "ready" ||
+    options.length === 0;
 }
 
 function renderUserDataEntriesInto(container, entries = [], emptyMessage = "No enumerated user fields are available yet.") {
@@ -8049,6 +10897,37 @@ function setThemePickerOpen(open) {
 
   state.themePickerOpen = nextValue;
   render();
+}
+
+function setFieldClusterCollapsed(clusterKey = "", collapsed = false) {
+  const nextValue = collapsed === true;
+  if (clusterKey === "programmer") {
+    if (state.programmerFieldGroupCollapsed === nextValue) {
+      return;
+    }
+    state.programmerFieldGroupCollapsed = nextValue;
+    render();
+    return;
+  }
+
+  if (clusterKey === "cm") {
+    if (state.cmFieldGroupCollapsed === nextValue) {
+      return;
+    }
+    state.cmFieldGroupCollapsed = nextValue;
+    render();
+  }
+}
+
+function syncFieldClusterPresentation(groupElement = null, toggleButton = null, bodyElement = null, collapsed = false) {
+  if (!groupElement || !toggleButton || !bodyElement) {
+    return;
+  }
+
+  const isCollapsed = collapsed === true;
+  groupElement.classList.toggle("is-collapsed", isCollapsed);
+  toggleButton.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+  bodyElement.hidden = isCollapsed;
 }
 
 function getNextThemeStop(currentStop) {
@@ -8946,7 +11825,7 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `selected_registered_application=${firstNonEmptyString([selectedRegisteredApplication?.label, "n/a"])}`,
     `selected_registered_application_id=${firstNonEmptyString([selectedRegisteredApplication?.id, "n/a"])}`,
     `selected_requestor=${firstNonEmptyString([selectedRequestor?.label, "n/a"])}`,
-    `selected_requestor_id=${firstNonEmptyString([selectedRequestor?.id, "n/a"])}`,
+    `selected_requestor_id=${firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key, "n/a"])}`,
     `stored_detected_org_count=${Array.isArray(session?.detectedOrganizations) ? session.detectedOrganizations.length : 0}`,
     `raw_org_object_count=${flattenOrganizations(session?.organizations).length}`,
     `detected_org_option_count=${organizationContext.options.length}`,
@@ -10607,23 +13486,29 @@ async function importZipKeyFiles(fileList) {
     if (clientChanged && state.session?.accessToken) {
       await chrome.storage.local.remove(SESSION_KEY);
       state.session = null;
+      clearProgrammerRuntimeSnapshots();
       state.postLoginHydrationInFlight = false;
       state.selectedCmTenantId = "";
       state.selectedProgrammerId = "";
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
+      state.selectedMvpdId = "";
       state.programmerApplicationsLoadingFor = "";
       state.selectedProgrammerVaultRecord = null;
       state.selectedOrganizationSwitchKey = "";
+      resetHarpoRequestorConfiguration();
       log(`ZIP.KEY switched Adobe IMS client from ${previousClientId} to ${importedConfig.clientId}. Cleared the stored session.`);
     } else if (hasActiveSession(state.session)) {
       state.selectedCmTenantId = "";
       state.selectedProgrammerId = "";
       state.selectedRegisteredApplicationId = "";
       state.selectedRequestorId = "";
+      state.selectedMvpdId = "";
       state.programmerApplicationsLoadingFor = "";
       state.selectedProgrammerVaultRecord = null;
+      clearProgrammerRuntimeSnapshots();
       state.selectedOrganizationSwitchKey = "";
+      resetHarpoRequestorConfiguration();
       void refreshSessionPostLoginContextInBackground(state.session, { reason: "zip-key-runtime-config-update" });
       log(
         `ZIP.KEY updated the post-login console target to ${firstNonEmptyString([
@@ -10777,48 +13662,398 @@ function triggerJsonDownload(payload = null, fileName = "loginbutton-vault.json"
 
 // ── HARPO: visibility gate ────────────────────────────────────────────────────
 
-function deriveHarpoSectionVisible(authenticatedDataContext = {}) {
+function deriveHarpoRestV2Available(authenticatedDataContext = {}) {
   const items = Array.isArray(authenticatedDataContext?.premiumServiceItems)
     ? authenticatedDataContext.premiumServiceItems
     : [];
-  const hasRestV2 = items.some(
+  return items.some(
     (item) => item?.requiredScope === "api:client:v2" || item?.serviceKey === "restV2"
   );
-  return hasRestV2 && Boolean(authenticatedDataContext?.selectedProgrammer);
+}
+
+function getHarpoRequestorConfiguration(authenticatedDataContext = {}) {
+  return authenticatedDataContext?.harpoRequestorConfiguration && typeof authenticatedDataContext.harpoRequestorConfiguration === "object"
+    ? authenticatedDataContext.harpoRequestorConfiguration
+    : createEmptyHarpoRequestorConfiguration();
+}
+
+async function hydrateSelectedRequestorConfiguration({ forceRefresh = false } = {}) {
+  const currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  if (!currentSession?.accessToken) {
+    return createEmptyHarpoRequestorConfiguration();
+  }
+
+  let authenticatedDataContext = buildAuthenticatedUserDataContext(currentSession);
+  const programmerId = firstNonEmptyString([
+    authenticatedDataContext?.selectedProgrammer?.id,
+    authenticatedDataContext?.selectedProgrammer?.key
+  ]);
+  const requestorId = firstNonEmptyString([
+    authenticatedDataContext?.selectedRequestor?.id,
+    authenticatedDataContext?.selectedRequestor?.key
+  ]);
+  if (!programmerId || !requestorId || !deriveHarpoRestV2Available(authenticatedDataContext)) {
+    return createEmptyHarpoRequestorConfiguration();
+  }
+
+  await ensureSelectedProgrammerApplicationsLoaded(programmerId);
+  authenticatedDataContext = buildAuthenticatedUserDataContext(state.session);
+  if (
+    firstNonEmptyString([authenticatedDataContext?.selectedProgrammer?.id, authenticatedDataContext?.selectedProgrammer?.key]) !== programmerId ||
+    firstNonEmptyString([authenticatedDataContext?.selectedRequestor?.id, authenticatedDataContext?.selectedRequestor?.key]) !== requestorId ||
+    !deriveHarpoRestV2Available(authenticatedDataContext)
+  ) {
+    return createEmptyHarpoRequestorConfiguration();
+  }
+
+  return ensureHarpoRequestorConfigurationHydrated(authenticatedDataContext, { forceRefresh });
+}
+
+async function resolveHarpoRequestorConfigurationPayload(programmerId = "", requestorId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedRequestorId = String(requestorId || "").trim();
+  if (!normalizedProgrammerId || !normalizedRequestorId || !state.session?.accessToken) {
+    throw new Error("HARPO requestor configuration is missing the selected programmer or requestor.");
+  }
+
+  await ensureSelectedProgrammerApplicationsLoaded(normalizedProgrammerId);
+
+  let currentSession = state.session && typeof state.session === "object" ? state.session : null;
+  let snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId);
+  if (!snapshotContext?.selectedProgrammer || !snapshotContext.registeredApplicationsHydrated) {
+    throw new Error("HARPO could not hydrate Registered Applications for the selected programmer.");
+  }
+
+  let registeredApplications = Array.isArray(snapshotContext.registeredApplications)
+    ? snapshotContext.registeredApplications
+    : [];
+  let premiumApps =
+    snapshotContext?.runtimeServices && typeof snapshotContext.runtimeServices === "object"
+      ? snapshotContext.runtimeServices
+      : getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+        buildProgrammerPremiumRuntimeSnapshot({
+          selectedProgrammer: snapshotContext.selectedProgrammer,
+          registeredApplications,
+          cmTenants: Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+          vaultRecord: state.selectedProgrammerVaultRecord
+        });
+  if (premiumApps) {
+    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
+  }
+
+  const catalogHydrationResult = await settle(() =>
+    hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, registeredApplications, {
+      csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"]),
+      requestorId: normalizedRequestorId
+    })
+  );
+  if (catalogHydrationResult.ok && Array.isArray(catalogHydrationResult.value?.applications) && catalogHydrationResult.value.applications.length > 0) {
+    registeredApplications = catalogHydrationResult.value.applications;
+    currentSession = catalogHydrationResult.value.session || currentSession;
+    state.session = currentSession;
+    if (catalogHydrationResult.value?.changed) {
+      void persistProgrammerVaultSnapshot(currentSession, normalizedProgrammerId, {
+        registeredApplications,
+        source: "harpo-requestor-config"
+      }).catch((error) => {
+        log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+      });
+    }
+    updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: currentSession,
+      registeredApplications,
+      vaultRecord: state.selectedProgrammerVaultRecord
+    });
+    snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId, {
+      registeredApplications
+    });
+    premiumApps =
+      snapshotContext?.runtimeServices && typeof snapshotContext.runtimeServices === "object"
+        ? snapshotContext.runtimeServices
+        : getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+          buildProgrammerPremiumRuntimeSnapshot({
+            selectedProgrammer: snapshotContext?.selectedProgrammer,
+            registeredApplications,
+            cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+            vaultRecord: state.selectedProgrammerVaultRecord
+          });
+    if (premiumApps) {
+      setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
+    }
+  } else if (!catalogHydrationResult.ok) {
+    log(
+      `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+        catalogHydrationResult.error
+      )}`
+    );
+  }
+
+  const premiumHydrationResult = await settle(() =>
+    ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+      registeredApplications,
+      source: "harpo-requestor-config"
+    })
+  );
+  if (!premiumHydrationResult.ok) {
+    log(
+      `LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(
+        premiumHydrationResult.error
+      )}`
+    );
+  }
+  premiumApps =
+    getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+    premiumApps ||
+    buildProgrammerPremiumRuntimeSnapshot({
+      selectedProgrammer: snapshotContext?.selectedProgrammer,
+      registeredApplications,
+      cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+      vaultRecord: state.selectedProgrammerVaultRecord
+    });
+  if (premiumApps) {
+    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
+  }
+
+  const restV2HydrationCandidates = mergeRegisteredApplicationCatalogs(
+    buildRegisteredApplicationHealthServiceCandidates(
+      "restV2",
+      normalizedProgrammerId,
+      premiumApps,
+      registeredApplications
+    ),
+    collectRestV2CandidateApplications(registeredApplications),
+    collectRestV2AppCandidatesFromPremiumApps(premiumApps)
+  );
+  if (restV2HydrationCandidates.length === 0) {
+    throw new Error("The selected programmer does not have a REST API V2 scoped Registered Application.");
+  }
+
+  const configurationKey = buildHarpoRequestorConfigurationKey(normalizedProgrammerId, normalizedRequestorId);
+  const preferredApplicationId = String(harpoRestV2PreferredAppIdByRequestorKey.get(configurationKey) || "").trim();
+  const preferredApplication = preferredApplicationId
+    ? registeredApplications.find((application) =>
+        buildCompactRegisteredApplicationIdentity(application) === preferredApplicationId
+      ) || null
+    : null;
+  const orderedCandidates = (() => {
+    const requestorScopedCandidates = buildRegisteredApplicationHealthServiceCandidates(
+      "restV2",
+      normalizedProgrammerId,
+      premiumApps,
+      registeredApplications,
+      {
+        requestorId: normalizedRequestorId,
+        preferredApplication,
+        preferredGuid: preferredApplicationId
+      }
+    );
+    if (requestorScopedCandidates.length > 0) {
+      return requestorScopedCandidates;
+    }
+    const runtimeOrdered = buildOrderedRestV2CandidateApplicationsFromPremiumApps(
+      premiumApps,
+      normalizedRequestorId,
+      normalizedProgrammerId,
+      preferredApplication
+    );
+    if (runtimeOrdered.length > 0) {
+      return runtimeOrdered;
+    }
+    return buildOrderedRestV2CandidateApplications(
+      registeredApplications,
+      normalizedRequestorId,
+      normalizedProgrammerId,
+      preferredApplication
+    );
+  })();
+  if (orderedCandidates.length > 0) {
+    log(
+      `HARPO REST V2 candidates for ${normalizedRequestorId}: ${orderedCandidates
+        .map((application) => firstNonEmptyString([application?.label, application?.name, application?.id]))
+        .filter(Boolean)
+        .join(" | ")}`
+    );
+  }
+
+  let lastError = null;
+  for (const candidate of orderedCandidates) {
+    try {
+      const vaultRecord = await ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+        registeredApplications,
+        source: "harpo-requestor-config",
+        serviceKeys: ["restV2"],
+        serviceApplicationOverrides: {
+          restV2: candidate
+        }
+      });
+      const accessToken = firstNonEmptyString([vaultRecord?.services?.restV2?.client?.accessToken]);
+      if (!accessToken) {
+        throw new Error("HARPO could not hydrate a REST API V2 access token for the selected programmer.");
+      }
+
+      const configurationPayload = await fetchHarpoRequestorConfigurationPayload(
+        normalizedRequestorId,
+        accessToken,
+        state.session
+      );
+      harpoRestV2PreferredAppIdByRequestorKey.set(
+        configurationKey,
+        buildCompactRegisteredApplicationIdentity(candidate)
+      );
+      return {
+        vaultRecord,
+        configurationPayload,
+        registeredApplication: candidate
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      log(
+        `HARPO requestor configuration candidate failed for ${normalizedRequestorId} using ${firstNonEmptyString([
+          candidate?.label,
+          candidate?.name,
+          candidate?.id,
+          "unknown app"
+        ])}: ${serializeError(lastError)}`
+      );
+    }
+  }
+
+  throw lastError || new Error("HARPO could not resolve a REST API V2 Registered Application for the selected requestor.");
+}
+
+async function ensureHarpoRequestorConfigurationHydrated(
+  authenticatedDataContext = buildAuthenticatedUserDataContext(state.session),
+  { forceRefresh = false } = {}
+) {
+  const hasRestV2 = deriveHarpoRestV2Available(authenticatedDataContext);
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+  const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  const requestorId = firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]);
+  const requestorLabel = firstNonEmptyString([selectedRequestor?.label, selectedRequestor?.name, requestorId]);
+  const configurationKey = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  if (!hasRestV2 || !programmerId || !requestorId || !configurationKey) {
+    return createEmptyHarpoRequestorConfiguration();
+  }
+
+  const existingLoadPromise = getHarpoRequestorConfigurationLoadPromise(programmerId, requestorId);
+  const cachedConfiguration = forceRefresh ? null : getHarpoCachedRequestorConfiguration(programmerId, requestorId);
+  if (cachedConfiguration?.status === "ready") {
+    if (String(state.harpoRequestorConfiguration?.key || "").trim() !== configurationKey) {
+      state.harpoRequestorConfiguration = cachedConfiguration;
+      render();
+    }
+    return cachedConfiguration;
+  }
+
+  const currentConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  if (currentConfiguration.key === configurationKey && String(currentConfiguration.status || "") === "loading") {
+    if (existingLoadPromise) {
+      return existingLoadPromise;
+    }
+    log(`HARPO requestor configuration load restarted for ${requestorLabel || requestorId}.`);
+  }
+
+  if (existingLoadPromise) {
+    return existingLoadPromise;
+  }
+
+  const loadingConfiguration = {
+    ...createEmptyHarpoRequestorConfiguration(),
+    key: configurationKey,
+    programmerId,
+    requestorId,
+    requestorLabel,
+    status: "loading"
+  };
+  const loadPromise = (async () => {
+    try {
+      const resolvedConfiguration = await resolveHarpoRequestorConfigurationPayload(programmerId, requestorId);
+      const configurationPayload = resolvedConfiguration?.configurationPayload;
+      const readyConfiguration = setHarpoCachedRequestorConfiguration(programmerId, requestorId, {
+        ...createEmptyHarpoRequestorConfiguration(),
+        requestorLabel: firstNonEmptyString([configurationPayload?.requestorName, requestorLabel]),
+        status: "ready",
+        domains: configurationPayload?.domains,
+        reproDomains: configurationPayload?.reproDomains,
+        safeDomains: configurationPayload?.safeDomains,
+        mvpds: configurationPayload?.mvpds,
+        fetchedAt: configurationPayload?.fetchedAt,
+        requestUrl: configurationPayload?.requestUrl,
+        raw: configurationPayload?.raw
+      });
+      promoteHarpoResolvedRestV2Application(programmerId, resolvedConfiguration?.registeredApplication);
+      const refreshedContext = buildAuthenticatedUserDataContext(state.session);
+      if (
+        buildHarpoRequestorConfigurationKey(
+          firstNonEmptyString([refreshedContext?.selectedProgrammer?.id, refreshedContext?.selectedProgrammer?.key]),
+          firstNonEmptyString([refreshedContext?.selectedRequestor?.id, refreshedContext?.selectedRequestor?.key])
+        ) === configurationKey
+      ) {
+        state.harpoRequestorConfiguration = readyConfiguration || loadingConfiguration;
+        render();
+      }
+      log(
+        `HARPO requestor configuration ready for ${requestorLabel || requestorId}: ${
+          Array.isArray(configurationPayload?.mvpds) ? configurationPayload.mvpds.length : 0
+        } MVPDs, ${Array.isArray(configurationPayload?.domains) ? configurationPayload.domains.length : 0} domains.`
+      );
+      return readyConfiguration || loadingConfiguration;
+    } catch (error) {
+      const errorConfiguration = {
+        ...createEmptyHarpoRequestorConfiguration(),
+        key: configurationKey,
+        programmerId,
+        requestorId,
+        requestorLabel,
+        status: "error",
+        error: serializeError(error)
+      };
+      const refreshedContext = buildAuthenticatedUserDataContext(state.session);
+      if (
+        buildHarpoRequestorConfigurationKey(
+          firstNonEmptyString([refreshedContext?.selectedProgrammer?.id, refreshedContext?.selectedProgrammer?.key]),
+          firstNonEmptyString([refreshedContext?.selectedRequestor?.id, refreshedContext?.selectedRequestor?.key])
+        ) === configurationKey
+      ) {
+        state.harpoRequestorConfiguration = errorConfiguration;
+        render();
+      }
+      log(`HARPO requestor configuration fetch failed for ${requestorLabel || requestorId}: ${serializeError(error)}`);
+      return errorConfiguration;
+    } finally {
+      if (getHarpoRequestorConfigurationLoadPromise(programmerId, requestorId) === loadPromise) {
+        setHarpoRequestorConfigurationLoadPromise(programmerId, requestorId, null);
+      }
+    }
+  })();
+
+  state.harpoRequestorConfiguration = loadingConfiguration;
+  setHarpoRequestorConfigurationLoadPromise(programmerId, requestorId, loadPromise);
+  render();
+  return loadPromise;
+}
+
+function deriveHarpoSectionVisible(authenticatedDataContext = {}) {
+  return deriveHarpoRestV2Available(authenticatedDataContext) &&
+    Boolean(authenticatedDataContext?.selectedProgrammer) &&
+    Boolean(authenticatedDataContext?.selectedRequestor);
 }
 
 // ── HARPO: domain extraction ──────────────────────────────────────────────────
 
 function deriveHarpoDomains(authenticatedDataContext = {}) {
-  const programmer = authenticatedDataContext?.selectedProgrammer;
-  if (!programmer) return [];
-
-  // Domains live on Channel (ServiceProvider) entities as objects:
-  //   { id: "cnn.com", domainName: "cnn.com", idpInitiated: false }
-  // requestorOptions are already filtered to the selected programmer.
-  function extractDomainString(d) {
-    if (!d) return "";
-    if (typeof d === "object") {
-      return String(d.domainName || d.id || "").trim().toLowerCase().replace(/\/$/, "");
-    }
-    return String(d).trim().toLowerCase().replace(/\/$/, "");
-  }
-
-  const requestors = Array.isArray(authenticatedDataContext?.requestorOptions)
-    ? authenticatedDataContext.requestorOptions
+  const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  return Array.isArray(requestorConfiguration?.reproDomains)
+    ? requestorConfiguration.reproDomains.filter(Boolean)
     : [];
+}
 
-  const channelDomains = requestors.flatMap((r) => {
-    const rawDomains = Array.isArray(r?.raw?.domains) ? r.raw.domains : [];
-    return rawDomains.map(extractDomainString).filter(Boolean);
-  });
-
-  const programmerRawDomains = Array.isArray(programmer?.raw?.domains)
-    ? programmer.raw.domains.map(extractDomainString).filter(Boolean)
+function deriveHarpoSafeDomains(authenticatedDataContext = {}) {
+  const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  return Array.isArray(requestorConfiguration?.safeDomains)
+    ? requestorConfiguration.safeDomains.filter(Boolean)
     : [];
-
-  const all = [...channelDomains, ...programmerRawDomains].filter((d) => d.length > 0);
-  return [...new Set(all)].sort();
 }
 
 // ── HARPO: sync side panel section ────────────────────────────────────────────
@@ -10826,9 +14061,41 @@ function deriveHarpoDomains(authenticatedDataContext = {}) {
 function syncHarpoSection(authenticatedDataContext = {}) {
   if (!harpoContainer) return;
 
+  if (
+    deriveHarpoRestV2Available(authenticatedDataContext) &&
+    authenticatedDataContext?.selectedProgrammer &&
+    authenticatedDataContext?.selectedRequestor
+  ) {
+    void ensureHarpoRequestorConfigurationHydrated(authenticatedDataContext);
+  }
+
   const visible = deriveHarpoSectionVisible(authenticatedDataContext);
   harpoContainer.hidden = !visible;
   if (!visible) return;
+
+  const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  const reproDomains = deriveHarpoDomains(authenticatedDataContext);
+  const isRecording = state.harpoRecording === true;
+  const isRecordingStarting = state.harpoRecordingStarting === true;
+  const isRecordingStopping = state.harpoRecordingStopping === true;
+  const requestorLabel = firstNonEmptyString([
+    requestorConfiguration?.requestorLabel,
+    authenticatedDataContext?.selectedRequestor?.label,
+    authenticatedDataContext?.selectedRequestor?.name,
+    authenticatedDataContext?.selectedRequestor?.id
+  ]);
+
+  if (!isRecording && !isRecordingStarting && !isRecordingStopping) {
+    if (requestorConfiguration.status === "loading") {
+      setHarpoStatus(`Harvesting Requestor domains for ${requestorLabel || "the selected Content Provider"}…`);
+    } else if (requestorConfiguration.status === "error") {
+      setHarpoStatus(`Could not load Requestor domains: ${firstNonEmptyString([requestorConfiguration.error, "Unknown error"])}`, { error: true });
+    } else if (requestorConfiguration.status === "ready" && reproDomains.length === 0) {
+      setHarpoStatus("This Content Provider returned no non-adobe.com domains for HARPO REPRO.");
+    } else {
+      setHarpoStatus("");
+    }
+  }
 
   if (harpoToggle) {
     harpoToggle.setAttribute("aria-expanded", state.harpoExpanded ? "true" : "false");
@@ -10838,31 +14105,43 @@ function syncHarpoSection(authenticatedDataContext = {}) {
   }
   if (!state.harpoExpanded) return;
 
-  // Recording mode
-  if (state.harpoRecording) {
-    if (harpoReproSection) harpoReproSection.hidden = true;
-    if (harpoRecordingSection) harpoRecordingSection.hidden = false;
-    if (harpoCallCount) harpoCallCount.textContent = String(state.harpoRecordingCount || 0);
-    if (harpoHarButton) harpoHarButton.disabled = true;
-    if (harpoReproButton) harpoReproButton.disabled = true;
-    return;
+  if (harpoRecordingSection) {
+    harpoRecordingSection.hidden = !(isRecording || isRecordingStarting || isRecordingStopping);
   }
-
-  // Normal mode
-  if (harpoRecordingSection) harpoRecordingSection.hidden = true;
-  if (harpoHarButton) harpoHarButton.disabled = false;
-  if (harpoReproButton) harpoReproButton.disabled = false;
+  if (harpoCallCount) {
+    harpoCallCount.textContent = String(state.harpoRecordingCount || 0);
+  }
+  if (harpoHarButton) {
+    harpoHarButton.disabled = isRecording || isRecordingStarting || isRecordingStopping;
+  }
+  if (harpoReproButton) {
+    harpoReproButton.disabled =
+      isRecording ||
+      isRecordingStarting ||
+      isRecordingStopping ||
+      requestorConfiguration.status === "loading" ||
+      requestorConfiguration.status === "error" ||
+      reproDomains.length === 0;
+  }
   if (harpoReproSection) harpoReproSection.hidden = !state.harpoReproOpen;
 
   // Populate domain picker when REPRO is open
   if (state.harpoReproOpen && harpoDomainPicker) {
-    const domains = deriveHarpoDomains(authenticatedDataContext);
+    const domains = reproDomains;
     const sig = domains.join("|");
     if (harpoDomainPicker.dataset.domainSig !== sig) {
+      const previousValue = String(harpoDomainPicker.value || "").trim();
       harpoDomainPicker.innerHTML = "";
       const ph = document.createElement("option");
       ph.value = HARPO_DOMAIN_PICKER_PLACEHOLDER;
-      ph.textContent = domains.length > 0 ? "Choose a domain\u2026" : "No domains configured";
+      ph.textContent =
+        requestorConfiguration.status === "loading"
+          ? "Loading requestor domains…"
+          : requestorConfiguration.status === "error"
+            ? "Could not load requestor domains"
+            : domains.length > 0
+              ? "Choose a requestor domain…"
+              : "No requestor domains configured";
       harpoDomainPicker.appendChild(ph);
       domains.forEach((domain) => {
         const opt = document.createElement("option");
@@ -10871,10 +14150,53 @@ function syncHarpoSection(authenticatedDataContext = {}) {
         harpoDomainPicker.appendChild(opt);
       });
       harpoDomainPicker.dataset.domainSig = sig;
-      harpoDomainPicker.value = HARPO_DOMAIN_PICKER_PLACEHOLDER;
-      if (harpoLaunchButton) harpoLaunchButton.disabled = true;
+      harpoDomainPicker.value = domains.includes(previousValue)
+        ? previousValue
+        : HARPO_DOMAIN_PICKER_PLACEHOLDER;
     }
-    harpoDomainPicker.disabled = state.busy || domains.length === 0;
+    harpoDomainPicker.disabled =
+      state.busy ||
+      isRecording ||
+      isRecordingStarting ||
+      isRecordingStopping ||
+      requestorConfiguration.status !== "ready" ||
+      domains.length === 0;
+  }
+
+  if (harpoRecordToggleButton) {
+    const domainValue = String(harpoDomainPicker?.value || "").trim();
+    const hasSelectedDomain = domainValue && domainValue !== HARPO_DOMAIN_PICKER_PLACEHOLDER;
+    const canStartRecording =
+      state.harpoReproOpen &&
+      requestorConfiguration.status === "ready" &&
+      reproDomains.length > 0 &&
+      hasSelectedDomain &&
+      !state.busy;
+    const showStopState = isRecording || isRecordingStopping;
+
+    harpoRecordToggleButton.disabled =
+      isRecordingStarting ||
+      isRecordingStopping ||
+      (!showStopState && !canStartRecording);
+    harpoRecordToggleButton.classList.toggle("is-recording", showStopState);
+    harpoRecordToggleButton.classList.toggle("is-starting", isRecordingStarting);
+    harpoRecordToggleButton.classList.toggle("is-stopping", isRecordingStopping);
+    harpoRecordToggleButton.setAttribute("aria-pressed", showStopState ? "true" : "false");
+    const recordToggleLabel = isRecordingStarting
+      ? "RECORDING"
+      : showStopState
+        ? "STOP"
+        : "RECORD";
+    harpoRecordToggleButton.setAttribute("aria-label", recordToggleLabel);
+    harpoRecordToggleButton.title = recordToggleLabel;
+
+    if (harpoRecordToggleLabel) {
+      harpoRecordToggleLabel.textContent = recordToggleLabel;
+    }
+    if (harpoRecordToggleIcon) {
+      harpoRecordToggleIcon.classList.toggle("harpo-recordToggleIcon--record", !showStopState);
+      harpoRecordToggleIcon.classList.toggle("harpo-recordToggleIcon--stop", showStopState);
+    }
   }
 }
 
@@ -10896,7 +14218,20 @@ async function loadAndOpenHarFile(file) {
 
 // ── HARPO: open workspace tab ─────────────────────────────────────────────────
 
-async function openHarpoWorkspace(har, { source = "file", fileName = "", programmerName = "", programmerDomains = [] } = {}) {
+async function openHarpoWorkspace(
+  har,
+  {
+    source = "file",
+    fileName = "",
+    programmerName = "",
+    requestorId = "",
+    requestorName = "",
+    programmerDomains = [],
+    safeDomains = [],
+    reproDomains = [],
+    expectedMvpds = []
+  } = {}
+) {
   const key = `${HARPO_STORAGE_PREFIX}${randomToken()}`;
   const selectedProgrammer = resolveSelectedProgrammer(
     state.session?.console?.programmers || [],
@@ -10912,7 +14247,12 @@ async function openHarpoWorkspace(har, { source = "file", fileName = "", program
     source,
     fileName,
     programmerName: pName,
+    requestorId,
+    requestorName,
     programmerDomains,
+    safeDomains: Array.isArray(safeDomains) && safeDomains.length > 0 ? safeDomains : programmerDomains,
+    reproDomains,
+    expectedMvpds,
     createdAt: new Date().toISOString()
   });
 
@@ -10923,60 +14263,57 @@ async function openHarpoWorkspace(har, { source = "file", fileName = "", program
 // ── HARPO: start recording via background ─────────────────────────────────────
 
 async function harpoStartRecordingFromPanel(domain) {
-  if (state.harpoRecording) return;
+  if (state.harpoRecording || state.harpoRecordingStarting || state.harpoRecordingStopping) return;
+  state.harpoRecordingStarting = true;
+  render();
   setHarpoStatus("Starting recording\u2026");
   try {
     const domainUrl = domain.startsWith("http") ? domain : `https://${domain}`;
-    const selectedProgrammer = resolveSelectedProgrammer(
-      state.session?.console?.programmers || [],
-      state.selectedProgrammerId
-    );
-    // Collect all domains for this programmer so HARPO can distinguish
-    // "programmer's own site" traffic from genuine MVPD auth redirects.
-    const consoleChannels = Array.isArray(state.session?.console?.channels)
-      ? state.session.console.channels
-      : [];
-    const programmerChannels = consoleChannels.filter((ch) => {
-      const chProgrammerId = String(ch?.raw?.programmer || "").replace(/^@Programmer:/i, "");
-      return chProgrammerId === state.selectedProgrammerId || ch?.programmerId === state.selectedProgrammerId;
-    });
-    const programmerDomains = [...new Set(
-      programmerChannels.flatMap((ch) =>
-        Array.isArray(ch?.raw?.domains)
-          ? ch.raw.domains.map((d) => typeof d === "object" ? (d.domainName || d.id || "") : String(d || ""))
-              .filter(Boolean)
-          : []
-      )
-    )];
+    const authenticatedDataContext = buildAuthenticatedUserDataContext(state.session);
+    const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+    const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+    const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+    const safeDomains = deriveHarpoSafeDomains(authenticatedDataContext);
+    if (!selectedProgrammer || !selectedRequestor || requestorConfiguration.status !== "ready" || safeDomains.length === 0) {
+      throw new Error("HARPO needs a selected Content Provider with a hydrated REST V2 configuration before recording can start.");
+    }
 
     const response = await chrome.runtime.sendMessage({
       type: HARPO_MESSAGE_START,
       url: domainUrl,
       programmerName: firstNonEmptyString([selectedProgrammer?.name, state.selectedProgrammerId, ""]),
-      programmerDomains
+      requestorId: firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]),
+      requestorName: firstNonEmptyString([selectedRequestor?.label, selectedRequestor?.name]),
+      programmerDomains: Array.isArray(requestorConfiguration?.domains) ? requestorConfiguration.domains : [],
+      safeDomains
     });
     if (!response?.ok) throw new Error(response?.error || "Failed to start recording.");
+    state.harpoRecordingStarting = false;
     state.harpoRecording = true;
     state.harpoRecordingCount = 0;
     setHarpoStatus("");
     render();
     harpoStartCountPoll();
   } catch (err) {
+    state.harpoRecordingStarting = false;
     setHarpoStatus(`Could not start: ${serializeError(err)}`, { error: true });
+    render();
   }
 }
 
 // ── HARPO: stop recording via background ──────────────────────────────────────
 
 async function harpoStopRecordingFromPanel() {
-  if (!state.harpoRecording) return;
+  if (!state.harpoRecording || state.harpoRecordingStarting || state.harpoRecordingStopping) return;
   harpoStopCountPoll();
+  state.harpoRecordingStopping = true;
+  render();
   setHarpoStatus("Stopping\u2026");
   try {
     const response = await chrome.runtime.sendMessage({ type: HARPO_MESSAGE_STOP });
+    state.harpoRecordingStopping = false;
     state.harpoRecording = false;
     state.harpoRecordingCount = 0;
-    state.harpoReproOpen = false;
     render();
     if (response?.ok) {
       setHarpoStatus(`Done \u2014 ${response.entryCount || 0} calls. Opening workspace\u2026`, { ok: true });
@@ -10984,6 +14321,7 @@ async function harpoStopRecordingFromPanel() {
       throw new Error(response?.error || "Stop failed.");
     }
   } catch (err) {
+    state.harpoRecordingStopping = false;
     state.harpoRecording = false;
     setHarpoStatus(`Stop failed: ${serializeError(err)}`, { error: true });
     render();
@@ -11000,10 +14338,14 @@ function harpoStartCountPoll() {
     try {
       const response = await chrome.runtime.sendMessage({ type: HARPO_MESSAGE_STATUS });
       if (response?.recording) {
+        state.harpoRecording = true;
+        state.harpoRecordingStarting = false;
         state.harpoRecordingCount = Number(response.count || 0);
         if (harpoCallCount) harpoCallCount.textContent = String(state.harpoRecordingCount);
-      } else if (state.harpoRecording) {
+      } else if (state.harpoRecording || state.harpoRecordingStarting || state.harpoRecordingStopping) {
         state.harpoRecording = false;
+        state.harpoRecordingStarting = false;
+        state.harpoRecordingStopping = false;
         harpoStopCountPoll();
         render();
       }

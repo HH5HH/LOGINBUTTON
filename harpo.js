@@ -11,6 +11,7 @@ import {
   getHarpoTrafficDomainBucket,
   getHarpoTrafficHostname,
   isHarpoAdobeTraffic,
+  isHarpoPassSamlAssertionConsumer,
   isHarpoPassTraffic
 } from "./harpo-traffic.js";
 
@@ -112,6 +113,43 @@ function indexHeaders(headers = []) {
 
 function getHeaderValue(headers = [], name) {
   return indexHeaders(headers)[String(name || "").toLowerCase()] || "";
+}
+
+function dedupeHarpoDomainBuckets(domains = []) {
+  return [...new Set(
+    (Array.isArray(domains) ? domains : [])
+      .map((domain) => getHarpoTrafficDomainBucket(domain))
+      .filter(Boolean)
+  )];
+}
+
+function matchesHarpoDomainList(hostname = "", domains = []) {
+  const normalizedHost = getHarpoTrafficHostname(hostname);
+  if (!normalizedHost) return false;
+  return (Array.isArray(domains) ? domains : []).some((domain) => {
+    const normalizedDomain = getHarpoTrafficHostname(domain);
+    if (!normalizedDomain) return false;
+    return normalizedHost === normalizedDomain || normalizedHost.endsWith(`.${normalizedDomain}`);
+  });
+}
+
+function extractSamlMvpdDomains(entry) {
+  const headerValues = [
+    getHeaderValue(entry?.request?.headers || [], "origin"),
+    getHeaderValue(entry?.request?.headers || [], "referer"),
+    getHeaderValue(entry?.response?.headers || [], "access-control-allow-origin")
+  ];
+  return dedupeHarpoDomainBuckets(
+    headerValues
+      .flatMap((value) => String(value || "").split(","))
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .filter((value) => value !== "*")
+      .filter((value) => {
+        const hostname = getHarpoTrafficHostname(value);
+        return hostname && !isHarpoAdobeTraffic(hostname) && !isSafeDomainHost(hostname);
+      })
+  );
 }
 
 function truncateMiddle(value, edge = 10) {
@@ -1124,9 +1162,9 @@ function buildGenericAnalysisCard(entry, classification) {
   `;
 }
 
-function isProgrammerDomainHost(hostname) {
+function isSafeDomainHost(hostname) {
   const normalizedHost = String(hostname || "").toLowerCase();
-  return programmerDomains.some((domain) => {
+  return safeDomains.some((domain) => {
     const normalizedDomain = String(domain || "").toLowerCase().replace(/\.$/, "");
     return normalizedDomain && (normalizedHost === normalizedDomain || normalizedHost.endsWith(`.${normalizedDomain}`));
   });
@@ -1141,9 +1179,14 @@ let activeStatusFilter = "all";
 let selectedIndex      = -1;
 let rawHarPayload      = null;
 let programmerName     = "";
-let programmerDomains  = [];   // programmer's own domains — not MVPD
+let requestorId        = "";
+let requestorName      = "";
+let safeDomains        = [];   // requestor config domains plus adobe.com
+let reproDomains       = [];
+let expectedMvpds      = [];
 let sessionKey         = "";
 let detailRenderToken  = 0;
+let pendingCallListAnchor = false;
 
 // ─── IndexedDB load ───────────────────────────────────────────────────────────
 
@@ -1155,10 +1198,18 @@ async function loadFromIdb(key) {
       setLoadStatus("Session not found. It may have expired or been from a previous browser session.");
       return;
     }
-    sessionKey       = key;
-    programmerName   = payload.programmerName || "";
-    programmerDomains = Array.isArray(payload.programmerDomains) ? payload.programmerDomains : [];
-    rawHarPayload    = payload;
+    sessionKey      = key;
+    programmerName  = payload.programmerName || "";
+    requestorId     = payload.requestorId || "";
+    requestorName   = payload.requestorName || "";
+    safeDomains     = Array.isArray(payload.safeDomains)
+      ? payload.safeDomains
+      : Array.isArray(payload.programmerDomains)
+        ? payload.programmerDomains
+        : [];
+    reproDomains    = Array.isArray(payload.reproDomains) ? payload.reproDomains : [];
+    expectedMvpds   = Array.isArray(payload.expectedMvpds) ? payload.expectedMvpds : [];
+    rawHarPayload   = payload;
     processHar(payload.har);
   } catch (err) {
     setLoadStatus(`Error reading IndexedDB: ${err?.message || err}`);
@@ -1186,6 +1237,7 @@ function processHar(har) {
   let adobeGateOpen = false;
   let passGateOpen  = false;
   let mvpdGateOpen  = false;
+  let mvpdDomains   = dedupeHarpoDomainBuckets(rawHarPayload?.mvpdDomains || []);
 
   classifiedEntries = entries
     .map((entry, idx) => {
@@ -1200,17 +1252,34 @@ function processHar(har) {
         passGateOpen = true;
       }
 
+      if (
+        !mvpdGateOpen &&
+        isHarpoPassSamlAssertionConsumer(url)
+      ) {
+        const samlMvpdDomains = extractSamlMvpdDomains(entry);
+        if (samlMvpdDomains.length > 0) {
+          mvpdDomains = dedupeHarpoDomainBuckets([...mvpdDomains, ...samlMvpdDomains]);
+          mvpdGateOpen = true;
+        }
+      } else if (
+        !mvpdGateOpen &&
+        mvpdDomains.length > 0 &&
+        matchesHarpoDomainList(hostname, mvpdDomains) &&
+        !isSafeDomainHost(hostname) &&
+        !isHarpoAdobeTraffic(hostname)
+      ) {
+        mvpdGateOpen = true;
+      }
+
       const classification = classifyHarpoEntry(entry, {
-        programmerDomains,
+        programmerDomains: safeDomains,
         adobeGateOpen,
         passGateOpen,
-        mvpdGateOpen
+        mvpdGateOpen,
+        mvpdDomains
       });
 
-      const location = getHeaderValue(entry?.response?.headers || [], "location");
-      if (classification?.domain === "pass" && classification.phase === "AuthN" && location && !isHarpoAdobeTraffic(location) && !isProgrammerDomainHost(getHarpoTrafficHostname(location))) {
-        mvpdGateOpen = true;
-      } else if (mvpdGateOpen && isProgrammerDomainHost(hostname)) {
+      if (mvpdGateOpen && classification?.domain === "programmer" && String(entry?._resourceType || "").toLowerCase() === "document") {
         mvpdGateOpen = false;
       }
       if (!classification) return null;
@@ -1241,9 +1310,12 @@ function renderMeta() {
   if (!el) return;
   const parts = [];
   const uniqueDomainCount = new Set(classifiedEntries.map((entry) => entry.domainBucket)).size;
-  if (programmerName)              parts.push(programmerName);
+  const currentLabel = [programmerName, requestorName || requestorId].filter(Boolean).join(" / ");
+  if (currentLabel)               parts.push(currentLabel);
   if (harData?.log?.creator?.name) parts.push(`via ${harData.log.creator.name}`);
-  if (classifiedEntries.length)    parts.push(`${classifiedEntries.length} entries across ${uniqueDomainCount} domains`);
+  if (classifiedEntries.length) {
+    parts.push(`${classifiedEntries.length} entries across ${uniqueDomainCount} domains`);
+  }
   el.textContent = parts.join("  ·  ");
 }
 
@@ -1280,6 +1352,7 @@ function renderDomainFilters() {
   select.dataset.harpoWired = "true";
   select.addEventListener("change", () => {
     activeDomainFilter = select.value || "all";
+    pendingCallListAnchor = true;
     renderStatusFilters();
     renderCallList();
   });
@@ -1325,6 +1398,7 @@ function renderStatusFilters() {
   pillsEl.querySelectorAll("[data-status-filter]").forEach((button) => {
     button.addEventListener("click", () => {
       activeStatusFilter = button.dataset.statusFilter || "all";
+      pendingCallListAnchor = true;
       renderStatusFilters();
       renderCallList();
     });
@@ -1332,12 +1406,38 @@ function renderStatusFilters() {
 }
 
 function getFilteredEntries() {
-  return classifiedEntries.filter(c => {
+  return getDomainScopedEntries().filter(c => {
     if (activeDomainFilter !== "all" && c.domainBucket !== activeDomainFilter) return false;
     const status = Number(c?.entry?.response?.status || 0);
     if (activeStatusFilter !== "all" && String(status) !== activeStatusFilter) return false;
     return true;
   });
+}
+
+function getSelectedEntry() {
+  return classifiedEntries.find((entry) => entry.idx === selectedIndex) || null;
+}
+
+function getSelectionAnchorEntry(filtered = []) {
+  if (!Array.isArray(filtered) || filtered.length === 0 || selectedIndex === -1) return null;
+  const nextVisibleEntry = filtered.find((entry) => entry.idx > selectedIndex);
+  if (nextVisibleEntry) return nextVisibleEntry;
+  return filtered[filtered.length - 1] || null;
+}
+
+function anchorCallListToSelection(listEl, filtered = [], selectedVisible = false) {
+  if (!pendingCallListAnchor || !listEl) return;
+  pendingCallListAnchor = false;
+
+  let anchorIdx = selectedIndex;
+  if (!selectedVisible) {
+    anchorIdx = getSelectionAnchorEntry(filtered)?.idx ?? -1;
+  }
+  if (anchorIdx === -1) return;
+
+  const anchorEl = listEl.querySelector(`[data-idx="${String(anchorIdx)}"]`);
+  if (!anchorEl) return;
+  anchorEl.scrollIntoView({ block: selectedVisible ? "nearest" : "center" });
 }
 
 function renderEmptyDetail(title, body) {
@@ -1358,16 +1458,23 @@ function renderCallList() {
   el.innerHTML = "";
 
   const filtered = getFilteredEntries();
-  const visibleSelection = filtered.some((entry) => entry.idx === selectedIndex);
-  if (!visibleSelection) {
+  const selectedEntry = getSelectedEntry();
+  if (selectedIndex !== -1 && !selectedEntry) {
     selectedIndex = -1;
   }
+  const visibleSelection = filtered.some((entry) => entry.idx === selectedIndex);
   if (filtered.length === 0) {
     el.innerHTML = `<div class="harpo-empty">
       <p class="spectrum-Heading spectrum-Heading--sizeM harpo-empty-title">No matching calls</p>
       <p class="spectrum-Body spectrum-Body--sizeS harpo-empty-body">Adjust the domain or status filters to inspect another slice of traffic.</p>
     </div>`;
-    renderEmptyDetail("No matching calls", "Choose another domain or status filter to inspect a different slice of traffic.");
+    pendingCallListAnchor = false;
+    if (selectedIndex === -1) {
+      renderEmptyDetail(
+        "No matching calls",
+        "Choose another domain or status filter to inspect a different slice of traffic."
+      );
+    }
     return;
   }
   if (selectedIndex === -1) {
@@ -1399,10 +1506,12 @@ function renderCallList() {
     fragment.appendChild(item);
   });
   el.appendChild(fragment);
+  anchorCallListToSelection(el, filtered, visibleSelection);
 }
 
 function selectEntry(idx) {
   selectedIndex = idx;
+  pendingCallListAnchor = true;
   renderCallList();
   const c = classifiedEntries.find(x => x.idx === idx);
   if (c) void renderDetail(c);
@@ -1520,7 +1629,7 @@ function wireDownloadButton() {
   btn.dataset.harpoWired = "true";
   btn.addEventListener("click", () => {
     const ts       = new Date().toISOString().replace(/[:]/g, "-").replace(/\.\d{3}Z$/, "Z");
-    const safeName = (programmerName || "recording").replace(/[^a-zA-Z0-9]/g, "-");
+    const safeName = (requestorName || programmerName || "recording").replace(/[^a-zA-Z0-9]/g, "-");
     const fileName = `harpo-${safeName}-${ts}.har`;
     const json     = JSON.stringify(rawHarPayload.har, null, 2);
     const blob     = new Blob([json], { type: "application/json" });

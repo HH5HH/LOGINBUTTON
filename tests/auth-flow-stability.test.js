@@ -147,27 +147,320 @@ test("authenticated CM and Programmer controls live in separate field containers
 
   assert.match(appMarkup, /<section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">/);
   assert.match(appMarkup, /<section[\s\S]*id="programmerFieldGroup"[\s\S]*class="field-cluster field-cluster--programmer"/);
+  assert.match(appMarkup, /id="programmerFieldGroupToggle"/);
+  assert.match(appMarkup, /id="programmerFieldGroupBody"/);
+  assert.match(appMarkup, /id="cmFieldGroupToggle"/);
+  assert.match(appMarkup, /id="cmFieldGroupBody"/);
   assert.match(appMarkup, /id="cmuTokenContainer"/);
   assert.match(appMarkup, /id="cmTenantPickerContainer"/);
   assert.match(appMarkup, /id="programmerPickerContainer"/);
-  assert.match(appMarkup, /id="registeredApplicationPickerContainer"/);
   assert.match(appMarkup, /id="requestorPickerContainer"/);
+  assert.match(appMarkup, /id="mvpdPickerContainer"/);
   assert.match(appMarkup, /id="premiumServicesContainer"/);
   assert.match(appMarkup, /id="harpoContainer"/);
+  assert.doesNotMatch(appMarkup, /id="registeredApplicationPickerContainer"/);
+  assert.doesNotMatch(appMarkup, />Registered Applications</);
   assert.ok(
     appMarkup.indexOf('id="harpoContainer"') < appMarkup.indexOf('id="premiumServicesContainer"'),
     "HARPO should render before Premium Services in the sidepanel"
   );
+  assert.ok(
+    appMarkup.indexOf('id="programmerFieldGroup"') < appMarkup.indexOf('id="cmFieldGroup"'),
+    "Programmer controls should render before CM controls"
+  );
   assert.match(appSource, /function syncAuthenticatedFieldGroups\(\)/);
-  assert.match(appSource, /cmFieldGroup\.hidden = \[cmuTokenSection, cmTenantPickerSection\]/);
+  assert.match(appSource, /function setFieldClusterCollapsed\(clusterKey = "", collapsed = false\)/);
+  assert.match(appSource, /function syncFieldClusterPresentation\(groupElement = null, toggleButton = null, bodyElement = null, collapsed = false\)/);
+  assert.match(appSource, /const cmVisible = \[cmuTokenSection, cmTenantPickerSection\]\.some/);
+  assert.match(appSource, /const programmerVisible = \[programmerPickerSection, requestorPickerSection, mvpdPickerSection, premiumServicesSection\]\.some/);
+  assert.match(appSource, /syncFieldClusterPresentation\(cmFieldGroup, cmFieldGroupToggle, cmFieldGroupBody, state\.cmFieldGroupCollapsed\)/);
   assert.match(
     appSource,
-    /programmerFieldGroup\.hidden = \[programmerPickerSection, registeredApplicationPickerSection, requestorPickerSection, premiumServicesSection\]/
+    /syncFieldClusterPresentation\(\s*programmerFieldGroup,\s*programmerFieldGroupToggle,\s*programmerFieldGroupBody,\s*state\.programmerFieldGroupCollapsed\s*\)/
   );
-  assert.match(appCss, /\.field-cluster,\s*\.field-clusterHeader,\s*\.org-pickerControl,/);
-  assert.match(appCss, /\.field-cluster > \.org-pickerCompact \{\s*padding-top: 0;\s*border-top: 0;/);
+  assert.match(appSource, /function syncMvpdPicker\(authenticatedDataContext = \{\}\)/);
+  assert.doesNotMatch(appSource, /syncRegisteredApplicationPicker\(authenticatedDataContext\);/);
+  assert.match(appSource, /selectedMvpdId:/);
+  assert.match(appCss, /\.field-cluster,\s*\.field-clusterHeader,\s*\.field-clusterBody,\s*\.field-clusterHeaderCopy,/);
+  assert.match(appCss, /\.field-clusterToggle \{/);
+  assert.match(appCss, /\.field-clusterBody > \.org-pickerCompact \{\s*padding-top: 0;\s*border-top: 0;/);
   assert.doesNotMatch(appCss, /\.field-cluster::before/);
   assert.doesNotMatch(appCss, /\.field-cluster > \.org-pickerCompact:first-of-type/);
+});
+
+test("HARPO waits for selected requestor REST V2 configuration and scopes live traffic to harvested domains", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /function deriveHarpoRestV2Available\(authenticatedDataContext = \{\}\)/);
+  assert.match(
+    appSource,
+    /async function ensureHarpoRequestorConfigurationHydrated\(\s*authenticatedDataContext = buildAuthenticatedUserDataContext\(state\.session\),\s*\{\s*forceRefresh = false\s*\} = \{\}\s*\)/
+  );
+  assert.match(appSource, /async function resolveHarpoRequestorConfigurationPayload\(programmerId = "", requestorId = ""\)/);
+  assert.match(appSource, /const harpoRequestorConfigurationByKey = new Map\(\);/);
+  assert.match(appSource, /const harpoRequestorConfigurationPromiseByKey = new Map\(\);/);
+  assert.match(appSource, /function invalidateHarpoRequestorConfiguration\(programmerId = "", requestorId = ""\)/);
+  assert.match(appSource, /function getHarpoCachedRequestorConfiguration\(programmerId = "", requestorId = ""\)/);
+  assert.match(appSource, /function setHarpoCachedRequestorConfiguration\(programmerId = "", requestorId = "", configuration = null\)/);
+  assert.match(appSource, /function getHarpoRequestorConfigurationLoadPromise\(programmerId = "", requestorId = ""\)/);
+  assert.match(appSource, /function setHarpoRequestorConfigurationLoadPromise\(programmerId = "", requestorId = "", promise = null\)/);
+  assert.match(appSource, /async function hydrateSelectedRequestorConfiguration\(\{ forceRefresh = false \} = \{\}\)/);
+  assert.match(appSource, /function programmerRegisteredApplicationsNeedHydration\(/);
+  assert.match(appSource, /async function hydrateProgrammerRegisteredApplicationsForRuntime\(/);
+  assert.match(appSource, /async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(/);
+  assert.match(appSource, /function getMissingProgrammerRegisteredApplicationReferenceIds\(/);
+  assert.match(appSource, /`\/api\/v2\/\$\{encodeURIComponent\(normalizedRequestorId\)\}\/configuration`/);
+  assert.match(appSource, /resolveAdobePassServiceBaseUrl\("sp", session\)/);
+  assert.doesNotMatch(appSource, /resolveAdobePassServiceBaseUrl\("api", session\)\.replace\(\/\\\/\+\$\/, ""\)\}\/`\s*\)\.toString\(\)/);
+  assert.match(appSource, /function buildRestV2Headers\(requestorId, extraHeaders = \{\}\)/);
+  assert.match(appSource, /"AP-Device-Identifier": buildDeviceIdentifierPayload\(\)/);
+  assert.match(appSource, /"X-Device-Info": encodeDevicePayload\(buildLegacyDeviceInfoPayload\(requestorId\)\)/);
+  assert.match(appSource, /const reproDomains = domains\.filter\(\(domain\) => domain !== "adobe\.com"\);/);
+  assert.match(appSource, /const safeDomains = dedupeCandidateStrings\(\["adobe\.com", \.\.\.domains\]\)\.filter\(Boolean\);/);
+  assert.match(appSource, /mvpds:\s*normalizeHarpoMvpdList\(requestor\?\.mvpds \|\| responsePayload\?\.mvpds \|\| requestor\?\.mvpd\)/);
+  assert.match(appSource, /collectRestV2AppCandidatesFromPremiumApps\(premiumApps\)/);
+  assert.match(appSource, /if \(!registeredApplicationMatchesRequiredScope\(application, "api:client:v2"\)\) \{\s*return;\s*\}/);
+  assert.match(appSource, /collectRestV2CandidateApplications\(registeredApplications\)/);
+  assert.match(appSource, /buildOrderedRestV2CandidateApplicationsFromPremiumApps\(/);
+  assert.match(appSource, /buildRegisteredApplicationHealthServiceCandidates\(\s*"restV2",/);
+  assert.match(appSource, /collectPremiumServiceCandidateApplications\([\s\S]*?\)\.filter\(\(application\) => registeredApplicationMatchesRequiredScope\(application, serviceDefinition\.requiredScope\)\)/);
+  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(currentSession,\s*normalizedProgrammerId,\s*registeredApplications,\s*\{/);
+  assert.match(appSource, /requestorId:\s*normalizedRequestorId/);
+  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(\s*currentSession,\s*normalizedProgrammerId,\s*baseApplications,/);
+  assert.match(appSource, /const bulkHydrationResult = await settle\(\(\) =>\s*fetchRegisteredApplicationsByIds\(/);
+  assert.match(appSource, /if \(programmerRefHydrationResult\?\.error\) \{/);
+  assert.match(appSource, /function isRetryableAdobePageContextScriptingError\(error = null\)/);
+  assert.match(appSource, /if \(isRetryableAdobePageContextScriptingError\(error\) && Date\.now\(\) < deadline\) \{/);
+  assert.match(appSource, /const orderedCandidates = \(\(\) => \{/);
+  assert.match(appSource, /const preferredApplicationId = String\(harpoRestV2PreferredAppIdByRequestorKey\.get\(configurationKey\) \|\| ""\)\.trim\(\);/);
+  assert.match(appSource, /harpoRestV2PreferredAppIdByRequestorKey\.set\(\s*configurationKey,/);
+  assert.match(appSource, /serviceApplicationOverrides:\s*\{\s*restV2:\s*candidate\s*\}/);
+  assert.match(appSource, /buildRestV2Headers\(normalizedRequestorId,\s*\{\s*Accept:\s*"application\/json;charset=utf-8"/);
+  assert.match(appSource, /void hydrateSelectedRequestorConfiguration\(\{\s*forceRefresh: true\s*\}\);/);
+  assert.match(appSource, /fetchHarpoRequestorConfigurationPayload\(\s*normalizedRequestorId,\s*accessToken,\s*state\.session\s*\)/);
+  assert.match(appSource, /if \(currentConfiguration\.key === configurationKey && String\(currentConfiguration\.status \|\| ""\) === "loading"\) \{/);
+  assert.match(appSource, /if \(existingLoadPromise\) \{\s*return existingLoadPromise;\s*\}/);
+  assert.match(appSource, /HARPO requestor configuration load restarted for \$\{requestorLabel \|\| requestorId\}/);
+  assert.match(
+    appSource,
+    /state\.harpoRequestorConfiguration = loadingConfiguration;\s*setHarpoRequestorConfigurationLoadPromise\(programmerId,\s*requestorId,\s*loadPromise\);\s*render\(\);/
+  );
+  assert.match(appSource, /promoteHarpoResolvedRestV2Application\(programmerId,\s*resolvedConfiguration\?\.registeredApplication\)/);
+  assert.match(
+    appSource,
+    /buildHarpoRequestorConfigurationKey\(\s*firstNonEmptyString\(\[refreshedContext\?\.selectedProgrammer\?\.id,\s*refreshedContext\?\.selectedProgrammer\?\.key\]\),\s*firstNonEmptyString\(\[refreshedContext\?\.selectedRequestor\?\.id,\s*refreshedContext\?\.selectedRequestor\?\.key\]\)\s*\)/
+  );
+  assert.match(appSource, /HARPO requestor configuration ready for \$\{requestorLabel \|\| requestorId\}:/);
+  assert.match(appSource, /return deriveHarpoRestV2Available\(authenticatedDataContext\) &&[\s\S]*Boolean\(authenticatedDataContext\?\.selectedRequestor\);/);
+  assert.match(appSource, /setHarpoStatus\(`Harvesting Requestor domains for \$\{requestorLabel \|\| "the selected Content Provider"\}…`\);/);
+  assert.match(appSource, /harpoReproButton\.disabled =[\s\S]*requestorConfiguration\.status === "loading"[\s\S]*requestorConfiguration\.status === "error"[\s\S]*reproDomains\.length === 0;/);
+  assert.match(appSource, /authenticatedDataContext\?\.selectedRequestor/);
+  assert.match(appSource, /requestorName:\s*firstNonEmptyString\(\[selectedRequestor\?\.label, selectedRequestor\?\.name\]\),/);
+  assert.match(appSource, /safeDomains/);
+  assert.match(appSource, /mvpdOptions/);
+  assert.match(appSource, /Loading MVPDs from REST V2 configuration…/);
+});
+
+test("HARPO keeps a persistent VCR-style record toolbar beside the domain picker", () => {
+  const appMarkup = fs.readFileSync(path.join(ROOT, "app.html"), "utf8");
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const appCss = fs.readFileSync(path.join(ROOT, "app.css"), "utf8");
+
+  assert.match(appMarkup, /class="harpo-reproToolbar"/);
+  assert.match(appMarkup, /class="spectrum-FieldLabel spectrum-FieldLabel--sizeS harpo-domainLabel"/);
+  assert.match(appMarkup, /class="org-pickerControl harpo-domainControl"/);
+  assert.doesNotMatch(appMarkup, /class="harpo-domainField"/);
+  assert.match(appMarkup, /id="harpoRecordToggleButton"/);
+  assert.match(appMarkup, /id="harpoRecordToggleIcon"/);
+  assert.match(appMarkup, /id="harpoRecordToggleLabel"/);
+  assert.match(appMarkup, />\s*Domains\s*</);
+  assert.doesNotMatch(appMarkup, /id="harpoLaunchButton"/);
+  assert.doesNotMatch(appMarkup, /id="harpoStopButton"/);
+
+  assert.match(appSource, /const harpoRecordToggleButton = document\.getElementById\("harpoRecordToggleButton"\);/);
+  assert.match(appSource, /const harpoRecordToggleIcon = document\.getElementById\("harpoRecordToggleIcon"\);/);
+  assert.match(appSource, /const harpoRecordToggleLabel = document\.getElementById\("harpoRecordToggleLabel"\);/);
+  assert.match(appSource, /harpoRecordingStarting: false,/);
+  assert.match(appSource, /harpoRecordingStopping: false,/);
+  assert.match(appSource, /harpoRecordToggleButton\.addEventListener\("click", async \(\) => \{/);
+  assert.match(appSource, /if \(state\.harpoRecording\) \{\s*await harpoStopRecordingFromPanel\(\);/);
+  assert.match(appSource, /const recordToggleLabel = isRecordingStarting\s*\?\s*"RECORDING"/);
+  assert.match(appSource, /harpoRecordToggleButton\.setAttribute\("aria-label", recordToggleLabel\);/);
+  assert.match(appSource, /harpoRecordToggleButton\.title = recordToggleLabel;/);
+  assert.match(appSource, /harpoRecordToggleLabel\.textContent = recordToggleLabel;/);
+  assert.match(appSource, /harpoRecordToggleIcon\.classList\.toggle\("harpo-recordToggleIcon--record", !showStopState\);/);
+  assert.match(appSource, /harpoRecordToggleIcon\.classList\.toggle\("harpo-recordToggleIcon--stop", showStopState\);/);
+
+  const stopSectionMatch = appSource.match(
+    /async function harpoStopRecordingFromPanel\([\s\S]*?\n}\n\n\/\/ ── HARPO: live call count polling/
+  );
+  assert.ok(stopSectionMatch, "harpoStopRecordingFromPanel should exist");
+  assert.doesNotMatch(stopSectionMatch[0], /state\.harpoReproOpen = false;/);
+
+  assert.match(appCss, /\.harpo-reproToolbar \{/);
+  assert.match(appCss, /\.harpo-domainLabel \{/);
+  assert.match(appCss, /\.harpo-domainControl \{/);
+  assert.match(appCss, /\.harpo-recordToggle \{/);
+  assert.match(appCss, /gap: var\(--spectrum-spacing-200\);/);
+  assert.match(appCss, /block-size: 34px;/);
+  assert.match(appCss, /inline-size: 40px;/);
+  assert.match(appCss, /min-inline-size: 40px;/);
+  assert.match(appCss, /padding: 0;/);
+  assert.match(appCss, /\.harpo-recordToggle\.is-recording \{/);
+  assert.match(appCss, /\.harpo-recordToggleIcon--record \{/);
+  assert.match(appCss, /\.harpo-recordToggleIcon--stop \{/);
+});
+
+test("Programmer hydration retains programmer-owned registered application refs for vault-backed runtime rebuilds", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  const normalizeProgrammersMatch = appSource.match(
+    /function normalizeConsoleProgrammers\([\s\S]*?\n}\n\nfunction programmerMatchesCmTenant/
+  );
+  assert.ok(normalizeProgrammersMatch, "normalizeConsoleProgrammers should exist");
+  assert.match(normalizeProgrammersMatch[0], /const programmerApplicationReferences = Array\.isArray\(entityData\.applications\)/);
+  assert.match(
+    normalizeProgrammersMatch[0],
+    /applications:\s*programmerApplicationReferences\.map\(\(reference\) => computeEntityReferenceId\(reference\)\)\.filter\(Boolean\)/
+  );
+  assert.match(normalizeProgrammersMatch[0], /applicationCount:\s*programmerApplicationReferences\.filter\(Boolean\)\.length/);
+
+  const fetchProgrammerAppsMatch = appSource.match(
+    /async function fetchProgrammerRegisteredApplications\([\s\S]*?\n}\n\nasync function ensureSelectedProgrammerApplicationsLoaded/
+  );
+  assert.ok(fetchProgrammerAppsMatch, "fetchProgrammerRegisteredApplications should exist");
+  assert.match(fetchProgrammerAppsMatch[0], /const baseApplications = normalizeConsoleRegisteredApplications\(result\?\.data\);/);
+  assert.match(fetchProgrammerAppsMatch[0], /hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(/);
+  assert.match(fetchProgrammerAppsMatch[0], /applications:\s*Array\.isArray\(programmerRefHydrationResult\?\.applications\)/);
+});
+
+test("LoginButton keeps Content Provider selection user-driven across reloads", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const vaultSource = fs.readFileSync(path.join(ROOT, "vault.js"), "utf8");
+
+  const singletonSectionMatch = appSource.match(
+    /function autoSelectSingletonAuthenticatedOptions\([\s\S]*?\n}\n\nasync function autoActivateAdobePassProgrammerContext/
+  );
+  assert.ok(singletonSectionMatch, "autoSelectSingletonAuthenticatedOptions should exist");
+  assert.doesNotMatch(singletonSectionMatch[0], /authenticatedDataContext\.requestorOptions\.length === 1/);
+  assert.doesNotMatch(singletonSectionMatch[0], /state\.selectedRequestorId = firstNonEmptyString/);
+
+  const requestorChangeSectionMatch = appSource.match(
+    /if \(requestorPicker\) \{[\s\S]*?\n}\n\nif \(mvpdPicker\)/
+  );
+  assert.ok(requestorChangeSectionMatch, "requestor change handler should exist");
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /persistSelectedProgrammerVaultSelections/);
+
+  const mvpdChangeSectionMatch = appSource.match(
+    /if \(mvpdPicker\) \{[\s\S]*?\n}\n\nif \(cmTenantPicker\)/
+  );
+  assert.ok(mvpdChangeSectionMatch, "mvpd change handler should exist");
+  assert.doesNotMatch(mvpdChangeSectionMatch[0], /persistSelectedProgrammerVaultSelections/);
+
+  const persistedSelectionSectionMatch = appSource.match(
+    /function applyPersistedProgrammerSelections\([\s\S]*?\n}\n\nfunction mergeProgrammerApplicationsIntoSession/
+  );
+  assert.ok(persistedSelectionSectionMatch, "applyPersistedProgrammerSelections should exist");
+  assert.match(persistedSelectionSectionMatch[0], /state\.selectedRequestorId = "";/);
+  assert.match(persistedSelectionSectionMatch[0], /state\.selectedMvpdId = "";/);
+  assert.doesNotMatch(persistedSelectionSectionMatch[0], /vaultRecord\?\.selectedRequestorId/);
+
+  const selectionPersistSectionMatch = appSource.match(
+    /async function persistSelectedProgrammerVaultSelections\([\s\S]*?\n}\n\nfunction hydrateSelectedProgrammerFromVaultRecord/
+  );
+  assert.ok(selectionPersistSectionMatch, "persistSelectedProgrammerVaultSelections should exist");
+  assert.match(selectionPersistSectionMatch[0], /selectedRequestorId:\s*""/);
+  assert.match(selectionPersistSectionMatch[0], /selectedMvpdId:\s*""/);
+
+  assert.match(vaultSource, /Object\.prototype\.hasOwnProperty\.call\(normalizedInput, "selectedRequestorId"\)/);
+  assert.match(vaultSource, /Object\.prototype\.hasOwnProperty\.call\(normalizedInput, "selectedMvpdId"\)/);
+});
+
+test("programmer selection pre-hydrates available premium service clients before first requestor usage", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /const programmerPremiumHydrationPromiseByKey = new Map\(\);/);
+  assert.match(appSource, /const programmerApplicationsSnapshotById = new Map\(\);/);
+  assert.match(appSource, /const programmerPremiumServicesSnapshotById = new Map\(\);/);
+  assert.match(appSource, /function buildProgrammerPremiumHydrationKey\(/);
+  assert.match(appSource, /function updateProgrammerRuntimeSnapshots\(/);
+  assert.match(appSource, /function buildProgrammerPremiumRuntimeSnapshot\(/);
+  assert.match(appSource, /async function ensureProgrammerPremiumServicesHydrated\(/);
+  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(currentSession,\s*normalizedProgrammerId,\s*existingApplications,\s*\{/);
+  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(mergedSession,\s*normalizedProgrammerId,\s*hydratedApplications,\s*\{/);
+  assert.match(appSource, /collectAvailableVaultServiceKeys\(snapshotContext\.registeredApplications\)/);
+  assert.match(appSource, /vaultServiceRecordReadyForDefinition\(/);
+  assert.match(appSource, /const vaultHydrationResult = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /registeredApplications:\s*readyApplications/);
+  assert.match(appSource, /const hydrationKey = buildProgrammerPremiumHydrationKey\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /const hydrationResult = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /source:\s*"programmer-selection"/);
+  assert.match(appSource, /function maybeAutoSelectPrimaryRestV2ApplicationForProgrammer\(/);
+  assert.match(appSource, /function buildRegisteredApplicationHealthServiceCandidates\(/);
+  assert.match(appSource, /collectRestV2AppCandidatesFromPremiumApps\(resolvedRuntimeServices\)/);
+  assert.match(appSource, /maybeAutoSelectPrimaryRestV2ApplicationForProgrammer\(normalizedProgrammerId,/);
+  assert.match(appSource, /persistSelectedProgrammerVaultSelections\(normalizedProgrammerId\)/);
+  assert.match(appSource, /const premiumHydrationResult = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /source:\s*"programmer-selection"/);
+});
+
+test("requestor-scoped REST V2 mapping survives vault hydration without repicking the selected app on requestor change", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const vaultSource = fs.readFileSync(path.join(ROOT, "vault.js"), "utf8");
+
+  const requestorChangeSectionMatch = appSource.match(
+    /if \(requestorPicker\) \{[\s\S]*?\n}\n\nif \(mvpdPicker\)/
+  );
+  assert.ok(requestorChangeSectionMatch, "requestor change handler should exist");
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /maybeAlignSelectedRegisteredApplicationToRequestor\(nextValue\);/);
+  assert.match(requestorChangeSectionMatch[0], /const programmerId = firstNonEmptyString\(\[state\.selectedProgrammerId\]\);/);
+  assert.match(requestorChangeSectionMatch[0], /invalidateHarpoRequestorConfiguration\(programmerId,\s*nextValue\);/);
+  assert.match(
+    requestorChangeSectionMatch[0],
+    /void hydrateSelectedRequestorConfiguration\(\{\s*forceRefresh:\s*true\s*\}\);/
+  );
+  assert.match(appSource, /function resolveMappedRestV2ApplicationForRequestor\(/);
+  assert.match(appSource, /function extractApplicationGuid\(/);
+  assert.match(appSource, /function resolveApplicationGuidFromEntityData\(/);
+  assert.match(appSource, /function normalizeRegisteredApplicationRuntimeRecord\(/);
+  assert.match(appSource, /guid:\s*firstNonEmptyString\(\[guid, id, key\]\),/);
+  assert.match(appSource, /const scopes = resolveRegisteredApplicationScopes\(/);
+  assert.match(appSource, /function resolveRegisteredApplicationScopes\(/);
+  assert.match(appSource, /function getScopesFromApplicationData\(/);
+  assert.match(appSource, /pushValue\(normalizedApplication\?\.serviceProviders\);/);
+  assert.match(appSource, /pushValue\(normalizedApplication\?\.appData\?\.serviceProviders\);/);
+  assert.match(appSource, /pushValue\(normalizedApplication\?\.requestor\);/);
+  assert.match(appSource, /appData:\s*[\s\S]*runtimeRecord\?\.appData/);
+  assert.match(appSource, /const persistedMetadata = buildPersistableRegisteredApplicationMetadata\(application\);/);
+  assert.match(appSource, /guid:\s*firstNonEmptyString\(\[applicationGuid, application\?\.guid, application\?\.id, application\?\.key\]\),/);
+  assert.match(appSource, /serviceProviders:\s*persistedMetadata\.serviceProviders,/);
+  assert.match(appSource, /serviceProviders:\s*persistedMetadata\.serviceProviders,/);
+  assert.match(appSource, /requestor:\s*persistedMetadata\.requestor,/);
+  assert.match(appSource, /function buildVaultProgrammerRegisteredApplicationCatalog\(/);
+  assert.match(appSource, /const selectedApplications = buildVaultProgrammerRegisteredApplicationCatalog\(/);
+  assert.match(appSource, /function mergeRegisteredApplicationCatalogs\(/);
+  assert.match(appSource, /const vaultCatalog =/);
+  assert.match(appSource, /const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs\(/);
+  assert.match(appSource, /const selectedProgrammerId = firstNonEmptyString\(\[selectedProgrammer\?\.id, selectedProgrammer\?\.key\]\);/);
+  assert.match(appSource, /const selectedRequestorId = firstNonEmptyString\(\[selectedRequestor\?\.id, selectedRequestor\?\.key\]\);/);
+  assert.match(appSource, /const selectedHarpoConfigurationKey = buildHarpoRequestorConfigurationKey\(selectedProgrammerId, selectedRequestorId\);/);
+  assert.match(appSource, /const runtimeServices =\s*getCurrentPremiumAppsSnapshot\(normalizedProgrammerId\)/);
+  assert.match(appSource, /const cachedHarpoRequestorConfiguration = selectedHarpoConfigurationKey/);
+  assert.match(appSource, /const existingLoadPromise = getHarpoRequestorConfigurationLoadPromise\(programmerId, requestorId\);/);
+  assert.match(appSource, /const loadPromise = \(async \(\) => \{/);
+  assert.match(appSource, /promoteHarpoResolvedRestV2Application\(programmerId,\s*resolvedConfiguration\?\.registeredApplication\);/);
+  assert.match(appSource, /collectRestV2CandidateApplications\(registeredApplications\)/);
+  assert.doesNotMatch(appSource, /state\.selectedRegisteredApplicationId = resolvedRegisteredApplicationId;/);
+  assert.doesNotMatch(appSource, /serviceProviders\[0\]/);
+
+  assert.match(vaultSource, /LOGINBUTTON_VAULT_SCHEMA_VERSION = 9;/);
+  assert.match(vaultSource, /function extractApplicationGuid\(/);
+  assert.match(vaultSource, /guid: guid \|\| id \|\| key,/);
+  assert.match(vaultSource, /reason: "schema-version-changed"/);
+  assert.match(vaultSource, /const serviceProviders = uniqueStrings\(/);
+  assert.match(vaultSource, /serviceProviders,/);
+  assert.match(vaultSource, /requestor: firstNonEmptyString\(\[/);
+  assert.doesNotMatch(vaultSource, /serviceProviders\[0\]/);
 });
 
 test("premium services cards use one shared themed Spectrum-style container treatment", () => {
@@ -253,6 +546,20 @@ test("post-login Adobe Pass hydration auto-activates the selected or sole progra
   assert.match(autoActivateSectionMatch[0], /autoSelectSingletonAuthenticatedOptions\(\);/);
 });
 
+test("authenticated programmer context uses the VAULT-backed runtime snapshot when available", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  const authenticatedContextSectionMatch = appSource.match(
+    /function buildAuthenticatedUserDataContext\([\s\S]*?\n}\n\nfunction buildAuthenticatedSummaryCards/
+  );
+  assert.ok(authenticatedContextSectionMatch, "buildAuthenticatedUserDataContext should exist");
+  assert.match(authenticatedContextSectionMatch[0], /const selectedProgrammerRuntimeContext = programmerAccess\.eligible/);
+  assert.match(authenticatedContextSectionMatch[0], /buildProgrammerVaultSnapshotContext\(currentSession,/);
+  assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.registeredApplications/);
+  assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.premiumServices/);
+  assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.requestors/);
+});
+
 test("popup-monitor auth captures redirects from webNavigation before Chrome swaps in an error page", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
   const popupSectionMatch = appSource.match(
@@ -330,12 +637,13 @@ test("selected registered application drives service hydration for scope-matched
   assert.match(appSource, /method: "POST"/);
   assert.match(appSource, /"Content-Type": "application\/json"/);
   assert.match(appSource, /fetchRegisteredApplicationBulkRetrieve\(session, normalizedApplicationId/);
+  assert.match(appSource, /const normalizedApplicationId = extractApplicationGuid\(applicationId\);/);
   assert.match(appSource, /async function enrichRegisteredApplicationForHydration\(/);
   assert.match(appSource, /async function fetchRegisteredApplicationDetails\(/);
   assert.match(appSource, /async function fetchRegisteredApplicationSoftwareStatement\(/);
   assert.match(appSource, /const pathCandidates = buildRegisteredApplicationDetailPaths\(normalizedApplicationId\);/);
   assert.match(appSource, /registeredApplication = enrichmentResult\.value\.application;/);
-  assert.match(appSource, /await registerDcrClientWithSoftwareStatement\(softwareStatement\)/);
+  assert.match(appSource, /await registerDcrClientWithSoftwareStatement\(\s*softwareStatement,/);
 
   const selectionPersistSectionMatch = appSource.match(
     /async function persistSelectedProgrammerVaultSelections\([\s\S]*?\n}\n\nfunction hydrateSelectedProgrammerFromVaultRecord/

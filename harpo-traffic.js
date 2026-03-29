@@ -216,6 +216,62 @@ const ADOBE_SUPPORT_HOSTS = [
   /(^|\.)adobedtm\.com$/i
 ];
 
+const HARPO_PHYSICAL_ASSET_RESOURCE_TYPES = new Set([
+  "font",
+  "image",
+  "manifest",
+  "media"
+]);
+
+const HARPO_PHYSICAL_ASSET_EXTENSIONS = new Set([
+  "apng",
+  "avif",
+  "bmp",
+  "cur",
+  "eot",
+  "gif",
+  "heic",
+  "heif",
+  "ico",
+  "jpeg",
+  "jpg",
+  "m4a",
+  "m4s",
+  "mp3",
+  "mp4",
+  "ogg",
+  "otf",
+  "png",
+  "svg",
+  "tif",
+  "tiff",
+  "ts",
+  "ttf",
+  "wav",
+  "webm",
+  "webp",
+  "woff",
+  "woff2"
+]);
+
+const HARPO_PHYSICAL_ASSET_MIME_PREFIXES = [
+  "audio/",
+  "font/",
+  "image/",
+  "video/"
+];
+
+const HARPO_PHYSICAL_ASSET_MIME_TYPES = new Set([
+  "application/font-sfnt",
+  "application/font-woff",
+  "application/font-woff2",
+  "application/vnd.ms-fontobject",
+  "application/x-font-opentype",
+  "application/x-font-ttf",
+  "application/x-font-woff",
+  "application/x-font-woff2"
+]);
+
 const PASS_HOST_RE = /(^|\.)auth(?:-staging)?\.adobe\.com$/i;
 const PASS_CONSOLE_HOST_RE = /(^|\.)auth(?:-staging)?\.adobe\.com$/i;
 const IMS_HOST_RE = /^adobeid-[^.]+\.services\.adobe\.com$/i;
@@ -1229,7 +1285,32 @@ function parseUrlLike(input) {
 }
 
 function normalizeHostname(hostname = "") {
-  return String(hostname || "").trim().toLowerCase().replace(/\.$/, "");
+  return String(hostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\*\./, "")
+    .replace(/\.$/, "");
+}
+
+function getHeaderValue(headers = [], name = "") {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  const normalizedHeaders = Array.isArray(headers) ? headers : [];
+  return normalizedHeaders.find((header) =>
+    String(header?.name || "").trim().toLowerCase() === normalizedName
+  )?.value || "";
+}
+
+function getPathExtension(input) {
+  const parsed = parseUrlLike(input);
+  const pathname = String(parsed?.pathname || "").trim().toLowerCase();
+  if (!pathname) return "";
+  const lastSegment = pathname.split("/").filter(Boolean).pop() || "";
+  const extension = lastSegment.includes(".") ? lastSegment.split(".").pop() : "";
+  return String(extension || "").trim().toLowerCase();
+}
+
+function normalizeMimeType(value = "") {
+  return String(value || "").split(";")[0].trim().toLowerCase();
 }
 
 function renderTemplate(template, params = {}) {
@@ -1379,9 +1460,20 @@ function matchesProgrammerDomain(hostname, programmerDomains = []) {
 }
 
 export function getHarpoTrafficHostname(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
   const parsed = parseUrlLike(input);
-  if (parsed?.hostname) return normalizeHostname(parsed.hostname);
-  return normalizeHostname(input);
+  if (parsed) {
+    if (!/^https?:$/i.test(String(parsed.protocol || ""))) return "";
+    if (!parsed.hostname) return "";
+    return normalizeHostname(parsed.hostname);
+  }
+  const normalized = normalizeHostname(raw);
+  if (!normalized) return "";
+  if (normalized === "localhost" || /^[\d:.]+$/.test(normalized)) return normalized;
+  if (!/^[a-z0-9.-]+$/.test(normalized)) return "";
+  if (!normalized.includes(".")) return "";
+  return normalized;
 }
 
 export function getHarpoTrafficDomainBucket(input) {
@@ -1422,6 +1514,56 @@ export function isHarpoPassTraffic(input) {
   return false;
 }
 
+export function isHarpoPassSessionTrigger(input) {
+  const parsed = parseUrlLike(input);
+  const hostname = normalizeHostname(parsed?.hostname || input);
+  const pathname = parsed?.pathname || "";
+  return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) && pathname === "/o/client/register";
+}
+
+export function isHarpoPassSamlAssertionConsumer(input) {
+  const parsed = parseUrlLike(input);
+  const hostname = normalizeHostname(parsed?.hostname || input);
+  const pathname = parsed?.pathname || "";
+  return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) && pathname === "/sp/saml/SAMLAssertionConsumer";
+}
+
+export function isHarpoLogoutTraffic(input) {
+  const parsed = parseUrlLike(input);
+  const hostname = normalizeHostname(parsed?.hostname || input);
+  const pathname = parsed?.pathname || "";
+  if (!hostname || !isHarpoPassTraffic(input)) return false;
+  return pathname === "/api/v1/logout" || /^\/api\/v2\/[^/]+\/logout\/[^/]+\/?$/i.test(pathname);
+}
+
+export function isHarpoPhysicalAssetTraffic({
+  url = "",
+  resourceType = "",
+  mimeType = "",
+  headers = []
+} = {}) {
+  const normalizedResourceType = String(resourceType || "").trim().toLowerCase();
+  if (HARPO_PHYSICAL_ASSET_RESOURCE_TYPES.has(normalizedResourceType)) {
+    return true;
+  }
+
+  const normalizedMimeType = normalizeMimeType(mimeType || getHeaderValue(headers, "content-type"));
+  if (
+    normalizedMimeType &&
+    (HARPO_PHYSICAL_ASSET_MIME_TYPES.has(normalizedMimeType) ||
+      HARPO_PHYSICAL_ASSET_MIME_PREFIXES.some((prefix) => normalizedMimeType.startsWith(prefix)))
+  ) {
+    return true;
+  }
+
+  const extension = getPathExtension(url);
+  if (extension && HARPO_PHYSICAL_ASSET_EXTENSIONS.has(extension)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function classifyHarpoEntry(entry, options = {}) {
   const url = entry?.request?.url || "";
   const method = entry?.request?.method || "GET";
@@ -1429,7 +1571,19 @@ export function classifyHarpoEntry(entry, options = {}) {
   const hostname = normalizeHostname(parsed?.hostname);
   const pathname = parsed?.pathname || "";
   const resourceType = String(entry?._resourceType || "").toLowerCase();
+  const responseMimeType =
+    entry?.response?.content?.mimeType || getHeaderValue(entry?.response?.headers || [], "content-type");
   const programmerDomains = Array.isArray(options.programmerDomains) ? options.programmerDomains : [];
+  const mvpdDomains = Array.isArray(options.mvpdDomains) ? options.mvpdDomains : [];
+
+  if (isHarpoPhysicalAssetTraffic({
+    url,
+    resourceType,
+    mimeType: responseMimeType,
+    headers: entry?.response?.headers || []
+  })) {
+    return null;
+  }
 
   if (!hostname) {
     return options?.adobeGateOpen ? { phase: "Other", label: "Unparsed Traffic", domain: "other" } : null;
@@ -1503,7 +1657,7 @@ export function classifyHarpoEntry(entry, options = {}) {
     };
   }
 
-  if (options?.mvpdGateOpen) {
+  if (options?.mvpdGateOpen && matchesProgrammerDomain(hostname, mvpdDomains)) {
     return {
       phase: "MVPD",
       label: "MVPD / External Auth Traffic",

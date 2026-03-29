@@ -204,42 +204,6 @@
               </div>
             </div>
 
-            <section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">
-              <div class="field-clusterHeader">
-                <p class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">CM</p>
-                <p class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">CM Access</p>
-                <p class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
-                  CMU token and tenant fields live here only.
-                </p>
-              </div>
-
-              <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
-                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
-
-                <div class="org-tokenSurface" aria-live="polite">
-                  <input id="cmuTokenValue" class="org-tokenValue" type="text" readonly spellcheck="false">
-                </div>
-              </div>
-
-              <div id="cmTenantPickerContainer" class="org-pickerCompact" hidden>
-                <label
-                  for="cmTenantPicker"
-                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-                >
-                  CM Tenant
-                </label>
-
-                <div class="org-pickerControl">
-                  <select
-                    id="cmTenantPicker"
-                    class="org-pickerSelect"
-                    aria-describedby="organizationPickerMeta"
-                  ></select>
-                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
-                </div>
-              </div>
-            </section>
-
             <section
               id="programmerFieldGroup"
               class="field-cluster field-cluster--programmer"
@@ -247,177 +211,243 @@
               aria-label="Programmer controls"
             >
               <div class="field-clusterHeader">
-                <p class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">Programmer</p>
-                <p class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Adobe Pass Programmer</p>
-                <p class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
-                  Programmer, application, and requestor fields stay grouped here.
-                </p>
-              </div>
-
-              <div id="programmerPickerContainer" class="org-pickerCompact" hidden>
-                <label
-                  for="organizationPicker"
-                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                <button
+                  id="programmerFieldGroupToggle"
+                  type="button"
+                  class="field-clusterToggle"
+                  aria-expanded="true"
+                  aria-controls="programmerFieldGroupBody"
                 >
-                  Adobe Pass Programmer
-                </label>
-
-                <div class="org-pickerControl">
-                  <select
-                    id="organizationPicker"
-                    class="org-pickerSelect"
-                    aria-describedby="organizationPickerMeta"
-                  ></select>
-                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
-                </div>
+                  <span class="field-clusterHeaderCopy">
+                    <span class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">Global Context</span>
+                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Programmer, Requestor, and MVPD</span>
+                    <span class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
+                      Programmer hydration drives the Requestor and MVPD selectors here.
+                    </span>
+                  </span>
+                  <span class="field-clusterIcon" aria-hidden="true">▼</span>
+                </button>
               </div>
 
-              <div id="registeredApplicationPickerContainer" class="org-pickerCompact" hidden>
-                <label
-                  for="registeredApplicationPicker"
-                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-                >
-                  Registered Applications
-                </label>
+              <div id="programmerFieldGroupBody" class="field-clusterBody">
+                <div id="programmerPickerContainer" class="org-pickerCompact" hidden>
+                  <label
+                    for="organizationPicker"
+                    class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                  >
+                    Programmer (Media Companies)
+                  </label>
 
-                <div class="org-pickerControl">
-                  <select
-                    id="registeredApplicationPicker"
-                    class="org-pickerSelect"
-                    aria-describedby="organizationPickerMeta"
-                  ></select>
-                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  <div class="org-pickerControl">
+                    <select
+                      id="organizationPicker"
+                      class="org-pickerSelect"
+                      aria-describedby="organizationPickerMeta"
+                    ></select>
+                    <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  </div>
                 </div>
-              </div>
 
-              <div id="requestorPickerContainer" class="org-pickerCompact" hidden>
-                <label
-                  for="requestorPicker"
-                  class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
-                >
-                  Content Providers (Requestor Ids)
-                </label>
+                <div id="requestorPickerContainer" class="org-pickerCompact" hidden>
+                  <label
+                    for="requestorPicker"
+                    class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                  >
+                    Content Providers (Requestors)
+                  </label>
 
-                <div class="org-pickerControl">
-                  <select
-                    id="requestorPicker"
-                    class="org-pickerSelect"
-                    aria-describedby="organizationPickerMeta"
-                  ></select>
-                  <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  <div class="org-pickerControl">
+                    <select
+                      id="requestorPicker"
+                      class="org-pickerSelect"
+                      aria-describedby="organizationPickerMeta"
+                    ></select>
+                    <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  </div>
                 </div>
-              </div>
 
-              <!-- ═══════════════════════════════════════════════════════════
-                   HARPO — HAR & Pass Observatory
-                   Visible only when selected Programmer has REST API V2.
-                   Controlled by syncHarpoSection() in app.js.
-                   ═══════════════════════════════════════════════════════════ -->
-              <div id="harpoContainer" class="org-pickerCompact harpo-sidePanelSection" hidden>
-                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">HARPO</p>
+                <div id="mvpdPickerContainer" class="org-pickerCompact" hidden>
+                  <label
+                    for="mvpdPicker"
+                    class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                  >
+                    MVPDs
+                  </label>
 
-                <div class="harpo-sidePanelSurface" aria-live="polite">
-                  <article class="premium-serviceCard harpo-card" id="harpoCard">
-                    <button
-                      id="harpoToggle"
-                      type="button"
-                      class="premium-serviceToggle"
-                      aria-expanded="false"
-                      aria-controls="harpoBody"
-                    >
-                      <span class="premium-serviceHeaderCopy">
-                        <span class="premium-serviceTitle">HARPO</span>
-                        <span class="premium-serviceMeta" id="harpoToggleMeta">HAR &amp; Pass Observatory — analyze Pass traffic</span>
-                      </span>
-                      <span class="premium-serviceIcon" aria-hidden="true">▼</span>
-                    </button>
+                  <div class="org-pickerControl">
+                    <select
+                      id="mvpdPicker"
+                      class="org-pickerSelect"
+                      aria-describedby="organizationPickerMeta"
+                    ></select>
+                    <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  </div>
+                </div>
 
-                    <div id="harpoBody" class="premium-serviceBody" hidden>
+                <!-- ═══════════════════════════════════════════════════════════
+                     HARPO — HAR & Pass Observatory
+                     Visible only when selected Programmer has REST API V2.
+                     Controlled by syncHarpoSection() in app.js.
+                     ═══════════════════════════════════════════════════════════ -->
+                <div id="harpoContainer" class="org-pickerCompact harpo-sidePanelSection" hidden>
+                  <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">HARPO</p>
 
-                      <!-- HAR / REPRO mode buttons -->
-                      <div class="harpo-modeRow">
-                        <div
-                          id="harpoHarDropZone"
-                          class="harpo-modeSlot"
-                          role="button"
-                          tabindex="0"
-                          aria-label="Upload a HAR file"
-                          title="Click to browse or drop a .har file"
-                        >
-                          <input id="harpoHarFileInput" type="file" accept=".har,application/json" hidden>
-                          <button
-                            id="harpoHarButton"
-                            type="button"
-                            class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                  <div class="harpo-sidePanelSurface" aria-live="polite">
+                    <article class="premium-serviceCard harpo-card" id="harpoCard">
+                      <button
+                        id="harpoToggle"
+                        type="button"
+                        class="premium-serviceToggle"
+                        aria-expanded="false"
+                        aria-controls="harpoBody"
+                      >
+                        <span class="premium-serviceHeaderCopy">
+                          <span class="premium-serviceTitle">HARPO</span>
+                          <span class="premium-serviceMeta" id="harpoToggleMeta">HAR &amp; Pass Observatory — analyze Pass traffic</span>
+                        </span>
+                        <span class="premium-serviceIcon" aria-hidden="true">▼</span>
+                      </button>
+
+                      <div id="harpoBody" class="premium-serviceBody" hidden>
+
+                        <!-- HAR / REPRO mode buttons -->
+                        <div class="harpo-modeRow">
+                          <div
+                            id="harpoHarDropZone"
+                            class="harpo-modeSlot"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Upload a HAR file"
+                            title="Click to browse or drop a .har file"
                           >
-                            <span class="spectrum-Button-label">⬆ HAR</span>
-                          </button>
+                            <input id="harpoHarFileInput" type="file" accept=".har,application/json" hidden>
+                            <button
+                              id="harpoHarButton"
+                              type="button"
+                              class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                            >
+                              <span class="spectrum-Button-label">⬆ HAR</span>
+                            </button>
+                          </div>
+
+                          <div class="harpo-modeSlot">
+                            <button
+                              id="harpoReproButton"
+                              type="button"
+                              class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                            >
+                              <span class="spectrum-Button-label">▶ REPRO</span>
+                            </button>
+                          </div>
                         </div>
 
-                        <div class="harpo-modeSlot">
-                          <button
-                            id="harpoReproButton"
-                            type="button"
-                            class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-modeBtn"
+                        <!-- REPRO domain picker (shown when REPRO clicked) -->
+                        <div id="harpoReproSection" class="harpo-reproSection" hidden>
+                          <label
+                            for="harpoDomainPicker"
+                            class="spectrum-FieldLabel spectrum-FieldLabel--sizeS harpo-domainLabel"
                           >
-                            <span class="spectrum-Button-label">▶ REPRO</span>
-                          </button>
+                            Domains
+                          </label>
+                          <div class="harpo-reproToolbar">
+                            <div class="org-pickerControl harpo-domainControl">
+                              <select id="harpoDomainPicker" class="org-pickerSelect" aria-label="Select a programmer domain">
+                                <option value="">Choose a domain…</option>
+                              </select>
+                              <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                            </div>
+                            <button
+                              id="harpoRecordToggleButton"
+                              type="button"
+                              class="harpo-recordToggle"
+                              disabled
+                            >
+                              <span
+                                id="harpoRecordToggleIcon"
+                                class="harpo-recordToggleIcon harpo-recordToggleIcon--record"
+                                aria-hidden="true"
+                              ></span>
+                              <span id="harpoRecordToggleLabel" class="harpo-recordToggleLabel">RECORD</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
 
-                      <!-- REPRO domain picker (shown when REPRO clicked) -->
-                      <div id="harpoReproSection" class="harpo-reproSection" hidden>
-                        <div class="org-pickerControl" style="margin-top: var(--spectrum-spacing-200)">
-                          <select id="harpoDomainPicker" class="org-pickerSelect" aria-label="Select a programmer domain">
-                            <option value="">Choose a domain…</option>
-                          </select>
-                          <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                        <!-- Recording active state -->
+                        <div id="harpoRecordingSection" class="harpo-recordingSection" hidden>
+                          <div class="harpo-recordingIndicator">
+                            <span class="harpo-recordingDot" aria-hidden="true"></span>
+                            <span class="spectrum-Body spectrum-Body--sizeS harpo-recordingLabel">
+                              Recording — <span id="harpoCallCount">0</span> calls captured
+                            </span>
+                          </div>
                         </div>
 
-                        <button
-                          id="harpoLaunchButton"
-                          type="button"
-                          class="spectrum-Button spectrum-Button--fill spectrum-Button--accent spectrum-Button--sizeM harpo-launchBtn"
-                          disabled
-                        >
-                          <span class="spectrum-Button-label">LAUNCH &amp; RECORD</span>
-                        </button>
+                        <!-- Status / error line -->
+                        <p id="harpoStatus" class="spectrum-Body spectrum-Body--sizeS harpo-status" hidden></p>
+
                       </div>
+                    </article>
+                  </div>
+                </div>
+                <!-- ═══════════════════════════════════════════════ END HARPO -->
 
-                      <!-- Recording active state -->
-                      <div id="harpoRecordingSection" class="harpo-recordingSection" hidden>
-                        <div class="harpo-recordingIndicator">
-                          <span class="harpo-recordingDot" aria-hidden="true"></span>
-                          <span class="spectrum-Body spectrum-Body--sizeS harpo-recordingLabel">
-                            Recording — <span id="harpoCallCount">0</span> calls captured
-                          </span>
-                        </div>
-                        <button
-                          id="harpoStopButton"
-                          type="button"
-                          class="spectrum-Button spectrum-Button--fill spectrum-Button--negative spectrum-Button--sizeM harpo-stopBtn"
-                        >
-                          <span class="spectrum-Button-label">⬛ STOP &amp; OPEN WORKSPACE</span>
-                        </button>
-                      </div>
+                <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
+                  <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
 
-                      <!-- Status / error line -->
-                      <p id="harpoStatus" class="spectrum-Body spectrum-Body--sizeS harpo-status" hidden></p>
-
-                    </div>
-                  </article>
+                  <div class="premium-servicesSurface" aria-live="polite">
+                    <div id="premiumServicesList" class="premium-servicesList" hidden></div>
+                  </div>
                 </div>
               </div>
-              <!-- ═══════════════════════════════════════════════ END HARPO -->
+            </section>
 
-              <div id="premiumServicesContainer" class="org-pickerCompact" hidden>
-                <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">Premium Services</p>
-
-                <div class="premium-servicesSurface" aria-live="polite">
-                  <div id="premiumServicesList" class="premium-servicesList" hidden></div>
-                </div>
+            <section id="cmFieldGroup" class="field-cluster field-cluster--cm" hidden aria-label="CM controls">
+              <div class="field-clusterHeader">
+                <button
+                  id="cmFieldGroupToggle"
+                  type="button"
+                  class="field-clusterToggle"
+                  aria-expanded="true"
+                  aria-controls="cmFieldGroupBody"
+                >
+                  <span class="field-clusterHeaderCopy">
+                    <span class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">CM</span>
+                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">CM Access</span>
+                    <span class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
+                      CMU token and tenant fields live here only.
+                    </span>
+                  </span>
+                  <span class="field-clusterIcon" aria-hidden="true">▼</span>
+                </button>
               </div>
 
+              <div id="cmFieldGroupBody" class="field-clusterBody">
+                <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
+                  <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
+
+                  <div class="org-tokenSurface" aria-live="polite">
+                    <input id="cmuTokenValue" class="org-tokenValue" type="text" readonly spellcheck="false">
+                  </div>
+                </div>
+
+                <div id="cmTenantPickerContainer" class="org-pickerCompact" hidden>
+                  <label
+                    for="cmTenantPicker"
+                    class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel"
+                  >
+                    CM Tenant
+                  </label>
+
+                  <div class="org-pickerControl">
+                    <select
+                      id="cmTenantPicker"
+                      class="org-pickerSelect"
+                      aria-describedby="organizationPickerMeta"
+                    ></select>
+                    <span class="org-pickerChevron" aria-hidden="true">▼</span>
+                  </div>
+                </div>
+              </div>
             </section>
 
             <p id="organizationPickerMeta" class="spectrum-Body spectrum-Body--sizeS org-pickerMeta" hidden>

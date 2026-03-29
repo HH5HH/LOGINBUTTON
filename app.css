@@ -602,6 +602,8 @@ body[data-theme-stop="dark"] {
 .org-pickerCompact,
 .field-cluster,
 .field-clusterHeader,
+.field-clusterBody,
+.field-clusterHeaderCopy,
 .user-dataSection {
   gap: var(--spectrum-spacing-150);
 }
@@ -626,6 +628,50 @@ body[data-theme-stop="dark"] {
 
 .field-clusterHeader {
   padding-block-end: var(--spectrum-spacing-75);
+}
+
+.field-clusterBody {
+  display: grid;
+}
+
+.field-clusterToggle {
+  inline-size: 100%;
+  margin: 0;
+  min-block-size: 2.75rem;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--spectrum-spacing-150);
+  cursor: pointer;
+}
+
+.field-clusterHeaderCopy {
+  display: grid;
+  min-width: 0;
+  gap: var(--spectrum-spacing-50);
+}
+
+.field-clusterIcon {
+  align-self: center;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.field-clusterToggle[aria-expanded="false"] .field-clusterIcon {
+  transform: rotate(-90deg);
+}
+
+.field-clusterToggle:focus-visible {
+  outline: 2px solid var(--spectrum-focus-indicator-color);
+  outline-offset: 4px;
 }
 
 .field-clusterEyebrow,
@@ -656,7 +702,7 @@ body[data-theme-stop="dark"] {
   border-top: 1px solid var(--login-button-divider-color);
 }
 
-.field-cluster > .org-pickerCompact {
+.field-clusterBody > .org-pickerCompact {
   padding-top: 0;
   border-top: 0;
 }
@@ -820,6 +866,203 @@ body[data-theme-stop="dark"] {
 .premium-serviceCheatSheetButton {
   inline-size: 100%;
   justify-content: center;
+}
+
+.harpo-reproSection {
+  margin-top: var(--spectrum-spacing-200);
+  display: grid;
+  gap: var(--spectrum-spacing-75);
+}
+
+.harpo-reproToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-200);
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.harpo-domainLabel {
+  margin: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.harpo-domainControl {
+  flex: 1 1 auto;
+  min-inline-size: 12rem;
+  max-inline-size: 20rem;
+}
+
+.harpo-domainControl .org-pickerSelect {
+  min-inline-size: 100%;
+  padding-inline-start: var(--spectrum-spacing-175);
+  padding-inline-end: calc(var(--spectrum-spacing-600) + 0.75rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harpo-recordToggle {
+  flex: 0 0 auto;
+  block-size: 34px;
+  inline-size: 40px;
+  min-inline-size: 40px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--spectrum-positive-border-color-default) 84%, #122117 16%);
+  border-radius: 999px;
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--spectrum-positive-background-color-default) 90%, white 10%),
+    color-mix(in srgb, var(--spectrum-positive-background-color-default) 62%, #0d3f24 38%)
+  );
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.24),
+    0 0 0 1px color-mix(in srgb, var(--spectrum-positive-border-color-default) 14%, transparent);
+  color: #ffffff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.harpo-recordToggle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--spectrum-positive-border-color-default) 92%, #122117 8%);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--spectrum-positive-background-color-default) 84%, white 16%),
+    color-mix(in srgb, var(--spectrum-positive-background-color-default) 52%, #0d3f24 48%)
+  );
+}
+
+.harpo-recordToggle:focus-visible {
+  outline: none;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.24),
+    0 0 0 2px var(--spectrum-focus-indicator-color);
+}
+
+.harpo-recordToggle.is-recording {
+  border-color: color-mix(in srgb, var(--spectrum-negative-border-color-default) 84%, #2d1217 16%);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 90%, white 10%),
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 62%, #5a161d 38%)
+  );
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.28),
+    0 0 0 1px color-mix(in srgb, var(--spectrum-negative-border-color-default) 18%, transparent);
+}
+
+.harpo-recordToggle.is-recording:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--spectrum-negative-border-color-default) 94%, #2d1217 6%);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 84%, white 16%),
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 54%, #5a161d 46%)
+  );
+}
+
+.harpo-recordToggle.is-starting {
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.24),
+    0 0 0 1px color-mix(in srgb, var(--spectrum-positive-border-color-default) 14%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--spectrum-positive-background-color-default) 18%, transparent);
+}
+
+.harpo-recordToggle.is-stopping {
+  border-color: color-mix(in srgb, var(--spectrum-negative-border-color-default) 88%, #2d1217 12%);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 90%, white 10%),
+    color-mix(in srgb, var(--spectrum-negative-background-color-default) 62%, #5a161d 38%)
+  );
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.28),
+    0 0 0 1px color-mix(in srgb, var(--spectrum-negative-border-color-default) 18%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--spectrum-negative-background-color-default) 18%, transparent);
+}
+
+.harpo-recordToggle:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.harpo-recordToggleLabel {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.harpo-recordToggleIcon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.harpo-recordToggleIcon--record {
+  inline-size: 12px;
+  block-size: 12px;
+  border-radius: 999px;
+  background: #fda4af;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.88),
+    0 0 0 4px rgba(244, 63, 94, 0.24);
+}
+
+.harpo-recordToggleIcon--stop {
+  inline-size: 12px;
+  block-size: 12px;
+  border-radius: 3px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.88),
+    0 0 0 4px rgba(248, 113, 113, 0.32);
+}
+
+.harpo-recordingSection {
+  display: grid;
+  gap: var(--spectrum-spacing-100);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-125) 0;
+}
+
+.harpo-recordingIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-100);
+}
+
+.harpo-recordingDot {
+  inline-size: 0.625rem;
+  block-size: 0.625rem;
+  border-radius: 999px;
+  background: var(--spectrum-negative-background-color-default);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--spectrum-negative-background-color-default) 22%, transparent);
+}
+
+.harpo-recordingLabel {
+  margin: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
 }
 
 .user-dataSection {
@@ -1028,6 +1271,18 @@ body[data-theme-stop="dark"] {
 @media (max-width: 560px) {
   .org-pickerActionRow {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 440px) {
+  .harpo-domainField {
+    max-inline-size: none;
+  }
+
+  .harpo-recordToggle {
+    inline-size: 8.75rem;
+    min-inline-size: 8.75rem;
+    padding-inline: var(--spectrum-spacing-150);
   }
 }
 

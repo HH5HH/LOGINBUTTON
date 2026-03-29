@@ -150,6 +150,78 @@ test("HARPO does not misclassify Adobe support hosts as MVPD traffic", async () 
   assert.equal(classification.label, "Adobe Supporting Traffic");
 });
 
+test("HARPO only labels SAML-seeded external domains as MVPD traffic", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const mvpdClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://identity1.dishnetwork.com/nidp/saml2/sso?id=123"
+    },
+    _resourceType: "Document"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    mvpdGateOpen: true,
+    mvpdDomains: ["identity1.dishnetwork.com"]
+  });
+  assert.equal(mvpdClassification.phase, "MVPD");
+  assert.equal(mvpdClassification.domain, "mvpd");
+
+  const externalNoiseClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://fonts.gstatic.com/s/roboto/v30/roboto.woff2"
+    },
+    _resourceType: "Font"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    mvpdGateOpen: true,
+    mvpdDomains: ["identity1.dishnetwork.com"]
+  });
+  assert.equal(externalNoiseClassification, null);
+});
+
+test("HARPO drops physical asset entries even when they sit on programmer or MVPD hosts", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const programmerAssetClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://www.aetv.com/assets/provider-logo.png"
+    },
+    response: {
+      headers: [{ name: "content-type", value: "image/png" }],
+      content: { mimeType: "image/png" }
+    },
+    _resourceType: "Image"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    programmerDomains: ["aetv.com"]
+  });
+  assert.equal(programmerAssetClassification, null);
+
+  const mvpdAssetClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://identity.directv.com/fonts/provider.woff2"
+    },
+    response: {
+      headers: [{ name: "content-type", value: "font/woff2" }],
+      content: { mimeType: "font/woff2" }
+    },
+    _resourceType: "Font"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    mvpdGateOpen: true,
+    mvpdDomains: ["directv.com"]
+  });
+  assert.equal(mvpdAssetClassification, null);
+});
+
 test("HARPO treats sp.auth host bootstrap endpoints as legacy rather than modern DCR or REST V2", async () => {
   const helpers = await loadHarpoTrafficHelpers();
 
@@ -193,6 +265,11 @@ test("HARPO treats sp.auth host bootstrap endpoints as legacy rather than modern
   assert.equal(configClassification.pass.family, "legacy-v1");
   assert.equal(configClassification.pass.endpointId, "legacy-sp-config");
   assert.equal(configClassification.pass.params.requestorId, "CBS_SPORTS");
+
+  assert.equal(helpers.isHarpoPassSessionTrigger("https://sp.auth.adobe.com/o/client/register"), true);
+  assert.equal(helpers.isHarpoPassSessionTrigger("https://api.auth.adobe.com/o/client/register"), false);
+  assert.equal(helpers.isHarpoLogoutTraffic("https://api.auth.adobe.com/api/v2/turner/logout/DISH"), true);
+  assert.equal(helpers.isHarpoLogoutTraffic("https://api.auth.adobe.com/api/v2/turner/configuration"), false);
 });
 
 test("HARPO maps legacy sp.auth regcode and indiv device calls to legacy migration guidance", async () => {
@@ -270,10 +347,12 @@ test("HARPO consumers use the shared traffic helper module", () => {
   const harpoSource = fs.readFileSync(path.join(ROOT, "harpo.js"), "utf8");
   const backgroundSource = fs.readFileSync(path.join(ROOT, "background.js"), "utf8");
 
-  assert.match(harpoSource, /import\s*\{\s*classifyHarpoEntry,\s*getHarpoTrafficDomainBucket,\s*getHarpoTrafficHostname,\s*isHarpoAdobeTraffic,\s*isHarpoPassTraffic\s*\}\s*from "\.\/harpo-traffic\.js";/);
+  assert.match(harpoSource, /import\s*\{\s*classifyHarpoEntry,\s*getHarpoTrafficDomainBucket,\s*getHarpoTrafficHostname,\s*isHarpoAdobeTraffic,\s*isHarpoPassSamlAssertionConsumer,\s*isHarpoPassTraffic\s*\}\s*from "\.\/harpo-traffic\.js";/);
   assert.match(harpoSource, /const classification = classifyHarpoEntry\(entry, \{/);
   assert.match(harpoSource, /const hostname = getHarpoTrafficHostname\(url\);/);
   assert.match(harpoSource, /const domainBucket = getHarpoTrafficDomainBucket\(hostname\);/);
-  assert.match(backgroundSource, /import \{ isHarpoAdobeTraffic \} from "\.\/harpo-traffic\.js"/);
-  assert.match(backgroundSource, /if \(!harpoState\.triggered && isHarpoAdobeTraffic\(url\)\) \{/);
+  assert.match(
+    backgroundSource,
+    /import\s*\{\s*createHarpoCaptureSession,\s*deriveHarpoProgrammerDomains,\s*evaluateHarpoCaptureSession,\s*updateHarpoCaptureSessionFromRequest,\s*updateHarpoCaptureSessionFromResponse\s*\}\s*from "\.\/harpo-capture\.js"/
+  );
 });

@@ -1,6 +1,6 @@
 export const LOGINBUTTON_VAULT_DB_NAME = "loginbutton-vault";
 export const LOGINBUTTON_VAULT_DB_VERSION = 2;
-export const LOGINBUTTON_VAULT_SCHEMA_VERSION = 2;
+export const LOGINBUTTON_VAULT_SCHEMA_VERSION = 9;
 export const LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION = 3;
 export const LOGINBUTTON_VAULT_EXPORT_SCHEMA = "loginbutton-vault-json-v3";
 export const LOGINBUTTON_VAULT_PROGRAMMER_RECORD_TTL_MS = 12 * 60 * 60 * 1000;
@@ -135,10 +135,16 @@ export function assessProgrammerVaultRecord(record = null, lookup = {}) {
     };
   }
 
-  const reasons = [];
   if (Number(normalizedRecord.schemaVersion || 0) !== LOGINBUTTON_VAULT_SCHEMA_VERSION) {
-    reasons.push("schema-version-changed");
+    return {
+      reusable: false,
+      needsRefresh: true,
+      stale: true,
+      reason: "schema-version-changed"
+    };
   }
+
+  const reasons = [];
   if (normalizeIdentifier(lookup?.configurationVersion) && lookup.configurationVersion !== normalizedRecord.configurationVersion) {
     reasons.push("configuration-version-changed");
   }
@@ -545,6 +551,7 @@ function normalizeProgrammerVaultSelectionInput(input = null) {
     programmerId,
     selectedRegisteredApplicationId: normalizeIdentifier(input.selectedRegisteredApplicationId),
     selectedRequestorId: normalizeIdentifier(input.selectedRequestorId),
+    selectedMvpdId: normalizeIdentifier(input.selectedMvpdId),
     selectedCmTenantId: normalizeIdentifier(input.selectedCmTenantId)
   };
 }
@@ -627,9 +634,12 @@ function normalizeProgrammerVaultRecord(input = null, existingRecord = null) {
         normalizedExistingRecord?.selectedRegisteredApplicationId
       ])
     ),
-    selectedRequestorId: normalizeIdentifier(
-      firstNonEmptyString([normalizedInput.selectedRequestorId, normalizedExistingRecord?.selectedRequestorId])
-    ),
+    selectedRequestorId: Object.prototype.hasOwnProperty.call(normalizedInput, "selectedRequestorId")
+      ? normalizeIdentifier(normalizedInput.selectedRequestorId)
+      : normalizeIdentifier(firstNonEmptyString([normalizedExistingRecord?.selectedRequestorId])),
+    selectedMvpdId: Object.prototype.hasOwnProperty.call(normalizedInput, "selectedMvpdId")
+      ? normalizeIdentifier(normalizedInput.selectedMvpdId)
+      : normalizeIdentifier(firstNonEmptyString([normalizedExistingRecord?.selectedMvpdId])),
     selectedCmTenantId: normalizeIdentifier(
       firstNonEmptyString([normalizedInput.selectedCmTenantId, normalizedExistingRecord?.selectedCmTenantId])
     ),
@@ -764,25 +774,68 @@ function normalizeCompactApplication(application = null) {
     return null;
   }
 
-  const id = normalizeIdentifier(firstNonEmptyString([application.id, application.key]));
-  const key = normalizeIdentifier(firstNonEmptyString([application.key, application.id]));
+  const guid = normalizeIdentifier(
+    firstNonEmptyString([
+      extractApplicationGuid(application.guid),
+      extractApplicationGuid(application.id),
+      extractApplicationGuid(application.key)
+    ])
+  );
+  const id = normalizeIdentifier(firstNonEmptyString([guid, application.id, application.key]));
+  const key = normalizeIdentifier(firstNonEmptyString([guid, application.key, application.id]));
   if (!id && !key) {
     return null;
   }
 
   const scopes = uniqueStrings(application.scopes);
+  const serviceProviders = uniqueStrings(
+    []
+      .concat(Array.isArray(application.serviceProviders) ? application.serviceProviders : [])
+      .concat(Array.isArray(application.contentProviders) ? application.contentProviders : [])
+      .concat(Array.isArray(application.requestorIds) ? application.requestorIds : [])
+      .concat(Array.isArray(application.requestors) ? application.requestors : [])
+      .concat(
+        firstNonEmptyString([application.requestor]) ? [application.requestor] : [],
+        firstNonEmptyString([application.serviceProvider]) ? [application.serviceProvider] : []
+      )
+  );
   return {
     key: key || id,
     id: id || key,
+    guid: guid || id || key,
     name: firstNonEmptyString([application.name, application.label, id, key]),
     label: firstNonEmptyString([application.label, application.name, id, key]),
     clientId: firstNonEmptyString([application.clientId]),
     scopes,
     scopeLabels: uniqueStrings(application.scopeLabels),
     type: firstNonEmptyString([application.type]),
+    serviceProviders,
+    requestor: firstNonEmptyString([
+      application.requestor,
+      application.serviceProvider
+    ]),
     softwareStatement: firstNonEmptyString([application.softwareStatement]),
     updatedAt: firstNonEmptyString([application.updatedAt])
   };
+}
+
+function extractApplicationGuid(value = "") {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const prefixedMatch = normalizedValue.match(/^@?RegisteredApplication:(.+)$/i);
+  if (prefixedMatch) {
+    return String(prefixedMatch[1] || "").trim();
+  }
+
+  const tokenMatch = normalizedValue.match(/@?RegisteredApplication:([A-Za-z0-9-]+)/i);
+  if (tokenMatch) {
+    return String(tokenMatch[1] || "").trim();
+  }
+
+  return normalizedValue;
 }
 
 function normalizeCompactTenant(tenant = null) {
@@ -1116,6 +1169,7 @@ function buildCompactProgrammerVaultExportRecord(record = null) {
     hydrationStatus: normalizedRecord.hydrationStatus,
     selectedRegisteredApplicationId: normalizedRecord.selectedRegisteredApplicationId,
     selectedRequestorId: normalizedRecord.selectedRequestorId,
+    selectedMvpdId: normalizedRecord.selectedMvpdId,
     selectedCmTenantId: normalizedRecord.selectedCmTenantId,
     registeredApplicationsById,
     services: buildCompactProgrammerVaultExportServices(normalizedRecord.services),
