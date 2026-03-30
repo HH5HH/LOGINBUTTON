@@ -12,6 +12,7 @@ import {
   createHarpoCaptureSession,
   deriveHarpoProgrammerDomains,
   evaluateHarpoCaptureSession,
+  shouldPersistHarpoCapturedEntry,
   updateHarpoCaptureSessionFromRequest,
   updateHarpoCaptureSessionFromResponse
 } from "./harpo-capture.js"
@@ -20,6 +21,7 @@ import { getHarpoTrafficHostname, isHarpoAdobeTraffic, isHarpoPhysicalAssetTraff
 const LOGINBUTTON_VAULT_REQUEST_TYPE = "loginbutton:vault"
 const LOGINBUTTON_GET_UPDATE_STATE_REQUEST_TYPE = "loginbutton:getUpdateState"
 const LOGINBUTTON_GET_LATEST_REQUEST_TYPE = "loginbutton:getLatest"
+const LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE = "loginbutton:fetchAvatarDataUrl"
 const LOGINBUTTON_GITHUB_OWNER = "HH5HH"
 const LOGINBUTTON_GITHUB_REPO = "LOGINBUTTON"
 const LOGINBUTTON_LATEST_REF_API_URL = `https://api.github.com/repos/${LOGINBUTTON_GITHUB_OWNER}/${LOGINBUTTON_GITHUB_REPO}/git/ref/heads/main`
@@ -31,6 +33,11 @@ const LOGINBUTTON_LATEST_PACKAGE_URL = `https://raw.githubusercontent.com/${LOGI
 const LOGINBUTTON_LOCAL_PACKAGE_PATH = "loginbutton_distro.zip"
 const CHROME_EXTENSIONS_URL = "chrome://extensions"
 const UPDATE_CHECK_TTL_MS = 10 * 60 * 1000
+const LOGINBUTTON_AVATAR_MAX_DATAURL_BYTES = 6 * 1024 * 1024
+const LOGINBUTTON_IMS_BASE_URL = "https://ims-na1.adobelogin.com"
+const LOGINBUTTON_PPS_PROFILE_BASE_URL = "https://pps.services.adobe.com"
+const LOGINBUTTON_AVATAR_SIZE_PREFERENCES = [128, 64, 256, 32]
+const LOGINBUTTON_LEGACY_IMS_AVATAR_CLIENT_IDS = ["AdobePass1"]
 
 // ─── HARPO constants ─────────────────────────────────────────────────────────
 
@@ -47,6 +54,11 @@ const HARPO_SKIP_BODY_TYPES = new Set([
 ])
 
 const HARPO_BODY_FETCH_CONCURRENCY = 6  // parallel body fetches
+const HARPO_BODY_FETCH_RETRY_DELAYS_MS = [120, 260, 520]
+const HARPO_NETWORK_MAX_TOTAL_BUFFER_SIZE = 100 * 1024 * 1024
+const HARPO_NETWORK_MAX_RESOURCE_BUFFER_SIZE = 10 * 1024 * 1024
+const HARPO_NETWORK_MAX_POST_DATA_SIZE = 1024 * 1024
+const HARPO_FETCH_INTERCEPT_RESOURCE_TYPES = ["Document", "XHR", "Fetch", "Script", "Other"]
 
 // ─── HARPO recorder state ─────────────────────────────────────────────────────
 
@@ -73,6 +85,12 @@ const harpoState = {
   stopRequested:     false,
   autoStopTimer:     null,
   observedRequests:  new Map(),
+  pendingRequestPostData: new Map(),
+  capturedResponseBodies: new Map(),
+  pendingCapturedResponseBodies: new Map(),
+  fetchResponseBodies: new Map(),
+  pendingFetchResponseBodies: new Map(),
+  pendingStreamBodies: new Map(),
   pendingRequestExtras: new Map(),
   pendingRequests:   new Map(),
   pendingResponses:  new Map(),
@@ -357,6 +375,380 @@ async function openLoginButtonGetLatestFlow() {
   return result
 }
 
+function normalizeLoginButtonAvatarCandidate(value = "") {
+  if (typeof value !== "string") {
+    return ""
+  }
+
+  const trimmed = value.trim().replace(/^['"]+|['"]+$/g, "")
+  if (!trimmed) {
+    return ""
+  }
+
+  if (/^data:image\//i.test(trimmed) || /^blob:/i.test(trimmed)) {
+    return trimmed
+  }
+
+  if (trimmed.startsWith("//")) {
+    return `https:${trimmed}`
+  }
+
+  if (/^\/?api\/profile\/[^/]+\/image(\/|$)/i.test(trimmed)) {
+    const normalizedPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`
+    return `${LOGINBUTTON_PPS_PROFILE_BASE_URL}${normalizedPath}`
+  }
+
+  if (/^ims\/avatar\/download\//i.test(trimmed)) {
+    return `${LOGINBUTTON_IMS_BASE_URL}/${trimmed}`
+  }
+
+  if (/^avatar\/download\//i.test(trimmed)) {
+    return `${LOGINBUTTON_IMS_BASE_URL}/ims/${trimmed}`
+  }
+
+  if (/^\/ims\/avatar\/download\//i.test(trimmed)) {
+    return `${LOGINBUTTON_IMS_BASE_URL}${trimmed}`
+  }
+
+  if (trimmed.startsWith("/")) {
+    return `${LOGINBUTTON_IMS_BASE_URL}${trimmed}`
+  }
+
+  if (!trimmed.includes("://") && /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) {
+    return `https://${trimmed}`
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === "http:") {
+      parsed.protocol = "https:"
+    }
+    return parsed.protocol === "https:" ? parsed.toString() : ""
+  } catch {
+    return ""
+  }
+}
+
+function isLoginButtonImsAvatarDownloadUrl(url = "") {
+  const normalized = normalizeLoginButtonAvatarCandidate(url)
+  if (!normalized || normalized.startsWith("data:image/") || normalized.startsWith("blob:")) {
+    return false
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    return /(^|\.)adobelogin\.com$/i.test(parsed.hostname) && /\/ims\/avatar\/download\//i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
+function isLoginButtonPpsProfileImageUrl(url = "") {
+  const normalized = normalizeLoginButtonAvatarCandidate(url)
+  if (!normalized || normalized.startsWith("data:image/") || normalized.startsWith("blob:")) {
+    return false
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    return /(^|\.)pps\.services\.adobe\.com$/i.test(parsed.hostname) && /\/api\/profile\/[^/]+\/image(\/|$)/i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
+function toLoginButtonPpsProfileImageSizeUrl(url = "", size = 0) {
+  const normalized = normalizeLoginButtonAvatarCandidate(url)
+  if (!normalized || !isLoginButtonPpsProfileImageUrl(normalized) || !Number.isFinite(size) || size <= 0) {
+    return normalized
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    const nextSize = String(Math.floor(size))
+    const withTrailingSize = parsed.pathname.replace(/\/(\d+)(\/?)$/i, `/${nextSize}$2`)
+    if (withTrailingSize !== parsed.pathname) {
+      parsed.pathname = withTrailingSize
+      return parsed.toString()
+    }
+    parsed.pathname = `${parsed.pathname.replace(/\/?$/, "")}/${nextSize}`
+    return parsed.toString()
+  } catch {
+    return normalized
+  }
+}
+
+function buildLoginButtonAvatarFetchUrlCandidates(url = "") {
+  const normalized = normalizeLoginButtonAvatarCandidate(url)
+  if (!normalized) {
+    return []
+  }
+
+  const candidates = [normalized]
+  const pushCandidate = (value) => {
+    const candidate = normalizeLoginButtonAvatarCandidate(value)
+    if (candidate && !candidates.includes(candidate)) {
+      candidates.push(candidate)
+    }
+  }
+
+  if (isLoginButtonPpsProfileImageUrl(normalized)) {
+    for (const size of LOGINBUTTON_AVATAR_SIZE_PREFERENCES) {
+      pushCandidate(toLoginButtonPpsProfileImageSizeUrl(normalized, size))
+    }
+    return candidates
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    if (isLoginButtonImsAvatarDownloadUrl(normalized)) {
+      if (!parsed.searchParams.has("size")) {
+        const sized = new URL(parsed.toString())
+        sized.searchParams.set("size", String(LOGINBUTTON_AVATAR_SIZE_PREFERENCES[0] || 128))
+        pushCandidate(sized.toString())
+      }
+      return candidates
+    }
+
+    for (const size of LOGINBUTTON_AVATAR_SIZE_PREFERENCES) {
+      const sized = new URL(parsed.toString())
+      sized.searchParams.set("size", String(size))
+      pushCandidate(sized.toString())
+    }
+  } catch {
+    // Keep original URL only.
+  }
+
+  return candidates
+}
+
+function decodeLoginButtonBase64UrlText(value = "") {
+  let normalized = String(value || "").trim().replace(/-/g, "+").replace(/_/g, "/")
+  if (!normalized) {
+    return ""
+  }
+  const remainder = normalized.length % 4
+  if (remainder) {
+    normalized += "=".repeat(4 - remainder)
+  }
+  try {
+    return atob(normalized)
+  } catch {
+    return ""
+  }
+}
+
+function parseLoginButtonJwtPayload(token = "") {
+  const raw = String(token || "").trim()
+  if (!raw) {
+    return null
+  }
+  const parts = raw.split(".")
+  if (parts.length < 2) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(decodeLoginButtonBase64UrlText(parts[1]))
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function inferLoginButtonImageMimeTypeFromBuffer(buffer = new ArrayBuffer(0)) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  if (bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return "image/png"
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg"
+  }
+  if (bytes.length >= 6) {
+    const signature = String.fromCharCode(...bytes.subarray(0, 6))
+    if (signature === "GIF87a" || signature === "GIF89a") {
+      return "image/gif"
+    }
+  }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return "image/bmp"
+  }
+  if (bytes.length >= 12) {
+    const riff = String.fromCharCode(...bytes.subarray(0, 4))
+    const webp = String.fromCharCode(...bytes.subarray(8, 12))
+    if (riff === "RIFF" && webp === "WEBP") {
+      return "image/webp"
+    }
+  }
+  const head = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, Math.min(bytes.length, 256))).trim()
+  if (/^<svg[\s>]/i.test(head) || /^<\?xml[\s\S]*<svg[\s>]/i.test(head)) {
+    return "image/svg+xml"
+  }
+  return ""
+}
+
+function buildLoginButtonAvatarFetchAttempts(accessToken = "", clientId = "", url = "") {
+  const baseHeaders = {
+    Accept: "image/*,*/*;q=0.8"
+  }
+  const preferPpsIdentitySessionFirst = isLoginButtonPpsProfileImageUrl(url)
+  const tokenClaims = parseLoginButtonJwtPayload(accessToken) || {}
+  const avatarClientIds = [...new Set([
+    String(clientId || "").trim(),
+    String(tokenClaims?.client_id || tokenClaims?.clientId || "").trim(),
+    ...LOGINBUTTON_LEGACY_IMS_AVATAR_CLIENT_IDS
+  ].filter(Boolean))]
+
+  const attempts = []
+  const seen = new Set()
+  const pushAttempt = (headers, credentials) => {
+    const key = `${credentials}|${Object.entries(headers)
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
+      .map(([headerName, value]) => `${headerName}:${value}`)
+      .join("|")}`
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    attempts.push({ headers, credentials })
+  }
+
+  if (preferPpsIdentitySessionFirst) {
+    pushAttempt(baseHeaders, "include")
+    pushAttempt(baseHeaders, "omit")
+  }
+
+  if (accessToken) {
+    pushAttempt({ ...baseHeaders, Authorization: `Bearer ${accessToken}` }, "omit")
+    pushAttempt({ ...baseHeaders, Authorization: `Bearer ${accessToken}` }, "include")
+    pushAttempt({ Accept: "*/*", Authorization: `Bearer ${accessToken}` }, "omit")
+    for (const currentClientId of avatarClientIds) {
+      pushAttempt(
+        {
+          ...baseHeaders,
+          Authorization: `Bearer ${accessToken}`,
+          "X-IMS-ClientId": currentClientId,
+          "x-api-key": currentClientId
+        },
+        "omit"
+      )
+      pushAttempt(
+        {
+          ...baseHeaders,
+          Authorization: `Bearer ${accessToken}`,
+          "X-IMS-ClientId": currentClientId,
+          "x-api-key": currentClientId
+        },
+        "include"
+      )
+    }
+  }
+
+  if (!preferPpsIdentitySessionFirst) {
+    pushAttempt(baseHeaders, "omit")
+    pushAttempt(baseHeaders, "include")
+  } else {
+    pushAttempt({ Accept: "*/*" }, "include")
+    pushAttempt({ Accept: "*/*" }, "omit")
+  }
+
+  return attempts
+}
+
+function isAllowedLoginButtonAvatarRelayUrl(value = "") {
+  const normalized = normalizeLoginButtonAvatarCandidate(value)
+  if (!normalized) {
+    return false
+  }
+  try {
+    const parsed = new URL(normalized)
+    if (parsed.protocol !== "https:") {
+      return false
+    }
+    const host = String(parsed.hostname || "").toLowerCase()
+    return /(^|\.)adobelogin\.com$/i.test(host) ||
+      host === "pps.services.adobe.com" ||
+      /(^|\.)adobe\.com$/i.test(host)
+  } catch {
+    return false
+  }
+}
+
+async function fetchLoginButtonAvatarAsDataUrl(url = "", accessToken = "", clientId = "") {
+  const normalizedUrl = normalizeLoginButtonAvatarCandidate(url)
+  if (!normalizedUrl) {
+    throw new Error("Missing avatar URL.")
+  }
+  if (!isAllowedLoginButtonAvatarRelayUrl(normalizedUrl)) {
+    throw new Error("Avatar relay only supports Adobe avatar hosts.")
+  }
+
+  const urlCandidates = buildLoginButtonAvatarFetchUrlCandidates(normalizedUrl)
+  const maxAttempts = 14
+  let attemptCount = 0
+  let lastError = null
+
+  for (const targetUrl of urlCandidates) {
+    const attempts = buildLoginButtonAvatarFetchAttempts(String(accessToken || "").trim(), String(clientId || "").trim(), targetUrl)
+    for (const attempt of attempts) {
+      attemptCount += 1
+      if (attemptCount > maxAttempts) {
+        break
+      }
+
+      try {
+        const response = await fetch(targetUrl, {
+          method: "GET",
+          cache: "no-store",
+          credentials: attempt.credentials,
+          redirect: "follow",
+          headers: attempt.headers
+        })
+        if (!response.ok) {
+          lastError = new Error(`Avatar request failed (${response.status})`)
+          continue
+        }
+
+        const blob = await response.blob()
+        if (!blob || blob.size === 0) {
+          lastError = new Error("Avatar response was empty.")
+          continue
+        }
+        if (blob.size > LOGINBUTTON_AVATAR_MAX_DATAURL_BYTES) {
+          lastError = new Error("Avatar payload too large for data URL transport.")
+          continue
+        }
+
+        const buffer = await blob.arrayBuffer()
+        const responseMimeType = String(blob.type || "").toLowerCase()
+        const resolvedMimeType = responseMimeType.startsWith("image/")
+          ? responseMimeType
+          : inferLoginButtonImageMimeTypeFromBuffer(buffer)
+        if (!resolvedMimeType) {
+          lastError = new Error(`Avatar response type was not image (${blob.type || "unknown"}).`)
+          continue
+        }
+
+        const base64 = harpoBytesToBase64(new Uint8Array(buffer))
+        if (!base64) {
+          lastError = new Error("Avatar body encoding failed.")
+          continue
+        }
+
+        return `data:${resolvedMimeType};base64,${base64}`
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+    if (attemptCount > maxAttempts) {
+      break
+    }
+  }
+
+  throw lastError || new Error("Unable to fetch avatar.")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HARPO — Service Worker keepalive via chrome.alarms
 // chrome.alarms fires the SW every ~24 seconds during recording,
@@ -421,28 +813,630 @@ function harpoBuildRequestKey(tabId, requestId) {
   return `${Number(tabId || 0)}:${String(requestId || "")}`
 }
 
-function harpoBuildObservedBodyPromise(request = null, debuggeeId = 0, requestId = "") {
-  const resourceType = String(request?.resourceType || "")
-  if (HARPO_SKIP_BODY_TYPES.has(resourceType)) {
-    return Promise.resolve({
-      text: "",
-      encoding: "",
-      error: "Skipped body capture for binary or irrelevant resource type"
-    })
-  }
-
-  return Promise.race([
-    harpoFetchOneBody(debuggeeId, requestId),
-    new Promise((resolve) => setTimeout(() => resolve({
-      text: "",
-      encoding: "",
-      error: "Timed out while fetching response body"
-    }), 4000))
-  ]).catch(() => ({
+function harpoBuildEmptyBodyResult(comment = "") {
+  return {
     text: "",
     encoding: "",
-    error: "Response body unavailable"
-  }))
+    comment: String(comment || "")
+  }
+}
+
+function harpoHasBodyResult(bodyResult = null) {
+  if (!bodyResult || typeof bodyResult !== "object") return false
+  return Boolean(String(bodyResult.text || "") || String(bodyResult.comment || ""))
+}
+
+function harpoNormalizeContentType(contentType = "") {
+  return String(contentType || "").split(";")[0].trim().toLowerCase()
+}
+
+function harpoIsJsonContentType(contentType = "") {
+  const normalized = harpoNormalizeContentType(contentType)
+  return normalized === "application/json" || normalized.endsWith("+json")
+}
+
+function harpoIsXmlLikeContentType(contentType = "") {
+  const normalized = harpoNormalizeContentType(contentType)
+  return normalized === "application/xml" ||
+    normalized === "text/xml" ||
+    normalized === "text/html" ||
+    normalized.endsWith("+xml")
+}
+
+function harpoIsUrlEncodedContentType(contentType = "") {
+  return harpoNormalizeContentType(contentType) === "application/x-www-form-urlencoded"
+}
+
+function harpoIsTextualContentType(contentType = "") {
+  const normalized = harpoNormalizeContentType(contentType)
+  if (!normalized) return false
+  return normalized.startsWith("text/") ||
+    normalized.includes("javascript") ||
+    normalized.includes("ecmascript") ||
+    normalized.includes("graphql") ||
+    harpoIsJsonContentType(normalized) ||
+    harpoIsXmlLikeContentType(normalized) ||
+    harpoIsUrlEncodedContentType(normalized)
+}
+
+function harpoBase64ToBytes(base64 = "") {
+  try {
+    const binary = atob(String(base64 || ""))
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  } catch {
+    return new Uint8Array(0)
+  }
+}
+
+function harpoBytesToBase64(bytes = new Uint8Array(0)) {
+  try {
+    const chunkSize = 0x8000
+    let binary = ""
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+    }
+    return btoa(binary)
+  } catch {
+    return ""
+  }
+}
+
+function harpoTextToBytes(text = "") {
+  try {
+    return new TextEncoder().encode(String(text || ""))
+  } catch {
+    return new Uint8Array(0)
+  }
+}
+
+function harpoBytesToUtf8Text(bytes = new Uint8Array(0)) {
+  try {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes).replace(/\0/g, "")
+  } catch {
+    return ""
+  }
+}
+
+function harpoDecodeBase64Utf8(base64 = "") {
+  const bytes = harpoBase64ToBytes(base64)
+  if (!bytes.length) {
+    return ""
+  }
+  return harpoBytesToUtf8Text(bytes)
+}
+
+function harpoConcatByteChunks(chunks = []) {
+  const safeChunks = (Array.isArray(chunks) ? chunks : []).filter((chunk) => chunk instanceof Uint8Array && chunk.length > 0)
+  if (!safeChunks.length) return new Uint8Array(0)
+  const totalLength = safeChunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const combined = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of safeChunks) {
+    combined.set(chunk, offset)
+    offset += chunk.length
+  }
+  return combined
+}
+
+function harpoCombineBase64Chunks(chunks = []) {
+  const safeChunks = (Array.isArray(chunks) ? chunks : []).filter((chunk) => typeof chunk === "string" && chunk)
+  if (!safeChunks.length) return ""
+  if (safeChunks.length === 1) return safeChunks[0]
+  const parts = safeChunks.map((chunk) => harpoBase64ToBytes(chunk)).filter((chunk) => chunk.length > 0)
+  if (!parts.length) return safeChunks[0]
+  const totalLength = parts.reduce((sum, chunk) => sum + chunk.length, 0)
+  const combined = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of parts) {
+    combined.set(chunk, offset)
+    offset += chunk.length
+  }
+  return harpoBytesToBase64(combined)
+}
+
+function harpoBuildStreamBodyResult(requestKey = "") {
+  const streamState = harpoState.pendingStreamBodies.get(requestKey)
+  if (!streamState) return null
+  const text = harpoCombineBase64Chunks(streamState.chunks)
+  if (!text) return null
+  return {
+    text,
+    encoding: "base64",
+    comment: ""
+  }
+}
+
+function harpoResolveResponseContentType(response = null) {
+  const mimeType = String(response?.mimeType || response?.contentType || "").trim()
+  if (mimeType) {
+    return mimeType
+  }
+  const responseHeaders = Array.isArray(response?.headers)
+    ? response.headers
+    : harpoNormalizeFetchHeaderEntries(response?.responseHeaders)
+  return harpoGetHeaderValue(responseHeaders, "content-type")
+}
+
+function harpoNormalizeCapturedBodyResult(bodyResult = null, { contentType = "" } = {}) {
+  const normalizedBodyResult = harpoHasBodyResult(bodyResult)
+    ? {
+        text: String(bodyResult?.text || ""),
+        encoding: String(bodyResult?.encoding || ""),
+        comment: String(bodyResult?.comment || "")
+      }
+    : harpoBuildEmptyBodyResult()
+
+  if (
+    normalizedBodyResult.encoding !== "base64" ||
+    !normalizedBodyResult.text ||
+    !harpoIsTextualContentType(contentType)
+  ) {
+    return normalizedBodyResult
+  }
+
+  const decodedText = harpoDecodeBase64Utf8(normalizedBodyResult.text)
+  if (!decodedText) {
+    return normalizedBodyResult
+  }
+
+  return {
+    ...normalizedBodyResult,
+    text: decodedText,
+    encoding: ""
+  }
+}
+
+function harpoNormalizeFetchHeaderEntries(headers = []) {
+  return (Array.isArray(headers) ? headers : [])
+    .map((header) => ({
+      name: String(header?.name || "").trim(),
+      value: String(header?.value || "")
+    }))
+    .filter((header) => header.name)
+}
+
+function harpoResolveRequestContentType(request = null) {
+  return harpoGetHeaderValue(Array.isArray(request?.headers) ? request.headers : [], "content-type")
+}
+
+function harpoIsFetchRedirectResponse(params = {}) {
+  const statusCode = Number(params?.responseStatusCode || 0)
+  if (![301, 302, 303, 307, 308].includes(statusCode)) {
+    return false
+  }
+
+  return Boolean(harpoGetHeaderValue(harpoNormalizeFetchHeaderEntries(params?.responseHeaders), "location"))
+}
+
+function harpoBuildFetchBodyResult(result = null, contentType = "") {
+  return harpoNormalizeCapturedBodyResult({
+    text: String(result?.body || ""),
+    encoding: result?.base64Encoded ? "base64" : "",
+    comment: ""
+  }, { contentType })
+}
+
+function harpoBuildRequestBodyResult(result = null, contentType = "") {
+  return harpoNormalizeCapturedBodyResult({
+    text: String(result?.postData || ""),
+    encoding: result?.base64Encoded ? "base64" : "",
+    comment: ""
+  }, { contentType })
+}
+
+function harpoFormatByteCount(bytes = 0) {
+  const normalizedBytes = Number(bytes || 0)
+  if (!Number.isFinite(normalizedBytes) || normalizedBytes <= 0) {
+    return "0 bytes"
+  }
+  if (normalizedBytes < 1024) {
+    return `${normalizedBytes} byte${normalizedBytes === 1 ? "" : "s"}`
+  }
+  if (normalizedBytes < 1024 * 1024) {
+    return `${(normalizedBytes / 1024).toFixed(normalizedBytes >= 10 * 1024 ? 0 : 1)} KB`
+  }
+  return `${(normalizedBytes / (1024 * 1024)).toFixed(normalizedBytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`
+}
+
+function harpoBuildMissingBodyComment(
+  request = null,
+  response = null,
+  {
+    failed = false,
+    errorText = "",
+    encodedDataLength = 0
+  } = {}
+) {
+  const requestMethod = String(request?.method || "").trim().toUpperCase()
+  const resourceType = String(request?.resourceType || "").trim()
+  const responseStatus = Number(response?.status || 0)
+  const responseHeaders = Array.isArray(response?.headers) ? response.headers : []
+  const redirectUrl = harpoGetHeaderValue(responseHeaders, "location")
+  const safeErrorText = String(errorText || "").trim()
+  const normalizedEncodedLength = Number(encodedDataLength || response?.encodedDataLength || 0)
+
+  if (HARPO_SKIP_BODY_TYPES.has(resourceType)) {
+    return `HARPO skipped body capture for ${resourceType || "this"} traffic because Chrome does not expose useful text payloads for that resource type.`
+  }
+  if (failed) {
+    return safeErrorText
+      ? `The request failed before a usable response body was available: ${safeErrorText}`
+      : "The request failed before a usable response body was available."
+  }
+  if (requestMethod === "HEAD") {
+    return "HEAD responses do not carry a response body by design."
+  }
+  if (resourceType === "Preflight" || requestMethod === "OPTIONS") {
+    return "CORS preflight responses typically do not include a response body."
+  }
+  if ([204, 205, 304].includes(responseStatus)) {
+    return `HTTP ${responseStatus} responses do not include a response body by definition.`
+  }
+  if ([301, 302, 303, 307, 308].includes(responseStatus) && redirectUrl) {
+    return `Redirect response. The Location header is authoritative here: ${redirectUrl}`
+  }
+  if (normalizedEncodedLength > 0) {
+    return `Chrome reported ${harpoFormatByteCount(normalizedEncodedLength)} on the wire, but CDP did not expose a readable response body. HARPO exhausted Fetch interception, streaming capture, and Network.getResponseBody retries.`
+  }
+  return "No response bytes were recorded for this response."
+}
+
+function harpoRememberCapturedBodyResult(requestKey = "", bodyResult = null, fallbackComment = "") {
+  const normalizedBodyResult = harpoHasBodyResult(bodyResult)
+    ? {
+        text: String(bodyResult?.text || ""),
+        encoding: String(bodyResult?.encoding || ""),
+        comment: String(bodyResult?.comment || "")
+      }
+    : harpoBuildEmptyBodyResult(fallbackComment)
+
+  if (requestKey) {
+    harpoState.capturedResponseBodies.set(requestKey, normalizedBodyResult)
+  }
+  return normalizedBodyResult
+}
+
+function harpoShouldTreatResponseAsBodyless(request = null, response = null) {
+  const requestMethod = String(request?.method || "").trim().toUpperCase()
+  const resourceType = String(request?.resourceType || "").trim()
+  const responseStatus = Number(response?.status || response?.responseStatusCode || 0)
+  const responseHeaders = Array.isArray(response?.headers)
+    ? response.headers
+    : harpoNormalizeFetchHeaderEntries(response?.responseHeaders)
+  const redirectUrl = harpoGetHeaderValue(responseHeaders, "location")
+
+  if (HARPO_SKIP_BODY_TYPES.has(resourceType)) return true
+  if (requestMethod === "HEAD") return true
+  if (resourceType === "Preflight" || requestMethod === "OPTIONS") return true
+  if ([204, 205, 304].includes(responseStatus)) return true
+  if ([301, 302, 303, 307, 308].includes(responseStatus) && redirectUrl) return true
+  return false
+}
+
+function harpoSendDebuggerCommand(debuggee, method, commandParams = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand(debuggee, method, commandParams, (result) => {
+      const lastErrorMessage = chrome.runtime.lastError?.message || ""
+      if (lastErrorMessage) {
+        reject(new Error(lastErrorMessage))
+        return
+      }
+      resolve(result)
+    })
+  })
+}
+
+async function harpoContinueFetchRequest(debuggeeId, requestId = "") {
+  const normalizedRequestId = String(requestId || "").trim()
+  if (!normalizedRequestId) return
+  await harpoSendDebuggerCommand(debuggeeId, "Fetch.continueRequest", {
+    requestId: normalizedRequestId
+  }).catch(() => {})
+}
+
+async function harpoReadIoStreamAsBase64(debuggeeId, streamHandle = "") {
+  const normalizedStreamHandle = String(streamHandle || "").trim()
+  if (!normalizedStreamHandle) {
+    return ""
+  }
+
+  const chunks = []
+  try {
+    while (true) {
+      const result = await harpoSendDebuggerCommand(debuggeeId, "IO.read", {
+        handle: normalizedStreamHandle,
+        size: 64 * 1024
+      })
+      const rawData = typeof result?.data === "string" ? result.data : ""
+      if (rawData) {
+        chunks.push(result?.base64Encoded ? harpoBase64ToBytes(rawData) : harpoTextToBytes(rawData))
+      }
+      if (result?.eof) {
+        break
+      }
+    }
+  } finally {
+    await harpoSendDebuggerCommand(debuggeeId, "IO.close", {
+      handle: normalizedStreamHandle
+    }).catch(() => {})
+  }
+
+  return harpoBytesToBase64(harpoConcatByteChunks(chunks))
+}
+
+async function harpoFulfillFetchResponse(debuggeeId, requestId = "", params = {}, body = null) {
+  const normalizedRequestId = String(requestId || "").trim()
+  if (!normalizedRequestId) return
+  const responseHeaders = harpoNormalizeFetchHeaderEntries(params?.responseHeaders)
+  const responseCode = Number(params?.responseStatusCode || 200)
+  const responsePhrase = String(params?.responseStatusText || "").trim()
+
+  await harpoSendDebuggerCommand(debuggeeId, "Fetch.fulfillRequest", {
+    requestId: normalizedRequestId,
+    responseCode,
+    ...(responsePhrase ? { responsePhrase } : {}),
+    ...(responseHeaders.length ? { responseHeaders } : {}),
+    ...(typeof body === "string" ? { body } : {})
+  })
+}
+
+async function harpoHandleFetchRequestPaused(debuggeeId, params = {}) {
+  const fetchRequestId = String(params?.requestId || "").trim()
+  if (!fetchRequestId) {
+    return
+  }
+
+  const isResponseStage =
+    Object.prototype.hasOwnProperty.call(params, "responseStatusCode") ||
+    Object.prototype.hasOwnProperty.call(params, "responseErrorReason")
+  if (!isResponseStage) {
+    await harpoContinueFetchRequest(debuggeeId, fetchRequestId)
+    return
+  }
+
+  const networkRequestId = String(params?.networkId || "").trim()
+  const requestKey = networkRequestId
+    ? harpoBuildRequestKey(debuggeeId?.tabId, networkRequestId)
+    : ""
+  const trackedRequest = requestKey
+    ? harpoState.pendingRequests.get(requestKey) || harpoState.observedRequests.get(requestKey) || null
+    : null
+  const resourceType = String(params?.resourceType || trackedRequest?.resourceType || "")
+  const fetchResponseMeta = {
+    responseStatusCode: Number(params?.responseStatusCode || 0),
+    responseStatusText: String(params?.responseStatusText || ""),
+    responseHeaders: harpoNormalizeFetchHeaderEntries(params?.responseHeaders)
+  }
+  const responseContentType = harpoResolveResponseContentType(fetchResponseMeta)
+
+  if (
+    !requestKey ||
+    !trackedRequest ||
+    HARPO_SKIP_BODY_TYPES.has(resourceType) ||
+    harpoIsFetchRedirectResponse(params) ||
+    harpoShouldTreatResponseAsBodyless(trackedRequest, fetchResponseMeta)
+  ) {
+    await harpoContinueFetchRequest(debuggeeId, fetchRequestId)
+    return
+  }
+
+  const existingBodyPromise = harpoState.pendingFetchResponseBodies.get(requestKey)
+  if (existingBodyPromise) {
+    await harpoContinueFetchRequest(debuggeeId, fetchRequestId)
+    return
+  }
+
+  const capturePromise = (async () => {
+    let streamTaken = false
+    let fulfilled = false
+    let streamedBody = null
+    try {
+      let bodyResult = null
+      try {
+        const streamResult = await harpoSendDebuggerCommand(debuggeeId, "Fetch.takeResponseBodyAsStream", {
+          requestId: fetchRequestId
+        })
+        streamTaken = true
+        const body = await harpoReadIoStreamAsBase64(debuggeeId, String(streamResult?.stream || ""))
+        streamedBody = body
+        bodyResult = harpoNormalizeCapturedBodyResult({
+          text: body,
+          encoding: body ? "base64" : "",
+          comment: ""
+        }, { contentType: responseContentType })
+        await harpoFulfillFetchResponse(debuggeeId, fetchRequestId, params, body)
+        fulfilled = true
+      } catch {
+        if (!streamTaken) {
+          const result = await harpoSendDebuggerCommand(debuggeeId, "Fetch.getResponseBody", {
+            requestId: fetchRequestId
+          })
+          bodyResult = harpoBuildFetchBodyResult(result, responseContentType)
+          await harpoContinueFetchRequest(debuggeeId, fetchRequestId)
+          fulfilled = true
+        } else {
+          throw new Error("HARPO stream replay failed")
+        }
+      }
+      if (harpoHasBodyResult(bodyResult)) {
+        harpoState.fetchResponseBodies.set(requestKey, bodyResult)
+        harpoRememberCapturedBodyResult(requestKey, bodyResult)
+      }
+      return bodyResult
+    } catch {
+      if (streamTaken && !fulfilled) {
+        await harpoFulfillFetchResponse(debuggeeId, fetchRequestId, params, streamedBody).catch(() => {})
+      } else if (!streamTaken && !fulfilled) {
+        await harpoContinueFetchRequest(debuggeeId, fetchRequestId).catch(() => {})
+      }
+      return harpoBuildEmptyBodyResult()
+    } finally {
+      harpoState.pendingFetchResponseBodies.delete(requestKey)
+    }
+  })()
+
+  harpoState.pendingFetchResponseBodies.set(requestKey, capturePromise)
+}
+
+function harpoMaybeCaptureRequestPostData(tabId, requestId = "", requestKey = "", requestRecord = null, requestMeta = {}) {
+  const normalizedRequestId = String(requestId || "").trim()
+  const safeRequestRecord =
+    requestRecord && typeof requestRecord === "object" ? requestRecord : null
+  const hasPostData =
+    Boolean(requestMeta?.hasPostData) ||
+    (Array.isArray(requestMeta?.postDataEntries) && requestMeta.postDataEntries.length > 0)
+
+  if (!normalizedRequestId || !requestKey || !safeRequestRecord || safeRequestRecord.postData || !hasPostData) {
+    return
+  }
+
+  if (harpoState.pendingRequestPostData.has(requestKey)) {
+    return
+  }
+
+  const capturePromise = harpoSendDebuggerCommand({ tabId: Number(tabId || 0) }, "Network.getRequestPostData", {
+    requestId: normalizedRequestId
+  }).then((result) => {
+    const requestBody = harpoBuildRequestBodyResult(result, harpoResolveRequestContentType(safeRequestRecord))
+    if (requestBody.text) {
+      safeRequestRecord.postData = requestBody.text
+    }
+    return requestBody
+  }).catch(() => harpoBuildEmptyBodyResult()).finally(() => {
+    harpoState.pendingRequestPostData.delete(requestKey)
+  })
+
+  harpoState.pendingRequestPostData.set(requestKey, capturePromise)
+}
+
+function harpoWait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+function harpoShouldRetryBodyFetch(errorMessage = "") {
+  const normalizedMessage = String(errorMessage || "").trim().toLowerCase()
+  if (!normalizedMessage) return false
+  return (
+    normalizedMessage.includes("no resource with given identifier found") ||
+    normalizedMessage.includes("request content was evicted from inspector cache") ||
+    normalizedMessage.includes("cannot access contents of url")
+  )
+}
+
+function harpoMaybeStartStreamingBody(tabId, requestKey = "", requestId = "", resourceType = "") {
+  if (!requestKey || !requestId) return
+  if (HARPO_SKIP_BODY_TYPES.has(String(resourceType || ""))) return
+  const existingState = harpoState.pendingStreamBodies.get(requestKey)
+  if (existingState?.started) return
+  const streamState = existingState || {
+    tabId: Number(tabId || 0),
+    requestId: String(requestId || ""),
+    chunks: [],
+    started: true,
+    active: false
+  }
+  streamState.tabId = Number(tabId || 0)
+  streamState.requestId = String(requestId || "")
+  streamState.started = true
+  harpoState.pendingStreamBodies.set(requestKey, streamState)
+
+  chrome.debugger.sendCommand({ tabId: Number(tabId || 0) }, "Network.streamResourceContent", { requestId }, (result) => {
+    if (chrome.runtime.lastError) {
+      streamState.active = false
+      return
+    }
+    streamState.active = true
+    if (typeof result?.bufferedData === "string" && result.bufferedData) {
+      streamState.chunks.push(result.bufferedData)
+    }
+  })
+}
+
+function harpoBuildObservedBodyPromise(request = null, debuggeeId = 0, requestId = "", requestKey = "") {
+  return harpoCaptureObservedBody(request, debuggeeId, requestId, requestKey)
+}
+
+function harpoCaptureObservedBody(
+  request = null,
+  debuggeeId = 0,
+  requestId = "",
+  requestKey = "",
+  {
+    response = null,
+    failed = false,
+    errorText = "",
+    encodedDataLength = 0
+  } = {}
+) {
+  const resourceType = String(request?.resourceType || "")
+  const responseContentType = harpoResolveResponseContentType(response)
+  const fallbackComment = harpoBuildMissingBodyComment(request, response, {
+    failed,
+    errorText,
+    encodedDataLength
+  })
+
+  const capturedBody = harpoState.capturedResponseBodies.get(requestKey)
+  if (harpoHasBodyResult(capturedBody)) {
+    return Promise.resolve(capturedBody)
+  }
+
+  const pendingBodyCapture = harpoState.pendingCapturedResponseBodies.get(requestKey)
+  if (pendingBodyCapture) {
+    return pendingBodyCapture
+  }
+
+  if (HARPO_SKIP_BODY_TYPES.has(resourceType)) {
+    return Promise.resolve(harpoRememberCapturedBodyResult(requestKey, null, fallbackComment))
+  }
+
+  const capturePromise = (async () => {
+    let candidateBody = null
+    const pendingInterceptedBody = harpoState.pendingFetchResponseBodies.get(requestKey)
+    if (pendingInterceptedBody) {
+      candidateBody = await pendingInterceptedBody.catch(() => harpoBuildEmptyBodyResult())
+    }
+
+    if (harpoHasBodyResult(candidateBody)) {
+      return harpoRememberCapturedBodyResult(
+        requestKey,
+        harpoNormalizeCapturedBodyResult(candidateBody, { contentType: responseContentType }),
+        fallbackComment
+      )
+    }
+
+    const interceptedBody = harpoState.fetchResponseBodies.get(requestKey)
+    if (harpoHasBodyResult(interceptedBody)) {
+      return harpoRememberCapturedBodyResult(
+        requestKey,
+        harpoNormalizeCapturedBodyResult(interceptedBody, { contentType: responseContentType }),
+        fallbackComment
+      )
+    }
+
+    const streamedBody = harpoNormalizeCapturedBodyResult(
+      harpoBuildStreamBodyResult(requestKey),
+      { contentType: responseContentType }
+    )
+    if (streamedBody) {
+      return harpoRememberCapturedBodyResult(requestKey, streamedBody, fallbackComment)
+    }
+
+    const networkBody = await Promise.race([
+      harpoFetchOneBody(debuggeeId, requestId, responseContentType),
+      new Promise((resolve) => setTimeout(() => resolve(harpoBuildEmptyBodyResult()), 4000))
+    ]).catch(() => harpoBuildEmptyBodyResult())
+    return harpoRememberCapturedBodyResult(requestKey, networkBody, fallbackComment)
+  })().finally(() => {
+    harpoState.pendingCapturedResponseBodies.delete(requestKey)
+  })
+
+  harpoState.pendingCapturedResponseBodies.set(requestKey, capturePromise)
+  return capturePromise
 }
 
 function harpoFinalizeCapturedRequest(requestKey, {
@@ -482,6 +1476,8 @@ function harpoFinalizeCapturedRequest(requestKey, {
   harpoState.observedRequests.delete(requestKey)
   harpoState.pendingRequests.delete(requestKey)
   harpoState.pendingResponses.delete(requestKey)
+  harpoState.pendingCapturedResponseBodies.delete(requestKey)
+  harpoState.pendingStreamBodies.delete(requestKey)
   harpoState.pendingRequestExtras.delete(requestKey)
   harpoState.completedObservedRequests.delete(requestKey)
   harpoMaybeFinalizeAutoStop()
@@ -551,6 +1547,8 @@ function harpoPurgePendingEntriesForTab(tabId) {
     if (requestKey.startsWith(`${normalizedTabId}:`)) {
       harpoState.pendingRequests.delete(requestKey)
       harpoState.pendingResponses.delete(requestKey)
+      harpoState.pendingCapturedResponseBodies.delete(requestKey)
+      harpoState.pendingStreamBodies.delete(requestKey)
     }
   }
   for (const requestKey of [...harpoState.pendingRequestExtras.keys()]) {
@@ -558,9 +1556,34 @@ function harpoPurgePendingEntriesForTab(tabId) {
       harpoState.pendingRequestExtras.delete(requestKey)
     }
   }
+  for (const requestKey of [...harpoState.pendingRequestPostData.keys()]) {
+    if (requestKey.startsWith(`${normalizedTabId}:`)) {
+      harpoState.pendingRequestPostData.delete(requestKey)
+    }
+  }
   for (const requestKey of [...harpoState.completedObservedRequests.keys()]) {
     if (requestKey.startsWith(`${normalizedTabId}:`)) {
       harpoState.completedObservedRequests.delete(requestKey)
+    }
+  }
+  for (const requestKey of [...harpoState.fetchResponseBodies.keys()]) {
+    if (requestKey.startsWith(`${normalizedTabId}:`)) {
+      harpoState.fetchResponseBodies.delete(requestKey)
+    }
+  }
+  for (const requestKey of [...harpoState.capturedResponseBodies.keys()]) {
+    if (requestKey.startsWith(`${normalizedTabId}:`)) {
+      harpoState.capturedResponseBodies.delete(requestKey)
+    }
+  }
+  for (const requestKey of [...harpoState.pendingCapturedResponseBodies.keys()]) {
+    if (requestKey.startsWith(`${normalizedTabId}:`)) {
+      harpoState.pendingCapturedResponseBodies.delete(requestKey)
+    }
+  }
+  for (const requestKey of [...harpoState.pendingFetchResponseBodies.keys()]) {
+    if (requestKey.startsWith(`${normalizedTabId}:`)) {
+      harpoState.pendingFetchResponseBodies.delete(requestKey)
     }
   }
 }
@@ -597,27 +1620,7 @@ function harpoMatchesDomainList(url, domains = []) {
 }
 
 function harpoShouldPersistEntry(entry, captureSession = createHarpoCaptureSession()) {
-  const session =
-    captureSession && typeof captureSession === "object"
-      ? captureSession
-      : createHarpoCaptureSession()
-  const request = entry?.request || {}
-  const response = entry?.response || {}
-  const resourceType = entry?._resourceType || request?._resourceType || ""
-  const mimeType = response?.content?.mimeType || response?.mimeType || ""
-  if (isHarpoPhysicalAssetTraffic({
-    url: request.url || "",
-    resourceType,
-    mimeType,
-    headers: response?.headers || []
-  })) {
-    return false
-  }
-  return (
-    harpoMatchesDomainList(request.url || "", session.safeDomains || []) ||
-    isHarpoAdobeTraffic(request.url || "") ||
-    harpoMatchesDomainList(request.url || "", session.mvpdDomains || [])
-  )
+  return shouldPersistHarpoCapturedEntry(entry, captureSession)
 }
 
 async function harpoAttachDebuggerToTab(tabId) {
@@ -632,12 +1635,37 @@ async function harpoAttachDebuggerToTab(tabId) {
     })
   })
 
-  await new Promise((resolve, reject) => {
-    chrome.debugger.sendCommand({ tabId: normalizedTabId }, "Network.enable", {}, () => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
-      else resolve()
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.sendCommand({ tabId: normalizedTabId }, "Network.enable", {
+        maxTotalBufferSize: HARPO_NETWORK_MAX_TOTAL_BUFFER_SIZE,
+        maxResourceBufferSize: HARPO_NETWORK_MAX_RESOURCE_BUFFER_SIZE,
+        maxPostDataSize: HARPO_NETWORK_MAX_POST_DATA_SIZE
+      }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
+        else resolve()
+      })
     })
-  })
+  } catch {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.sendCommand({ tabId: normalizedTabId }, "Network.enable", {}, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
+        else resolve()
+      })
+    })
+  }
+
+  chrome.debugger.sendCommand({ tabId: normalizedTabId }, "Network.configureDurableMessages", {
+    enable: true,
+    maxTotalBufferSize: HARPO_NETWORK_MAX_TOTAL_BUFFER_SIZE
+  }, () => void chrome.runtime.lastError)
+
+  chrome.debugger.sendCommand({ tabId: normalizedTabId }, "Fetch.enable", {
+    patterns: HARPO_FETCH_INTERCEPT_RESOURCE_TYPES.map((resourceType) => ({
+      resourceType,
+      requestStage: "Response"
+    }))
+  }, () => void chrome.runtime.lastError)
 
   harpoState.tabIds.add(normalizedTabId)
   return true
@@ -739,6 +1767,7 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
         initiator:    params.initiator,
         documentUrl:  params.documentURL || ""
       }
+      harpoMaybeCaptureRequestPostData(tabId, params.requestId, requestKey, observedRequest, params.request)
       harpoState.observedRequests.set(requestKey, observedRequest)
       const captureDecision = evaluateHarpoCaptureSession(harpoState.captureSession, url, {
         resourceType,
@@ -842,8 +1871,24 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
           harpoNormalizeResponseRecord(params.response, params.timestamp)
         )
       )
+      harpoMaybeStartStreamingBody(
+        tabId,
+        requestKey,
+        params.requestId,
+        harpoState.pendingRequests.get(requestKey)?.resourceType || harpoState.observedRequests.get(requestKey)?.resourceType || params.type || ""
+      )
       break
       }
+
+    case "Network.dataReceived": {
+      const requestKey = harpoBuildRequestKey(tabId, params.requestId)
+      const streamState = harpoState.pendingStreamBodies.get(requestKey)
+      if (!streamState) break
+      if (typeof params.data === "string" && params.data) {
+        streamState.chunks.push(params.data)
+      }
+      break
+    }
 
     case "Network.responseReceivedExtraInfo": {
       const requestKey = harpoBuildRequestKey(tabId, params.requestId)
@@ -885,7 +1930,10 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
           requestId: params.requestId,
           endTime: params.timestamp,
           encodedDataLength: params.encodedDataLength || 0,
-          bodyPromise: harpoBuildObservedBodyPromise(req, debuggeeId, params.requestId)
+          bodyPromise: harpoCaptureObservedBody(req, debuggeeId, params.requestId, requestKey, {
+            response: resp,
+            encodedDataLength: params.encodedDataLength || 0
+          })
         })
       } else {
         const observedRequest = harpoState.observedRequests.get(requestKey)
@@ -894,12 +1942,17 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
             requestId: params.requestId,
             endTime: params.timestamp,
             encodedDataLength: params.encodedDataLength || 0,
-            bodyPromise: harpoBuildObservedBodyPromise(observedRequest, debuggeeId, params.requestId)
+            bodyPromise: harpoCaptureObservedBody(observedRequest, debuggeeId, params.requestId, requestKey, {
+              response: resp,
+              encodedDataLength: params.encodedDataLength || 0
+            })
           })
           harpoPromoteObservedRequests()
         } else {
           harpoState.pendingRequestExtras.delete(requestKey)
           harpoState.pendingResponses.delete(requestKey)
+          harpoState.pendingCapturedResponseBodies.delete(requestKey)
+          harpoState.pendingStreamBodies.delete(requestKey)
           harpoState.completedObservedRequests.delete(requestKey)
         }
       }
@@ -909,10 +1962,16 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
     case "Network.loadingFailed": {
       const requestKey = harpoBuildRequestKey(tabId, params.requestId)
       const req = harpoState.pendingRequests.get(requestKey)
+      const resp = harpoState.pendingResponses.get(requestKey)
       if (req) {
         harpoFinalizeCapturedRequest(requestKey, {
           requestId: params.requestId,
           endTime: params.timestamp,
+          bodyPromise: harpoCaptureObservedBody(req, debuggeeId, params.requestId, requestKey, {
+            response: resp,
+            failed: true,
+            errorText: params.errorText || ""
+          }),
           failed: true,
           errorText: params.errorText || "",
           responseOverride: {
@@ -932,6 +1991,11 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
             endTime: params.timestamp,
             failed: true,
             errorText: params.errorText || "",
+            bodyPromise: harpoCaptureObservedBody(observedRequest, debuggeeId, params.requestId, requestKey, {
+              response: resp,
+              failed: true,
+              errorText: params.errorText || ""
+            }),
             responseOverride: {
               status: 0,
               statusText: params.errorText || "Failed",
@@ -945,9 +2009,16 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
         } else {
           harpoState.pendingRequestExtras.delete(requestKey)
           harpoState.pendingResponses.delete(requestKey)
+          harpoState.pendingCapturedResponseBodies.delete(requestKey)
+          harpoState.pendingStreamBodies.delete(requestKey)
           harpoState.completedObservedRequests.delete(requestKey)
         }
       }
+      break
+    }
+
+    case "Fetch.requestPaused": {
+      void harpoHandleFetchRequestPaused(debuggeeId, params)
       break
     }
   }
@@ -957,32 +2028,48 @@ function harpoOnDebuggerEvent(debuggeeId, method, params) {
 // HARPO — Response body fetcher (concurrent pool, skip binary types)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function harpoFetchOneBody(tabId, requestId) {
-  return new Promise((resolve) => {
-    chrome.debugger.sendCommand({ tabId }, "Network.getResponseBody", { requestId }, (result) => {
-      if (chrome.runtime.lastError) {
-        resolve({
-          text: "",
-          encoding: "",
-          error: chrome.runtime.lastError.message || "Response body unavailable"
+function harpoFetchOneBody(tabId, requestId, contentType = "") {
+  return (async () => {
+    for (let attempt = 0; attempt <= HARPO_BODY_FETCH_RETRY_DELAYS_MS.length; attempt++) {
+      const outcome = await new Promise((resolve) => {
+        chrome.debugger.sendCommand({ tabId }, "Network.getResponseBody", { requestId }, (result) => {
+          const lastErrorMessage = chrome.runtime.lastError?.message || ""
+          if (lastErrorMessage) {
+            resolve({
+              ok: false,
+              retryable: harpoShouldRetryBodyFetch(lastErrorMessage)
+            })
+            return
+          }
+          if (!result) {
+            resolve({
+              ok: false,
+              retryable: false
+            })
+            return
+          }
+          resolve({
+            ok: true,
+            body: harpoNormalizeCapturedBodyResult({
+              text: result.body || "",
+              encoding: result.base64Encoded ? "base64" : "",
+              comment: ""
+            }, { contentType })
+          })
         })
-        return
-      }
-      if (!result) {
-        resolve({
-          text: "",
-          encoding: "",
-          error: "Response body unavailable"
-        })
-        return
-      }
-      resolve({
-        text: result.body || "",
-        encoding: result.base64Encoded ? "base64" : "",
-        error: ""
       })
-    })
-  })
+
+      if (outcome.ok) {
+        return outcome.body
+      }
+      if (!outcome.retryable || attempt >= HARPO_BODY_FETCH_RETRY_DELAYS_MS.length) {
+        break
+      }
+      await harpoWait(HARPO_BODY_FETCH_RETRY_DELAYS_MS[attempt])
+    }
+
+    return harpoBuildEmptyBodyResult()
+  })()
 }
 
 async function harpoFetchAllBodies(entries) {
@@ -999,27 +2086,21 @@ async function harpoFetchAllBodies(entries) {
       const entry = queue.shift()
       if (!entry) break
       if (entry.bodyPromise) {
-        const settled = await entry.bodyPromise.catch(() => ({
-          text: "",
-          encoding: "",
-          error: "Response body unavailable"
-        }))
+        const settled = await entry.bodyPromise.catch(() => harpoBuildEmptyBodyResult())
         bodyMap.set(entry.requestKey || harpoBuildRequestKey(entry.tabId, entry.requestId), settled)
+        continue
+      }
+      const requestKey = entry.requestKey || harpoBuildRequestKey(entry.tabId, entry.requestId)
+      const capturedBody = harpoState.capturedResponseBodies.get(requestKey)
+      if (harpoHasBodyResult(capturedBody)) {
+        bodyMap.set(requestKey, capturedBody)
         continue
       }
       const body = await Promise.race([
         harpoFetchOneBody(Number(entry.tabId || 0), entry.requestId),
-        new Promise((resolve) => setTimeout(() => resolve({
-          text: "",
-          encoding: "",
-          error: "Timed out while fetching response body"
-        }), 4000))
-      ]).catch(() => ({
-        text: "",
-        encoding: "",
-        error: "Response body unavailable"
-      }))
-      bodyMap.set(entry.requestKey || harpoBuildRequestKey(entry.tabId, entry.requestId), body)
+        new Promise((resolve) => setTimeout(() => resolve(harpoBuildEmptyBodyResult()), 4000))
+      ]).catch(() => harpoBuildEmptyBodyResult())
+      bodyMap.set(requestKey, body)
     }
   }
 
@@ -1038,17 +2119,27 @@ function harpoParseQueryString(url) {
 }
 
 async function harpoBuildHar(captureSession = createHarpoCaptureSession()) {
-  const entries = harpoState.entries
+  if (harpoState.pendingRequestPostData.size > 0) {
+    await Promise.allSettled([...harpoState.pendingRequestPostData.values()])
+  }
+  const entries = [...harpoState.entries]
   const bodyMap = await harpoFetchAllBodies(entries)
 
   const harEntries = entries.map((entry) => {
     const req          = entry.req
     const resp         = entry.resp || {}
+    const requestKey   = entry.requestKey || harpoBuildRequestKey(entry.tabId, entry.requestId)
     const startMs      = Math.round((req.startTime || 0) * 1000)
-    const responseBody =
-      bodyMap.get(entry.requestKey || harpoBuildRequestKey(entry.tabId, entry.requestId)) ||
-      { text: "", encoding: "", error: "" }
-    const requestContentType = (req.headers || []).find((header) => String(header?.name || "").toLowerCase() === "content-type")?.value || ""
+    const fallbackComment = harpoBuildMissingBodyComment(req, resp, {
+      failed: Boolean(entry.failed),
+      errorText: String(entry.errorText || ""),
+      encodedDataLength: Number(resp.encodedDataLength || entry.encodedDataLength || 0)
+    })
+    const responseBodyCandidate = bodyMap.get(requestKey)
+    const responseBody = harpoHasBodyResult(responseBodyCandidate)
+      ? responseBodyCandidate
+      : harpoBuildEmptyBodyResult(fallbackComment)
+    const requestContentType = harpoResolveRequestContentType(req)
     const responseBodyText = responseBody.text || ""
     const responseBodySize = Number(resp.encodedDataLength || entry.encodedDataLength || responseBodyText.length || 0)
     const redirectUrl = harpoGetHeaderValue(resp.headers, "location")
@@ -1084,7 +2175,7 @@ async function harpoBuildHar(captureSession = createHarpoCaptureSession()) {
           mimeType: resp.mimeType || "text/plain",
           ...(responseBodyText ? { text: responseBodyText } : {}),
           ...(responseBody.encoding ? { encoding: responseBody.encoding } : {}),
-          ...(responseBody.error ? { comment: responseBody.error } : {})
+          ...(responseBody.comment ? { comment: responseBody.comment } : {})
         },
         redirectURL: redirectUrl,
         headersSize: -1,
@@ -1152,6 +2243,12 @@ async function harpoStartRecordingFlow(
   harpoClearAutoStopTimer()
   harpoState.entries          = []
   harpoState.observedRequests.clear()
+  harpoState.pendingRequestPostData.clear()
+  harpoState.capturedResponseBodies.clear()
+  harpoState.pendingCapturedResponseBodies.clear()
+  harpoState.fetchResponseBodies.clear()
+  harpoState.pendingFetchResponseBodies.clear()
+  harpoState.pendingStreamBodies.clear()
   harpoState.pendingRequestExtras.clear()
   harpoState.pendingRequests.clear()
   harpoState.pendingResponses.clear()
@@ -1171,17 +2268,32 @@ async function harpoStopRecordingFlow() {
 
   const trackedTabIds = [...harpoState.tabIds]
   const sessionKey = harpoState.sessionKey
+  const programmerName = harpoState.programmerName
+  const requestorId = harpoState.requestorId
+  const requestorName = harpoState.requestorName
+  const programmerDomains = [...harpoState.programmerDomains]
+  const safeDomains = [...harpoState.safeDomains]
+  const captureSession = {
+    ...harpoState.captureSession,
+    programmerDomains: Array.isArray(harpoState.captureSession?.programmerDomains)
+      ? [...harpoState.captureSession.programmerDomains]
+      : [],
+    safeDomains: Array.isArray(harpoState.captureSession?.safeDomains)
+      ? [...harpoState.captureSession.safeDomains]
+      : [],
+    mvpdDomains: Array.isArray(harpoState.captureSession?.mvpdDomains)
+      ? [...harpoState.captureSession.mvpdDomains]
+      : [],
+    returnDomains: Array.isArray(harpoState.captureSession?.returnDomains)
+      ? [...harpoState.captureSession.returnDomains]
+      : []
+  }
+  const startedAt = harpoState.startedAt || new Date().toISOString()
 
   harpoState.recording = false
   harpoState.stopRequested = false
   harpoClearAutoStopTimer()
   harpoStopKeepalive()
-  chrome.debugger.onEvent.removeListener(harpoOnDebuggerEvent)
-  chrome.tabs.onCreated.removeListener(harpoHandleTrackedTabCreated)
-  chrome.tabs.onRemoved.removeListener(harpoHandleTrackedTabRemoved)
-  if (chrome.webNavigation?.onCreatedNavigationTarget) {
-    chrome.webNavigation.onCreatedNavigationTarget.removeListener(harpoHandleCreatedNavigationTarget)
-  }
 
   // Build HAR while debugger is still attached (required for body fetching)
   let har        = null
@@ -1190,6 +2302,17 @@ async function harpoStopRecordingFlow() {
     har = await harpoBuildHar(harpoState.captureSession)
   } catch (err) {
     buildError = err instanceof Error ? err.message : String(err)
+  }
+
+  await Promise.all(trackedTabIds.map((trackedTabId) =>
+    harpoSendDebuggerCommand({ tabId: trackedTabId }, "Fetch.disable").catch(() => null)
+  ))
+
+  chrome.debugger.onEvent.removeListener(harpoOnDebuggerEvent)
+  chrome.tabs.onCreated.removeListener(harpoHandleTrackedTabCreated)
+  chrome.tabs.onRemoved.removeListener(harpoHandleTrackedTabRemoved)
+  if (chrome.webNavigation?.onCreatedNavigationTarget) {
+    chrome.webNavigation.onCreatedNavigationTarget.removeListener(harpoHandleCreatedNavigationTarget)
   }
 
   // Detach debugger
@@ -1205,6 +2328,24 @@ async function harpoStopRecordingFlow() {
   harpoState.rootTabId   = null
   harpoState.tabIds      = new Set()
   harpoState.sessionKey = ""
+  harpoState.programmerName = ""
+  harpoState.requestorId = ""
+  harpoState.requestorName = ""
+  harpoState.programmerDomains = []
+  harpoState.safeDomains = []
+  harpoState.startedAt = null
+  harpoState.captureSession = createHarpoCaptureSession()
+  harpoState.observedRequests.clear()
+  harpoState.pendingRequestPostData.clear()
+  harpoState.capturedResponseBodies.clear()
+  harpoState.pendingCapturedResponseBodies.clear()
+  harpoState.fetchResponseBodies.clear()
+  harpoState.pendingFetchResponseBodies.clear()
+  harpoState.pendingStreamBodies.clear()
+  harpoState.pendingRequestExtras.clear()
+  harpoState.pendingRequests.clear()
+  harpoState.pendingResponses.clear()
+  harpoState.completedObservedRequests.clear()
 
   if (!har) {
     return { ok: false, error: buildError || "Failed to build HAR.", entryCount: 0 }
@@ -1218,15 +2359,15 @@ async function harpoStopRecordingFlow() {
       har,
       source:          "recording",
       fileName:        "",
-      programmerName:  harpoState.programmerName,
-      requestorId:     harpoState.requestorId,
-      requestorName:   harpoState.requestorName,
-      programmerDomains: harpoState.programmerDomains,
-      safeDomains:     harpoState.safeDomains,
-      mvpdDomains:     Array.isArray(harpoState.captureSession?.mvpdDomains)
-        ? harpoState.captureSession.mvpdDomains
+      programmerName,
+      requestorId,
+      requestorName,
+      programmerDomains,
+      safeDomains,
+      mvpdDomains:     Array.isArray(captureSession?.mvpdDomains)
+        ? captureSession.mvpdDomains
         : [],
-      createdAt:       harpoState.startedAt || new Date().toISOString()
+      createdAt:       startedAt
     })
   } catch (idbErr) {
     return {
@@ -1239,17 +2380,6 @@ async function harpoStopRecordingFlow() {
   // Open HARPO Workspace
   const workspaceUrl = chrome.runtime.getURL(`harpo.html#${sessionKey}`)
   try { await chrome.tabs.create({ url: workspaceUrl }) } catch { }
-
-  harpoState.requestorId = ""
-  harpoState.requestorName = ""
-  harpoState.programmerDomains = []
-  harpoState.safeDomains = []
-  harpoState.captureSession = createHarpoCaptureSession()
-  harpoState.observedRequests.clear()
-  harpoState.pendingRequestExtras.clear()
-  harpoState.pendingRequests.clear()
-  harpoState.pendingResponses.clear()
-  harpoState.completedObservedRequests.clear()
 
   return { ok: true, entryCount, sessionKey }
 }
@@ -1300,6 +2430,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void openLoginButtonGetLatestFlow()
       .then((result) => sendResponse(result && typeof result === "object" ? result : { ok: false, error: "Unknown error" }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }))
+    return true
+  }
+
+  if (message?.type === LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE) {
+    void fetchLoginButtonAvatarAsDataUrl(
+      String(message?.url || ""),
+      String(message?.accessToken || ""),
+      String(message?.clientId || "")
+    )
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+      .catch((error) => sendResponse({ ok: false, error: serializeBackgroundError(error) }))
     return true
   }
 

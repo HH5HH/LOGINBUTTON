@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chromium HARPO Recorder"
+  short_description: "Ground HARPO recorder changes in Chrome debugger and CDP behavior"
+  default_prompt: "Use $chromium-harpo-recorder to debug HARPO network capture, redirects, ExtraInfo ordering, popup auth tabs, and response-body limits."

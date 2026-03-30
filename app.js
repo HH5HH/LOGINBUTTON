@@ -75,6 +75,7 @@ const DEFAULT_VAULT_TRANSFER_STATUS_MESSAGE =
   "Export hydrated programmer records or import a VAULT from another Login Button user.";
 const LOGINBUTTON_GET_UPDATE_STATE_REQUEST_TYPE = "loginbutton:getUpdateState";
 const LOGINBUTTON_GET_LATEST_REQUEST_TYPE = "loginbutton:getLatest";
+const LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE = "loginbutton:fetchAvatarDataUrl";
 const ORG_PICKER_PLACEHOLDER_VALUE = "__loginbutton_choose_other_org__";
 const ORG_PICKER_REAUTH_VALUE = "__loginbutton_reauth_org__";
 const ORG_PICKER_UNAVAILABLE_VALUE = "__loginbutton_unavailable_org__";
@@ -142,6 +143,8 @@ const HARPO_MESSAGE_STOP   = "harpo:stopRecording";
 const HARPO_MESSAGE_STATUS = "harpo:recordingStatus";
 const HARPO_STORAGE_PREFIX = "harpo:";
 const HARPO_DOMAIN_PICKER_PLACEHOLDER = "__harpo_choose_domain__";
+const HARPO_REST_V2_CANDIDATE_BATCH_SIZE = 2;
+const HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS = 15000;
 const LOGINBUTTON_REST_V2_DEVICE_ID_STORAGE_KEY = "loginbutton_restv2_device_id_v1";
 const REGISTERED_APPLICATION_SCOPE_LABELS = {
   "api:client:v2": "REST API V2",
@@ -390,6 +393,7 @@ const INTERACTIVE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const INTERACTIVE_AUTH_POPUP_WIDTH = 560;
 const INTERACTIVE_AUTH_POPUP_HEIGHT = 760;
 const COPY_DEBUG_RESET_DELAY_MS = 1600;
+const AVATAR_RESOLVE_RETRY_COOLDOWN_MS = 60 * 1000;
 
 function createEmptyHarpoRequestorConfiguration() {
   return {
@@ -397,6 +401,7 @@ function createEmptyHarpoRequestorConfiguration() {
     programmerId: "",
     requestorId: "",
     requestorLabel: "",
+    restV2CandidateSignature: "",
     status: "idle",
     domains: [],
     reproDomains: [],
@@ -434,7 +439,8 @@ const state = {
     objectUrl: "",
     mode: "fallback",
     loading: false,
-    requestId: ""
+    requestId: "",
+    nextRetryAt: 0
   },
   ready: false,
   busy: false,
@@ -449,7 +455,7 @@ const state = {
   postLoginHydrationInFlight: false,
   vaultTransferBusy: false,
   programmerFieldGroupCollapsed: false,
-  cmFieldGroupCollapsed: false,
+  cmFieldGroupCollapsed: true,
   selectedCmTenantId: "",
   selectedProgrammerId: "",
   selectedRegisteredApplicationId: "",
@@ -488,8 +494,10 @@ const programmerPremiumHydrationPromiseByKey = new Map();
 const harpoRestV2PreferredAppIdByRequestorKey = new Map();
 const harpoRequestorConfigurationByKey = new Map();
 const harpoRequestorConfigurationPromiseByKey = new Map();
+const programmerApplicationsLoadPromiseById = new Map();
 const programmerApplicationsSnapshotById = new Map();
 const programmerPremiumServicesSnapshotById = new Map();
+const programmerServiceClientCacheByKey = new Map();
 
 function buildHarpoRequestorConfigurationKey(programmerId = "", requestorId = "") {
   const normalizedProgrammerId = String(programmerId || "").trim();
@@ -598,34 +606,269 @@ function clearHarpoRequestorRuntimeState(programmerId = "") {
 function clearProgrammerRuntimeSnapshots(programmerId = "") {
   const normalizedProgrammerId = String(programmerId || "").trim();
   if (normalizedProgrammerId) {
+    programmerApplicationsLoadPromiseById.delete(normalizedProgrammerId);
     programmerApplicationsSnapshotById.delete(normalizedProgrammerId);
     programmerPremiumServicesSnapshotById.delete(normalizedProgrammerId);
+    for (const key of programmerServiceClientCacheByKey.keys()) {
+      if (String(key || "").split("::")[1] === normalizedProgrammerId) {
+        programmerServiceClientCacheByKey.delete(key);
+      }
+    }
     clearHarpoRequestorRuntimeState(normalizedProgrammerId);
     return;
   }
 
+  programmerApplicationsLoadPromiseById.clear();
   programmerApplicationsSnapshotById.clear();
   programmerPremiumServicesSnapshotById.clear();
+  programmerServiceClientCacheByKey.clear();
   clearHarpoRequestorRuntimeState();
 }
 
-function getCurrentProgrammerApplicationsSnapshot(programmerId = "") {
+function resolveProgrammerRuntimeEnvironmentId(session = state.session) {
+  const currentSession = session && typeof session === "object" ? session : null;
+  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
+  return firstNonEmptyString([
+    consoleContext.environmentId,
+    state.runtimeConfig?.consoleEnvironment,
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+}
+
+function stampProgrammerRuntimeValue(value = null, { source = "live", environmentId = "" } = {}) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const normalizedEnvironmentId = firstNonEmptyString([
+    environmentId,
+    resolveProgrammerRuntimeEnvironmentId(),
+    CONSOLE_DEFAULT_ENVIRONMENT
+  ]);
+  const normalizedSource = String(source || "").trim() || "live";
+
+  try {
+    Object.defineProperty(value, "__loginButtonRuntimeEnvironmentId", {
+      value: normalizedEnvironmentId,
+      configurable: true,
+      writable: true,
+      enumerable: false
+    });
+    Object.defineProperty(value, "__loginButtonRuntimeSource", {
+      value: normalizedSource,
+      configurable: true,
+      writable: true,
+      enumerable: false
+    });
+  } catch {
+    try {
+      value.__loginButtonRuntimeEnvironmentId = normalizedEnvironmentId;
+      value.__loginButtonRuntimeSource = normalizedSource;
+    } catch {
+      // Ignore runtime metadata stamp failures.
+    }
+  }
+
+  return value;
+}
+
+function getProgrammerRuntimeValueSource(value = null) {
+  return String(value?.__loginButtonRuntimeSource || "").trim();
+}
+
+function isProgrammerRuntimeValueCurrent(value = null, environmentId = resolveProgrammerRuntimeEnvironmentId()) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const stampedEnvironmentId = String(value?.__loginButtonRuntimeEnvironmentId || "").trim();
+  const normalizedEnvironmentId = String(environmentId || "").trim();
+  if (!stampedEnvironmentId || !normalizedEnvironmentId) {
+    return false;
+  }
+
+  return stampedEnvironmentId === normalizedEnvironmentId;
+}
+
+function isVaultBackedProgrammerRuntimeValue(value = null) {
+  return getProgrammerRuntimeValueSource(value) === "vault";
+}
+
+function buildProgrammerServiceClientCacheKey(
+  programmerId = "",
+  serviceKey = "",
+  registeredApplication = null,
+  session = state.session
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedServiceKey = String(serviceKey || "").trim();
+  const registeredApplicationId = String(buildCompactRegisteredApplicationIdentity(registeredApplication) || "").trim();
+  const environmentId = resolveProgrammerRuntimeEnvironmentId(session);
+  return normalizedProgrammerId && normalizedServiceKey && registeredApplicationId && environmentId
+    ? `${environmentId}::${normalizedProgrammerId}::${normalizedServiceKey}::${registeredApplicationId}`
+    : "";
+}
+
+function getCachedProgrammerServiceClient({
+  programmerId = "",
+  serviceKey = "",
+  registeredApplication = null,
+  session = state.session
+} = {}) {
+  const key = buildProgrammerServiceClientCacheKey(programmerId, serviceKey, registeredApplication, session);
+  if (!key) {
+    return null;
+  }
+
+  const cachedClient = programmerServiceClientCacheByKey.get(key);
+  return cachedClient && typeof cachedClient === "object"
+    ? {
+        ...cachedClient
+      }
+    : null;
+}
+
+function setCachedProgrammerServiceClient({
+  programmerId = "",
+  serviceKey = "",
+  registeredApplication = null,
+  client = null,
+  session = state.session
+} = {}) {
+  const key = buildProgrammerServiceClientCacheKey(programmerId, serviceKey, registeredApplication, session);
+  if (!key) {
+    return null;
+  }
+
+  const normalizedClient = client && typeof client === "object"
+    ? {
+        ...client,
+        clientId: firstNonEmptyString([client?.clientId]),
+        clientSecret: firstNonEmptyString([client?.clientSecret]),
+        accessToken: firstNonEmptyString([client?.accessToken]),
+        tokenScope: firstNonEmptyString([client?.tokenScope]),
+        tokenRequestedScope: firstNonEmptyString([client?.tokenRequestedScope]),
+        tokenExpiresAt: firstNonEmptyString([client?.tokenExpiresAt]),
+        serviceScope: firstNonEmptyString([client?.serviceScope]),
+        updatedAt: firstNonEmptyString([client?.updatedAt]),
+        error: firstNonEmptyString([client?.error])
+      }
+    : null;
+  if (
+    !normalizedClient ||
+    !firstNonEmptyString([
+      normalizedClient.clientId,
+      normalizedClient.clientSecret,
+      normalizedClient.accessToken
+    ])
+  ) {
+    programmerServiceClientCacheByKey.delete(key);
+    return null;
+  }
+
+  programmerServiceClientCacheByKey.set(key, normalizedClient);
+  return {
+    ...normalizedClient
+  };
+}
+
+function resolveProgrammerRegisteredApplicationsRuntimeState(
+  programmerId = "",
+  { registeredApplications = null, vaultRecord = null } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const explicitRegisteredApplications = Array.isArray(registeredApplications)
+    ? registeredApplications.filter(Boolean)
+    : null;
+  const liveRuntimeApplications = getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, {
+    allowVaultBacked: false
+  });
+  const runtimeApplications = getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId);
+  const effectiveVaultRecord =
+    vaultRecord ||
+    (String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
+      ? state.selectedProgrammerVaultRecord
+      : null);
+  const vaultApplications = hydrateProgrammerApplicationsFromVault(effectiveVaultRecord);
+
+  if (explicitRegisteredApplications) {
+    return {
+      registeredApplications: explicitRegisteredApplications,
+      source: getProgrammerRuntimeValueSource(registeredApplications) || "live",
+      hydrated: true,
+      liveHydrated: getProgrammerRuntimeValueSource(registeredApplications) !== "vault",
+      vaultRecord: effectiveVaultRecord
+    };
+  }
+
+  if (Array.isArray(liveRuntimeApplications)) {
+    return {
+      registeredApplications: liveRuntimeApplications,
+      source: getProgrammerRuntimeValueSource(liveRuntimeApplications) || "live",
+      hydrated: true,
+      liveHydrated: true,
+      vaultRecord: effectiveVaultRecord
+    };
+  }
+
+  if (Array.isArray(runtimeApplications)) {
+    const runtimeSource = getProgrammerRuntimeValueSource(runtimeApplications);
+    return {
+      registeredApplications: runtimeApplications,
+      source: runtimeSource || "vault",
+      hydrated: true,
+      liveHydrated: runtimeSource !== "vault",
+      vaultRecord: effectiveVaultRecord
+    };
+  }
+
+  if (vaultApplications.length > 0) {
+    return {
+      registeredApplications: vaultApplications,
+      source: "vault",
+      hydrated: true,
+      liveHydrated: false,
+      vaultRecord: effectiveVaultRecord
+    };
+  }
+
+  return {
+    registeredApplications: [],
+    source: "",
+    hydrated: false,
+    liveHydrated: false,
+    vaultRecord: effectiveVaultRecord
+  };
+}
+
+function getCurrentProgrammerApplicationsSnapshot(programmerId = "", { allowVaultBacked = true } = {}) {
   const normalizedProgrammerId = String(programmerId || "").trim();
   if (!normalizedProgrammerId) {
     return null;
   }
 
   const snapshot = programmerApplicationsSnapshotById.get(normalizedProgrammerId);
-  return Array.isArray(snapshot) ? snapshot : null;
+  if (!Array.isArray(snapshot) || !isProgrammerRuntimeValueCurrent(snapshot)) {
+    return null;
+  }
+  if (!allowVaultBacked && isVaultBackedProgrammerRuntimeValue(snapshot)) {
+    return null;
+  }
+  return snapshot;
 }
 
-function setCurrentProgrammerApplicationsSnapshot(programmerId = "", applications = []) {
+function setCurrentProgrammerApplicationsSnapshot(
+  programmerId = "",
+  applications = [],
+  { source = "live", environmentId = "" } = {}
+) {
   const normalizedProgrammerId = String(programmerId || "").trim();
   if (!normalizedProgrammerId) {
     return null;
   }
 
   const normalizedApplications = Array.isArray(applications) ? applications.filter(Boolean) : [];
+  stampProgrammerRuntimeValue(normalizedApplications, { source, environmentId });
   programmerApplicationsSnapshotById.set(normalizedProgrammerId, normalizedApplications);
   return normalizedApplications;
 }
@@ -637,15 +880,20 @@ function getCurrentPremiumAppsSnapshot(programmerId = "") {
   }
 
   const snapshot = programmerPremiumServicesSnapshotById.get(normalizedProgrammerId);
-  return snapshot && typeof snapshot === "object" ? snapshot : null;
+  return snapshot && typeof snapshot === "object" && isProgrammerRuntimeValueCurrent(snapshot) ? snapshot : null;
 }
 
-function setCurrentPremiumAppsSnapshot(programmerId = "", premiumApps = null) {
+function setCurrentPremiumAppsSnapshot(
+  programmerId = "",
+  premiumApps = null,
+  { source = "live", environmentId = "" } = {}
+) {
   const normalizedProgrammerId = String(programmerId || "").trim();
   if (!normalizedProgrammerId || !premiumApps || typeof premiumApps !== "object") {
     return null;
   }
 
+  stampProgrammerRuntimeValue(premiumApps, { source, environmentId });
   programmerPremiumServicesSnapshotById.set(normalizedProgrammerId, premiumApps);
   return premiumApps;
 }
@@ -771,7 +1019,6 @@ if (registeredApplicationPicker) {
 if (requestorPicker) {
   requestorPicker.addEventListener("change", (event) => {
     const nextValue = String(event.currentTarget?.value || "").trim();
-    const programmerId = firstNonEmptyString([state.selectedProgrammerId]);
     if (
       !nextValue ||
       nextValue === REQUESTOR_PICKER_PLACEHOLDER_VALUE ||
@@ -787,11 +1034,8 @@ if (requestorPicker) {
     state.selectedRequestorId = nextValue;
     state.selectedMvpdId = "";
     resetHarpoRequestorConfiguration();
-    invalidateHarpoRequestorConfiguration(programmerId, nextValue);
     render();
-    void hydrateSelectedRequestorConfiguration({
-      forceRefresh: true
-    });
+    void hydrateSelectedRequestorConfiguration();
   });
 }
 
@@ -927,6 +1171,21 @@ avatarImage.addEventListener("error", () => {
   if (state.avatarAsset.displayUrl && avatarImage.src === state.avatarAsset.displayUrl) {
     log(`Resolved Adobe avatar could not be displayed: ${state.avatarAsset.sourceUrl || "unknown source"}`);
   }
+  if (state.avatarAsset.objectUrl) {
+    try {
+      URL.revokeObjectURL(state.avatarAsset.objectUrl);
+    } catch {
+      // Ignore avatar object URL cleanup failures.
+    }
+  }
+  state.avatarAsset = {
+    ...state.avatarAsset,
+    displayUrl: "",
+    objectUrl: "",
+    mode: "fallback",
+    loading: false,
+    nextRetryAt: Date.now() + AVATAR_RESOLVE_RETRY_COOLDOWN_MS
+  };
   avatarImage.hidden = true;
   avatarImage.removeAttribute("src");
   avatarFallback.hidden = false;
@@ -946,7 +1205,20 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 
   if (changes[SESSION_KEY]) {
-    state.session = changes[SESSION_KEY].newValue || null;
+    const previousSession = changes[SESSION_KEY].oldValue || state.session || null;
+    const nextSession = changes[SESSION_KEY].newValue || null;
+    const previousAccessToken = firstNonEmptyString([previousSession?.accessToken]);
+    const nextAccessToken = firstNonEmptyString([nextSession?.accessToken]);
+    const previousEnvironmentId = firstNonEmptyString([previousSession?.console?.environmentId]);
+    const nextEnvironmentId = firstNonEmptyString([nextSession?.console?.environmentId]);
+    if (
+      !nextAccessToken ||
+      (previousAccessToken && nextAccessToken && previousAccessToken !== nextAccessToken) ||
+      (previousEnvironmentId && nextEnvironmentId && previousEnvironmentId !== nextEnvironmentId)
+    ) {
+      clearProgrammerRuntimeSnapshots();
+    }
+    state.session = nextSession;
     state.selectedOrganizationSwitchKey = "";
     if (!state.session?.accessToken) {
       state.postLoginHydrationInFlight = false;
@@ -1921,8 +2193,14 @@ async function refreshSessionPostLoginContextInBackground(session, { reason = "p
 
     const activeAccessToken = firstNonEmptyString([state.session?.accessToken]);
     const hydratedAccessToken = firstNonEmptyString([hydratedSession?.accessToken]);
+    const activeEnvironmentId = firstNonEmptyString([state.session?.console?.environmentId, currentSession?.console?.environmentId]);
+    const hydratedEnvironmentId = firstNonEmptyString([hydratedSession?.console?.environmentId]);
     if (activeAccessToken && hydratedAccessToken && activeAccessToken !== hydratedAccessToken) {
+      clearProgrammerRuntimeSnapshots();
       return hydratedSession;
+    }
+    if (activeEnvironmentId && hydratedEnvironmentId && activeEnvironmentId !== hydratedEnvironmentId) {
+      clearProgrammerRuntimeSnapshots();
     }
 
     state.session = hydratedSession;
@@ -2068,6 +2346,8 @@ async function buildConsoleContext(session, reason = "post-login") {
       hydratedAt,
       status: "unavailable",
       channels: [],
+      applicationsByProgrammer: {},
+      applicationErrorsByProgrammer: {},
       errors: {
         accessToken: "Adobe IMS access token is unavailable."
       }
@@ -2090,6 +2370,8 @@ async function buildConsoleContext(session, reason = "post-login") {
       roles: [],
       channels: [],
       programmers: [],
+      applicationsByProgrammer: {},
+      applicationErrorsByProgrammer: {},
       hydratedAt,
       status: "org-selection-required",
       programmerAccess,
@@ -2228,7 +2510,7 @@ async function buildConsoleContext(session, reason = "post-login") {
       : null;
   const roles = extractConsoleAuthorities(extendedProfile);
   const channels = channelsResult.ok ? normalizeConsoleChannels(channelsResult.value?.data) : [];
-  const programmers = programmersResult.ok ? normalizeConsoleProgrammers(programmersResult.value?.data) : [];
+  const programmers = programmersResult.ok ? normalizeConsoleProgrammers(programmersResult.value?.data, channels) : [];
   const errors = {
     extendedProfile: extendedProfileResult.ok ? "" : serializeError(extendedProfileResult.error),
     configurationVersion:
@@ -2265,6 +2547,8 @@ async function buildConsoleContext(session, reason = "post-login") {
     roles,
     channels,
     programmers,
+    applicationsByProgrammer: {},
+    applicationErrorsByProgrammer: {},
     hydratedAt,
     programmerAccess,
     status: successfulSegments === 4 ? "ready" : successfulSegments > 0 ? "limited" : "unavailable",
@@ -2520,28 +2804,22 @@ async function fetchProgrammerRegisteredApplications(session, programmerId) {
 async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
   const normalizedProgrammerId = String(programmerId || "").trim();
   const currentSession = state.session && typeof state.session === "object" ? state.session : null;
-  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
-  const applicationsByProgrammer =
-    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
-      ? consoleContext.applicationsByProgrammer
-    : {};
-  const existingApplications = Array.isArray(applicationsByProgrammer?.[normalizedProgrammerId])
-    ? applicationsByProgrammer[normalizedProgrammerId]
-    : null;
-  const vaultLookupContext = buildProgrammerVaultLookupContext(currentSession, normalizedProgrammerId);
-  let hydratedFromVault = false;
 
   if (!normalizedProgrammerId || !currentSession?.accessToken) {
     return;
   }
-  if (state.programmerApplicationsLoadingFor === normalizedProgrammerId) {
-    return;
+  const existingLoadPromise = programmerApplicationsLoadPromiseById.get(normalizedProgrammerId);
+  if (existingLoadPromise) {
+    return existingLoadPromise;
   }
-  if (existingApplications) {
+  const liveApplications = getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, {
+    allowVaultBacked: false
+  });
+  if (liveApplications) {
     let readySession = currentSession;
-    let readyApplications = existingApplications;
+    let readyApplications = liveApplications;
     const catalogHydrationResult = await settle(() =>
-      hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, existingApplications, {
+      hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, liveApplications, {
         csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"])
       })
     );
@@ -2570,6 +2848,7 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
     const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
       session: readySession,
       registeredApplications: readyApplications,
+      registeredApplicationsSource: "live",
       vaultRecord: state.selectedProgrammerVaultRecord
     });
     const premiumHydrationResult = await settle(() =>
@@ -2590,170 +2869,141 @@ async function ensureSelectedProgrammerApplicationsLoaded(programmerId = "") {
       void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
     }
     render();
-    return;
+    return readyApplications;
   }
 
-  if (vaultLookupContext) {
-    const vaultReadResult = await settle(() => readProgrammerVaultRecord(vaultLookupContext));
-    if (!vaultReadResult.ok) {
-      log(`LoginButton VAULT read failed for ${normalizedProgrammerId}: ${serializeError(vaultReadResult.error)}`);
-    } else if (vaultReadResult.value) {
-      const vaultAssessment = assessProgrammerVaultRecord(vaultReadResult.value, vaultLookupContext);
-      if (vaultAssessment.reusable) {
-        hydratedFromVault = hydrateSelectedProgrammerFromVaultRecord(vaultReadResult.value, normalizedProgrammerId, {
-          restoreSelections: true
-        });
-        log(
-          `LoginButton VAULT ${vaultAssessment.stale ? "stale hit" : "hit"} for ${normalizedProgrammerId} (${vaultAssessment.reason}).`
-        );
-        if (!vaultAssessment.needsRefresh) {
-          let readySession = currentSession;
-          let readyApplications = hydrateProgrammerApplicationsFromVault(vaultReadResult.value);
-          const catalogHydrationResult = await settle(() =>
-            hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, readyApplications, {
-              csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"])
-            })
-          );
-          if (catalogHydrationResult.ok) {
-            readySession = catalogHydrationResult.value?.session || readySession;
-            readyApplications = Array.isArray(catalogHydrationResult.value?.applications)
-              ? catalogHydrationResult.value.applications
-              : readyApplications;
-            if (catalogHydrationResult.value?.changed) {
-              state.session = readySession;
-              void persistProgrammerVaultSnapshot(readySession, normalizedProgrammerId, {
-                registeredApplications: readyApplications,
-                source: "programmer-selection"
-              }).catch((error) => {
-                log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
-              });
-            }
-          } else {
-            log(
-              `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
-                catalogHydrationResult.error
-              )}`
-            );
-          }
+  const workPromise = (async () => {
+    const vaultLookupContext = buildProgrammerVaultLookupContext(currentSession, normalizedProgrammerId);
+    let hydratedFromVault = false;
 
-          const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
-            session: readySession,
-            registeredApplications: readyApplications,
-            vaultRecord: vaultReadResult.value
+    if (vaultLookupContext) {
+      const vaultReadResult = await settle(() => readProgrammerVaultRecord(vaultLookupContext));
+      if (!vaultReadResult.ok) {
+        log(`LoginButton VAULT read failed for ${normalizedProgrammerId}: ${serializeError(vaultReadResult.error)}`);
+      } else if (vaultReadResult.value) {
+        const vaultAssessment = assessProgrammerVaultRecord(vaultReadResult.value, vaultLookupContext);
+        if (vaultAssessment.reusable) {
+          hydratedFromVault = hydrateSelectedProgrammerFromVaultRecord(vaultReadResult.value, normalizedProgrammerId, {
+            restoreSelections: true
           });
-          const vaultHydrationResult = await settle(() =>
-            ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
-              registeredApplications: readyApplications,
-              source: "programmer-selection"
-            })
+          log(
+            `LoginButton VAULT ${vaultAssessment.stale ? "stale hit" : "hit"} for ${normalizedProgrammerId} (${vaultAssessment.reason}).`
           );
-          if (!vaultHydrationResult.ok) {
-            log(
-              `LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(
-                vaultHydrationResult.error
-              )}`
-            );
-          }
-          const selectedRestV2AppChanged = maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
-            registeredApplications: runtimeSnapshot?.registeredApplications,
-            runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
-          });
-          if (selectedRestV2AppChanged) {
-            void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
-          }
-          render();
-          return;
+        } else {
+          log(`LoginButton VAULT record for ${normalizedProgrammerId} requires refresh (${vaultAssessment.reason}).`);
         }
       } else {
-        log(`LoginButton VAULT record for ${normalizedProgrammerId} requires refresh (${vaultAssessment.reason}).`);
+        log(`LoginButton VAULT miss for ${normalizedProgrammerId}.`);
       }
-    } else {
-      log(`LoginButton VAULT miss for ${normalizedProgrammerId}.`);
     }
-  }
 
-  if (!hydratedFromVault) {
-    state.programmerApplicationsLoadingFor = normalizedProgrammerId;
-    render();
-  }
+    if (!hydratedFromVault) {
+      state.programmerApplicationsLoadingFor = normalizedProgrammerId;
+      render();
+    }
 
-  const result = await settle(() => fetchProgrammerRegisteredApplications(currentSession, normalizedProgrammerId));
+    const result = await settle(() => fetchProgrammerRegisteredApplications(currentSession, normalizedProgrammerId));
+    const liveSession = state.session && typeof state.session === "object" ? state.session : null;
 
-  const liveSession = state.session && typeof state.session === "object" ? state.session : null;
+    if (!liveSession) {
+      state.programmerApplicationsLoadingFor = "";
+      render();
+      return null;
+    }
 
-  if (!liveSession) {
-    state.programmerApplicationsLoadingFor = "";
-    render();
-    return;
-  }
+    if (!result.ok) {
+      log(`Adobe Pass registered applications fetch failed: ${serializeError(result.error)}`);
+      state.session = mergeProgrammerApplicationsErrorIntoSession(liveSession, normalizedProgrammerId, result.error, {
+        preserveExistingApplications: hydratedFromVault
+      });
+      state.programmerApplicationsLoadingFor = "";
+      render();
+      return null;
+    }
 
-  if (!result.ok) {
-    state.programmerApplicationsLoadingFor = "";
-    log(`Adobe Pass registered applications fetch failed: ${serializeError(result.error)}`);
-    state.session = mergeProgrammerApplicationsErrorIntoSession(liveSession, normalizedProgrammerId, result.error, {
-      preserveExistingApplications: hydratedFromVault
-    });
-    render();
-    return;
-  }
-
-  let mergedSession = mergeProgrammerApplicationsIntoSession(liveSession, normalizedProgrammerId, result.value);
-  let hydratedApplications = Array.isArray(result.value?.applications) ? result.value.applications : [];
-  const catalogHydrationResult = await settle(() =>
-    hydrateProgrammerRegisteredApplicationsForRuntime(mergedSession, normalizedProgrammerId, hydratedApplications, {
-      csrfToken: firstNonEmptyString([result.value?.csrfToken, liveSession?.console?.csrfToken, "NO-TOKEN"])
-    })
-  );
-  if (catalogHydrationResult.ok) {
-    mergedSession = catalogHydrationResult.value?.session || mergedSession;
-    hydratedApplications = Array.isArray(catalogHydrationResult.value?.applications)
-      ? catalogHydrationResult.value.applications
-      : hydratedApplications;
-  } else {
-    log(
-      `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
-        catalogHydrationResult.error
-      )}`
-    );
-  }
-
-  void persistProgrammerVaultSnapshot(mergedSession, normalizedProgrammerId, {
-    registeredApplications: hydratedApplications,
-    source: "network"
-  }).catch((error) => {
-    log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
-  });
-  state.session = mergedSession;
-  const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
-    session: mergedSession,
-    registeredApplications: hydratedApplications,
-    vaultRecord: state.selectedProgrammerVaultRecord
-  });
-  autoSelectSingletonAuthenticatedOptions(mergedSession);
-  const hydrationResult = await settle(() =>
-    ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+    let mergedSession = mergeProgrammerApplicationsIntoSession(liveSession, normalizedProgrammerId, result.value);
+    let hydratedApplications = Array.isArray(result.value?.applications) ? result.value.applications : [];
+    state.session = mergedSession;
+    const provisionalRuntimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: mergedSession,
       registeredApplications: hydratedApplications,
-      source: "programmer-selection"
-    })
-  );
-  if (!hydrationResult.ok) {
-    log(`LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(hydrationResult.error)}`);
-  }
-  const selectedRestV2AppChanged = maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
-    registeredApplications: runtimeSnapshot?.registeredApplications,
-    runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
-  });
-  if (selectedRestV2AppChanged) {
-    void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
-  }
-  state.programmerApplicationsLoadingFor = "";
-
-  if (state.selectedProgrammerId !== normalizedProgrammerId) {
+      registeredApplicationsSource: "live",
+      vaultRecord: state.selectedProgrammerVaultRecord
+    });
+    maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+      registeredApplications: provisionalRuntimeSnapshot?.registeredApplications,
+      runtimeServices: provisionalRuntimeSnapshot?.premiumServices
+    });
+    autoSelectSingletonAuthenticatedOptions(mergedSession);
+    state.programmerApplicationsLoadingFor = "";
     render();
-    return;
-  }
 
-  render();
+    const catalogHydrationResult = await settle(() =>
+      hydrateProgrammerRegisteredApplicationsForRuntime(mergedSession, normalizedProgrammerId, hydratedApplications, {
+        csrfToken: firstNonEmptyString([result.value?.csrfToken, liveSession?.console?.csrfToken, "NO-TOKEN"])
+      })
+    );
+    if (catalogHydrationResult.ok) {
+      mergedSession = catalogHydrationResult.value?.session || mergedSession;
+      hydratedApplications = Array.isArray(catalogHydrationResult.value?.applications)
+        ? catalogHydrationResult.value.applications
+        : hydratedApplications;
+    } else {
+      log(
+        `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+          catalogHydrationResult.error
+        )}`
+      );
+    }
+
+    void persistProgrammerVaultSnapshot(mergedSession, normalizedProgrammerId, {
+      registeredApplications: hydratedApplications,
+      source: "network"
+    }).catch((error) => {
+      log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+    });
+    state.session = mergedSession;
+    const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+      session: mergedSession,
+      registeredApplications: hydratedApplications,
+      registeredApplicationsSource: "live",
+      vaultRecord: state.selectedProgrammerVaultRecord
+    });
+    const hydrationResult = await settle(() =>
+      ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+        registeredApplications: hydratedApplications,
+        source: "programmer-selection"
+      })
+    );
+    if (!hydrationResult.ok) {
+      log(`LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(hydrationResult.error)}`);
+    }
+    const selectedRestV2AppChanged = maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(normalizedProgrammerId, {
+      registeredApplications: runtimeSnapshot?.registeredApplications,
+      runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId) || runtimeSnapshot?.premiumServices
+    });
+    if (selectedRestV2AppChanged) {
+      void persistSelectedProgrammerVaultSelections(normalizedProgrammerId).catch(() => null);
+    }
+
+    if (state.selectedProgrammerId !== normalizedProgrammerId) {
+      render();
+      return runtimeSnapshot?.registeredApplications || hydratedApplications;
+    }
+
+    render();
+    return runtimeSnapshot?.registeredApplications || hydratedApplications;
+  })().finally(() => {
+    if (programmerApplicationsLoadPromiseById.get(normalizedProgrammerId) === workPromise) {
+      programmerApplicationsLoadPromiseById.delete(normalizedProgrammerId);
+    }
+    if (state.programmerApplicationsLoadingFor === normalizedProgrammerId) {
+      state.programmerApplicationsLoadingFor = "";
+    }
+  });
+
+  programmerApplicationsLoadPromiseById.set(normalizedProgrammerId, workPromise);
+  return workPromise;
 }
 
 function autoSelectSingletonAuthenticatedOptions(session = state.session) {
@@ -4045,8 +4295,74 @@ async function fetchConsoleJsonWithFallback({
   headers = {},
   body = "",
   environmentId = CONSOLE_DEFAULT_ENVIRONMENT,
-  pageContextTargetRef = null
+  pageContextTargetRef = null,
+  preferPageContext = false,
+  allowTemporaryPageContext = false
 }) {
+  const tryPageContext = async () => {
+    let consolePageContextTarget =
+      pageContextTargetRef && typeof pageContextTargetRef === "object" ? pageContextTargetRef.target : null;
+    if (Number(consolePageContextTarget?.tabId || 0) <= 0) {
+      consolePageContextTarget = await resolveAdobeConsolePageContextTarget({
+        allowTemporaryTab: allowTemporaryPageContext === true,
+        environmentId
+      });
+      if (pageContextTargetRef && typeof pageContextTargetRef === "object") {
+        pageContextTargetRef.target = consolePageContextTarget;
+      }
+    }
+
+    const consoleTabId = Number(consolePageContextTarget?.tabId || 0);
+    if (consoleTabId <= 0) {
+      throw new Error("No Adobe Pass console page context is available for this request.");
+    }
+
+    return fetchConsoleJsonViaAdobePageContext({
+      baseUrl,
+      path,
+      accessToken,
+      csrfToken,
+      queryParams,
+      method,
+      headers,
+      body,
+      tabId: consoleTabId,
+      requiredFrameUrlIncludes: [`/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG}/`]
+    });
+  };
+
+  if (preferPageContext === true) {
+    const pageContextResult = await settle(() => tryPageContext());
+    if (pageContextResult.ok) {
+      return {
+        ...pageContextResult.value,
+        transport: "ims-bearer:page-context"
+      };
+    }
+
+    const directResult = await settle(() =>
+      fetchConsoleJson({
+        baseUrl,
+        path,
+        accessToken,
+        csrfToken,
+        queryParams,
+        method,
+        headers,
+        body
+      })
+    );
+    if (directResult.ok) {
+      return {
+        ...directResult.value,
+        transport: "ims-bearer:direct",
+        pageContext: null
+      };
+    }
+
+    throw buildConsoleFallbackError(directResult.error, pageContextResult.error);
+  }
+
   const directResult = await settle(() =>
     fetchConsoleJson({
       baseUrl,
@@ -4067,48 +4383,15 @@ async function fetchConsoleJsonWithFallback({
     };
   }
 
-  let consolePageContextTarget =
-    pageContextTargetRef && typeof pageContextTargetRef === "object" ? pageContextTargetRef.target : null;
-  if (Number(consolePageContextTarget?.tabId || 0) <= 0) {
-    consolePageContextTarget = await resolveAdobeConsolePageContextTarget({
-      allowTemporaryTab: false,
-      environmentId
-    });
-    if (pageContextTargetRef && typeof pageContextTargetRef === "object") {
-      pageContextTargetRef.target = consolePageContextTarget;
-    }
+  const pageContextResult = await settle(() => tryPageContext());
+  if (pageContextResult.ok) {
+    return {
+      ...pageContextResult.value,
+      transport: "ims-bearer:page-context"
+    };
   }
 
-  const consoleTabId = Number(consolePageContextTarget?.tabId || 0);
-  let pageContextError =
-    consoleTabId > 0
-      ? null
-      : new Error("No existing Adobe Pass console page context is available for fallback.");
-  if (consoleTabId > 0) {
-    const pageContextResult = await settle(() =>
-      fetchConsoleJsonViaAdobePageContext({
-        baseUrl,
-        path,
-        accessToken,
-        csrfToken,
-        queryParams,
-        method,
-        headers,
-        body,
-        tabId: consoleTabId,
-        requiredFrameUrlIncludes: [`/solutions/${ADOBE_PASS_CONSOLE_APP_SLUG}/`]
-      })
-    );
-    if (pageContextResult.ok) {
-      return {
-        ...pageContextResult.value,
-        transport: "ims-bearer:page-context"
-      };
-    }
-    pageContextError = pageContextResult.error;
-  }
-
-  throw buildConsoleFallbackError(directResult.error, pageContextError);
+  throw buildConsoleFallbackError(directResult.error, pageContextResult.error);
 }
 
 async function fetchImsCheckTokenViaAdobePageContext({
@@ -5107,6 +5390,107 @@ function computeEntityReferenceId(reference = "") {
   return firstNonEmptyString([matches?.[1], normalizedReference]);
 }
 
+function extractContentProviderId(reference = "") {
+  const text = String(reference || "");
+  const match = text.match(/^@ContentProvider:(.+)$/);
+  if (match) {
+    return match[1];
+  }
+
+  return text.trim() || null;
+}
+
+function deriveProgrammerRequestorOptionsFromChannels(programmerData = null, channels = []) {
+  if (!programmerData || typeof programmerData !== "object") {
+    return [];
+  }
+
+  const normalizedProgrammerId = normalizeOrganizationIdentifier(
+    firstNonEmptyString([programmerData.id, programmerData.programmerId, programmerData["programmer-id"]])
+  );
+  const rawServiceProviders = Array.isArray(programmerData?.serviceProviders)
+    ? programmerData.serviceProviders
+    : Array.isArray(programmerData?.contentProviders)
+      ? programmerData.contentProviders
+      : [];
+  const referencedRequestorIds = new Set(
+    rawServiceProviders
+      .map((reference) => computeEntityReferenceId(reference))
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  const requestors = [];
+  const seen = new Set();
+
+  const pushRequestor = (option) => {
+    if (!option || typeof option !== "object") {
+      return;
+    }
+
+    const id = String(firstNonEmptyString([option.id, option.key]) || "").trim();
+    const key = String(firstNonEmptyString([option.key, id]) || "").trim();
+    if (!id || !key) {
+      return;
+    }
+
+    const dedupeKey = key.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    requestors.push({
+      key,
+      id,
+      name: firstNonEmptyString([option.name, option.label, id]) || id,
+      label: firstNonEmptyString([option.label, option.name, id]) || id,
+      programmerId: firstNonEmptyString([
+        option.programmerId,
+        programmerData.id,
+        programmerData.programmerId,
+        programmerData["programmer-id"]
+      ]),
+      raw: option.raw || option
+    });
+  };
+
+  (Array.isArray(channels) ? channels : []).forEach((channel) => {
+    const channelProgrammerId = normalizeOrganizationIdentifier(channel?.programmerId);
+    const channelId = String(channel?.id || "").trim();
+    const matchesProgrammer =
+      normalizedProgrammerId && channelProgrammerId && channelProgrammerId === normalizedProgrammerId;
+    const matchesReference = channelId && referencedRequestorIds.has(channelId);
+    if (matchesProgrammer || matchesReference) {
+      pushRequestor(channel);
+    }
+  });
+
+  referencedRequestorIds.forEach((requestorId) => {
+    pushRequestor({
+      key: requestorId,
+      id: requestorId,
+      name: requestorId,
+      label: requestorId,
+      programmerId: firstNonEmptyString([
+        programmerData.id,
+        programmerData.programmerId,
+        programmerData["programmer-id"]
+      ]),
+      raw: {
+        id: requestorId
+      }
+    });
+  });
+
+  return requestors.sort((left, right) =>
+    firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
+      firstNonEmptyString([right?.label, right?.name, right?.id]),
+      undefined,
+      { sensitivity: "base" }
+    )
+  );
+}
+
 function normalizeConsoleChannels(payload) {
   const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
   const seen = new Set();
@@ -5118,7 +5502,7 @@ function normalizeConsoleChannels(payload) {
       return;
     }
 
-    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
+    const id = firstNonEmptyString([entityData.id, entityData.channelId, entityData["channel-id"], entity?.id, entity?.key]);
     const key = firstNonEmptyString([id, entity?.key, `channel-${index + 1}`]);
     if (!key || seen.has(key)) {
       return;
@@ -5127,6 +5511,7 @@ function normalizeConsoleChannels(payload) {
     seen.add(key);
     const name = firstNonEmptyString([
       entityData.displayName,
+      entityData["display-name"],
       entityData.name,
       entityData.label,
       entityData.title,
@@ -5142,7 +5527,11 @@ function normalizeConsoleChannels(payload) {
         normalizeOrganizationIdentifier(name) !== normalizeOrganizationIdentifier(`Channel ${id}`)
           ? `${name} | ${id}`
           : name,
-      programmerId: computeEntityReferenceId(entityData.programmer),
+      programmerId: firstNonEmptyString([
+        computeEntityReferenceId(entityData.programmer),
+        entityData.programmerId,
+        entityData["programmer-id"]
+      ]),
       integrationsCount:
         entityData.integrations && typeof entityData.integrations === "object" ? Object.keys(entityData.integrations).length : 0,
       raw: entityData
@@ -5765,6 +6154,38 @@ function normalizeRegisteredApplicationDetailPayload(payload = null) {
   };
 }
 
+function normalizeRegisteredApplicationPayloadEntities(payload = null) {
+  const normalizeEntity = (item) => {
+    const entity = normalizeRegisteredApplicationDetailPayload(item);
+    if (!entity) {
+      return null;
+    }
+
+    const entityKey = String(item?.key || entity?.key || "").trim();
+    return entityKey
+      ? {
+          ...entity,
+          __loginButtonEntityKey: entityKey
+        }
+      : entity;
+  };
+
+  if (Array.isArray(payload)) {
+    return payload.map((item) => normalizeEntity(item)).filter(Boolean);
+  }
+
+  if (Array.isArray(payload?.entities)) {
+    return payload.entities.map((item) => normalizeEntity(item)).filter(Boolean);
+  }
+
+  if (payload && typeof payload === "object") {
+    const singleEntity = normalizeEntity(payload);
+    return singleEntity ? [singleEntity] : [];
+  }
+
+  return [];
+}
+
 function buildRegisteredApplicationDetailPaths(applicationId = "") {
   const normalizedApplicationId = extractApplicationGuid(applicationId);
   if (!normalizedApplicationId) {
@@ -5788,14 +6209,12 @@ function normalizeRegisteredApplicationEntityRef(value = "") {
 }
 
 function extractRegisteredApplicationsFromBulkPayload(payload = null) {
-  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const entities = normalizeRegisteredApplicationPayloadEntities(payload);
   if (entities.length === 0) {
     return [];
   }
 
   return entities
-    .map((entity) => normalizeRegisteredApplicationDetailPayload(entity))
-    .filter(Boolean)
     .map((entity) => normalizeRegisteredApplicationRuntimeRecord(entity))
     .filter(Boolean);
 }
@@ -5836,23 +6255,20 @@ function resolveRegisteredApplicationIdFromEntityData(entityData = null) {
 
 function extractRegisteredApplicationFromBulkPayload(payload = null, applicationId = "") {
   const normalizedApplicationId = String(applicationId || "").trim();
-  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const entities = normalizeRegisteredApplicationPayloadEntities(payload);
   if (entities.length === 0) {
     return null;
   }
 
-  const normalizedEntities = entities
-    .map((entity) => normalizeRegisteredApplicationDetailPayload(entity))
-    .filter(Boolean);
   if (!normalizedApplicationId) {
-    return normalizedEntities[0] || null;
+    return entities[0] || null;
   }
 
   return (
-    normalizedEntities.find(
+    entities.find(
       (entity) => resolveRegisteredApplicationIdFromEntityData(entity) === normalizedApplicationId
     ) ||
-    normalizedEntities[0] ||
+    entities[0] ||
     null
   );
 }
@@ -5860,7 +6276,7 @@ function extractRegisteredApplicationFromBulkPayload(payload = null, application
 async function fetchRegisteredApplicationBulkRetrieve(
   session = null,
   applicationId = "",
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
@@ -5891,7 +6307,9 @@ async function fetchRegisteredApplicationBulkRetrieve(
     },
     body: bulkRetrieveRequest.body,
     environmentId,
-    pageContextTargetRef
+    pageContextTargetRef,
+    preferPageContext: true,
+    allowTemporaryPageContext
   });
 
   return {
@@ -5906,7 +6324,7 @@ async function fetchRegisteredApplicationBulkRetrieve(
 async function fetchRegisteredApplicationsByIds(
   session = null,
   applicationIds = [],
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
@@ -5944,7 +6362,9 @@ async function fetchRegisteredApplicationsByIds(
     },
     body: bulkRetrieveRequest.body,
     environmentId,
-    pageContextTargetRef
+    pageContextTargetRef,
+    preferPageContext: true,
+    allowTemporaryPageContext
   });
 
   return {
@@ -6048,7 +6468,6 @@ function mergeHydratedRegisteredApplication(application = null, detailData = nul
     key: firstNonEmptyString([runtimeRecord?.key, baseApplication.key, baseApplication.id]),
     id: firstNonEmptyString([runtimeRecord?.id, baseApplication.id, baseApplication.key]),
     serviceProviders: persistedMetadata.serviceProviders,
-    requestor: persistedMetadata.requestor,
     softwareStatement: normalizedSoftwareStatement,
     raw:
       runtimeRecord?.raw && typeof runtimeRecord.raw === "object"
@@ -6132,7 +6551,7 @@ async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
   session = null,
   programmerId = "",
   registeredApplications = [],
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const normalizedProgrammerId = String(programmerId || "").trim();
@@ -6156,7 +6575,8 @@ async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
   const bulkHydrationResult = await settle(() =>
     fetchRegisteredApplicationsByIds(currentSession, missingApplicationIds, {
       csrfToken: nextCsrfToken,
-      pageContextTargetRef
+      pageContextTargetRef,
+      allowTemporaryPageContext
     })
   );
   if (!bulkHydrationResult.ok) {
@@ -6191,7 +6611,7 @@ async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs(
 async function fetchRegisteredApplicationDetails(
   session = null,
   applicationId = "",
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
@@ -6217,7 +6637,8 @@ async function fetchRegisteredApplicationDetails(
   const bulkResult = await settle(() =>
     fetchRegisteredApplicationBulkRetrieve(session, normalizedApplicationId, {
       csrfToken: nextCsrfToken,
-      pageContextTargetRef
+      pageContextTargetRef,
+      allowTemporaryPageContext
     })
   );
   if (bulkResult.ok && bulkResult.value?.application) {
@@ -6270,7 +6691,7 @@ async function fetchRegisteredApplicationDetails(
 async function fetchRegisteredApplicationSoftwareStatement(
   session = null,
   applicationId = "",
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
@@ -6296,7 +6717,8 @@ async function fetchRegisteredApplicationSoftwareStatement(
   const bulkResult = await settle(() =>
     fetchRegisteredApplicationBulkRetrieve(session, normalizedApplicationId, {
       csrfToken: nextCsrfToken,
-      pageContextTargetRef
+      pageContextTargetRef,
+      allowTemporaryPageContext
     })
   );
   if (bulkResult.ok) {
@@ -6382,7 +6804,7 @@ async function fetchRegisteredApplicationSoftwareStatement(
 async function enrichRegisteredApplicationForHydration(
   session = null,
   application = null,
-  { csrfToken = "NO-TOKEN", pageContextTargetRef = null } = {}
+  { csrfToken = "NO-TOKEN", pageContextTargetRef = null, allowTemporaryPageContext = false } = {}
 ) {
   const currentApplication = application && typeof application === "object" ? application : null;
   if (!currentApplication) {
@@ -6406,7 +6828,8 @@ async function enrichRegisteredApplicationForHydration(
   const detailsResult = await settle(() =>
     fetchRegisteredApplicationDetails(session, normalizedApplicationId, {
       csrfToken: nextCsrfToken,
-      pageContextTargetRef
+      pageContextTargetRef,
+      allowTemporaryPageContext
     })
   );
   if (detailsResult.ok && detailsResult.value?.application) {
@@ -6418,7 +6841,8 @@ async function enrichRegisteredApplicationForHydration(
     const statementResult = await settle(() =>
       fetchRegisteredApplicationSoftwareStatement(session, normalizedApplicationId, {
         csrfToken: nextCsrfToken,
-        pageContextTargetRef
+        pageContextTargetRef,
+        allowTemporaryPageContext
       })
     );
     if (statementResult.ok && statementResult.value?.softwareStatement) {
@@ -6440,7 +6864,7 @@ async function enrichRegisteredApplicationForHydration(
 async function enrichRegisteredApplicationsForHydration(
   session = null,
   applications = [],
-  { csrfToken = "NO-TOKEN" } = {}
+  { csrfToken = "NO-TOKEN", allowTemporaryPageContext = false } = {}
 ) {
   const normalizedApplications = Array.isArray(applications) ? applications.filter(Boolean) : [];
   if (normalizedApplications.length === 0) {
@@ -6460,7 +6884,8 @@ async function enrichRegisteredApplicationsForHydration(
     for (const application of normalizedApplications) {
       const enrichmentResult = await enrichRegisteredApplicationForHydration(session, application, {
         csrfToken: nextCsrfToken,
-        pageContextTargetRef
+        pageContextTargetRef,
+        allowTemporaryPageContext
       });
       hydratedApplications.push(
         enrichmentResult?.application || mergeHydratedRegisteredApplication(application)
@@ -6479,7 +6904,7 @@ async function enrichRegisteredApplicationsForHydration(
 
 function programmerRegisteredApplicationsNeedHydration(
   registeredApplications = [],
-  { requestorId = "", programmerId = "" } = {}
+  { programmerId = "" } = {}
 ) {
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications.filter(Boolean) : [];
   const currentSession = state.session && typeof state.session === "object" ? state.session : null;
@@ -6506,27 +6931,14 @@ function programmerRegisteredApplicationsNeedHydration(
   if (missingSoftwareStatement) {
     return true;
   }
-
-  const normalizedRequestorId = String(requestorId || "").trim();
-  if (!normalizedRequestorId) {
-    return false;
-  }
-
-  const restV2Candidates = collectRestV2CandidateApplications(normalizedApplications);
-  if (restV2Candidates.length <= 1) {
-    return true;
-  }
-
-  return !restV2Candidates.some((application) =>
-    registeredApplicationSupportsRequestor(application, normalizedRequestorId, programmerId)
-  );
+  return false;
 }
 
 async function hydrateProgrammerRegisteredApplicationsForRuntime(
   session = null,
   programmerId = "",
   registeredApplications = [],
-  { csrfToken = "NO-TOKEN", requestorId = "", force = false } = {}
+  { csrfToken = "NO-TOKEN", force = false, allowTemporaryPageContext = false } = {}
 ) {
   const currentSession = session && typeof session === "object" ? session : null;
   const normalizedProgrammerId = String(programmerId || "").trim();
@@ -6566,7 +6978,8 @@ async function hydrateProgrammerRegisteredApplicationsForRuntime(
         normalizedApplications,
         {
           csrfToken: nextCsrfToken,
-          pageContextTargetRef
+          pageContextTargetRef,
+          allowTemporaryPageContext
         }
       );
       if (programmerRefHydrationResult?.error) {
@@ -6587,7 +7000,6 @@ async function hydrateProgrammerRegisteredApplicationsForRuntime(
     if (
       force !== true &&
       !programmerRegisteredApplicationsNeedHydration(applications, {
-        requestorId,
         programmerId: normalizedProgrammerId
       })
     ) {
@@ -6600,7 +7012,8 @@ async function hydrateProgrammerRegisteredApplicationsForRuntime(
     }
 
     const enrichmentResult = await enrichRegisteredApplicationsForHydration(workingSession, applications, {
-      csrfToken: nextCsrfToken
+      csrfToken: nextCsrfToken,
+      allowTemporaryPageContext
     });
     const hydratedApplications = mergeHydratedRegisteredApplicationsIntoCollection(
       applications,
@@ -6666,7 +7079,6 @@ function buildVaultCompactRegisteredApplication(application = null) {
     scopeLabels: buildRegisteredApplicationScopeLabels(scopes),
     type: firstNonEmptyString([application.type]),
     serviceProviders: persistedMetadata.serviceProviders,
-    requestor: persistedMetadata.requestor,
     softwareStatement: extractSoftwareStatementFromApplicationData(application.raw || application)
   };
 
@@ -6751,7 +7163,7 @@ function collectRestV2AppCandidatesFromPremiumApps(premiumApps = null) {
   return candidates;
 }
 
-function collectRestV2ServiceProviderCandidatesFromApplication(application = null, programmerId = "") {
+function collectRestV2ServiceProviderCandidatesFromApplication(application = null) {
   const normalizedApplication = application && typeof application === "object" ? application : {};
   const candidates = [];
   const seen = new Set();
@@ -6843,111 +7255,7 @@ function collectRestV2ServiceProviderCandidatesFromApplication(application = nul
     extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication, softwareStatement)
   );
 
-  if (programmerId) {
-    pushValue(programmerId);
-  }
-
   return candidates;
-}
-
-function registeredApplicationSupportsRequestor(application = null, requestorId = "", programmerId = "") {
-  const normalizedRequestorId = normalizeEntityToken(requestorId);
-  if (!normalizedRequestorId) {
-    return false;
-  }
-
-  return collectRestV2ServiceProviderCandidatesFromApplication(application, programmerId).some((candidate) =>
-    normalizeEntityToken(candidate) === normalizedRequestorId
-  );
-}
-
-function buildOrderedRestV2CandidateApplications(
-  registeredApplications = [],
-  requestorId = "",
-  programmerId = "",
-  preferredRegisteredApplication = null
-) {
-  const candidates = collectRestV2CandidateApplications(registeredApplications);
-  const ordered = [];
-  const seen = new Set();
-
-  const pushCandidate = (application = null) => {
-    const applicationId = buildCompactRegisteredApplicationIdentity(application);
-    if (!applicationId || seen.has(applicationId)) {
-      return;
-    }
-    seen.add(applicationId);
-    ordered.push(application);
-  };
-
-  pushCandidate(preferredRegisteredApplication);
-
-  if (requestorId) {
-    candidates
-      .filter((application) => registeredApplicationSupportsRequestor(application, requestorId, programmerId))
-      .sort((left, right) =>
-        firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
-          firstNonEmptyString([right?.label, right?.name, right?.id]),
-          undefined,
-          { sensitivity: "base" }
-        )
-      )
-      .forEach((application) => pushCandidate(application));
-  }
-
-  candidates
-    .sort((left, right) =>
-      firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
-        firstNonEmptyString([right?.label, right?.name, right?.id]),
-        undefined,
-        { sensitivity: "base" }
-      )
-    )
-    .forEach((application) => pushCandidate(application));
-
-  return ordered;
-}
-
-function buildOrderedRestV2CandidateApplicationsFromPremiumApps(
-  premiumApps = null,
-  requestorId = "",
-  programmerId = "",
-  preferredRegisteredApplication = null
-) {
-  const candidates = collectRestV2AppCandidatesFromPremiumApps(premiumApps);
-  if (candidates.length === 0) {
-    return [];
-  }
-
-  const ordered = [];
-  const seen = new Set();
-
-  const pushCandidate = (application = null) => {
-    const applicationId = buildCompactRegisteredApplicationIdentity(application);
-    if (!applicationId || seen.has(applicationId)) {
-      return;
-    }
-    seen.add(applicationId);
-    ordered.push(application);
-  };
-
-  pushCandidate(preferredRegisteredApplication);
-
-  if (requestorId) {
-    candidates
-      .filter((application) => registeredApplicationSupportsRequestor(application, requestorId, programmerId))
-      .sort((left, right) =>
-        firstNonEmptyString([left?.label, left?.name, left?.id]).localeCompare(
-          firstNonEmptyString([right?.label, right?.name, right?.id]),
-          undefined,
-          { sensitivity: "base" }
-        )
-      )
-      .forEach((application) => pushCandidate(application));
-  }
-
-  candidates.forEach((application) => pushCandidate(application));
-  return ordered;
 }
 
 function mergeUniquePremiumServiceApplications(...collections) {
@@ -6955,17 +7263,18 @@ function mergeUniquePremiumServiceApplications(...collections) {
 }
 
 function orderRegisteredApplicationHealthServiceCandidates(
-  programmerId = "",
-  requestorId = "",
   candidates = [],
-  { preferredApplication = null, preferredGuid = "", currentApplication = null } = {}
+  { preferredApplication = null, preferredGuid = "", currentApplication = null, catalogApplications = [] } = {}
 ) {
-  const normalizedProgrammerId = String(programmerId || "").trim();
-  const normalizedRequestorId = String(requestorId || "").trim();
   const normalizedPreferredId = String(
     firstNonEmptyString([preferredGuid, buildCompactRegisteredApplicationIdentity(preferredApplication)])
   ).trim();
   const normalizedCurrentId = String(buildCompactRegisteredApplicationIdentity(currentApplication) || "").trim();
+  const catalogApplicationIds = new Set(
+    (Array.isArray(catalogApplications) ? catalogApplications : [])
+      .map((application) => String(buildCompactRegisteredApplicationIdentity(application) || "").trim())
+      .filter(Boolean)
+  );
   const orderedCandidates = mergeUniquePremiumServiceApplications(candidates).filter(Boolean);
 
   return orderedCandidates.sort((leftApplication, rightApplication) => {
@@ -6983,16 +7292,10 @@ function orderRegisteredApplicationHealthServiceCandidates(
       return rightCurrent - leftCurrent;
     }
 
-    const leftRequestorMatch = Number(
-      Boolean(normalizedRequestorId) &&
-        registeredApplicationSupportsRequestor(leftApplication, normalizedRequestorId, normalizedProgrammerId)
-    );
-    const rightRequestorMatch = Number(
-      Boolean(normalizedRequestorId) &&
-        registeredApplicationSupportsRequestor(rightApplication, normalizedRequestorId, normalizedProgrammerId)
-    );
-    if (leftRequestorMatch !== rightRequestorMatch) {
-      return rightRequestorMatch - leftRequestorMatch;
+    const leftCatalog = Number(Boolean(leftId && catalogApplicationIds.has(leftId)));
+    const rightCatalog = Number(Boolean(rightId && catalogApplicationIds.has(rightId)));
+    if (leftCatalog !== rightCatalog) {
+      return rightCatalog - leftCatalog;
     }
 
     return firstNonEmptyString([leftApplication?.label, leftApplication?.name, leftId]).localeCompare(
@@ -7005,10 +7308,9 @@ function orderRegisteredApplicationHealthServiceCandidates(
 
 function buildRegisteredApplicationHealthServiceCandidates(
   serviceKey = "",
-  programmerId = "",
   runtimeServices = null,
   registeredApplications = [],
-  { requestorId = "", preferredApplication = null, preferredGuid = "" } = {}
+  { preferredApplication = null, preferredGuid = "" } = {}
 ) {
   const normalizedServiceKey = String(serviceKey || "").trim();
   if (!normalizedServiceKey) {
@@ -7040,108 +7342,21 @@ function buildRegisteredApplicationHealthServiceCandidates(
     : null;
 
   return orderRegisteredApplicationHealthServiceCandidates(
-    programmerId,
-    requestorId,
     [preferredApplication, currentApplication, ...currentCandidates, ...scopeCandidates],
     {
       preferredApplication,
       preferredGuid,
-      currentApplication
+      currentApplication,
+      catalogApplications: normalizedRegisteredApplications
     }
   );
-}
-
-function resolveMappedRestV2ApplicationForRequestor(registeredApplications = [], requestorId = "", programmerId = "") {
-  const normalizedRequestorId = String(requestorId || "").trim();
-  const normalizedProgrammerId = String(programmerId || "").trim();
-  if (!normalizedRequestorId) {
-    return null;
-  }
-
-  const configurationKey = buildHarpoRequestorConfigurationKey(normalizedProgrammerId, normalizedRequestorId);
-  const preferredApplicationId = String(harpoRestV2PreferredAppIdByRequestorKey.get(configurationKey) || "").trim();
-  const restV2Candidates = collectRestV2CandidateApplications(registeredApplications);
-  if (restV2Candidates.length === 0) {
-    return null;
-  }
-
-  const preferredApplication = preferredApplicationId
-    ? restV2Candidates.find(
-        (application) => buildCompactRegisteredApplicationIdentity(application) === preferredApplicationId
-      ) || null
-    : null;
-
-  return (
-    buildRegisteredApplicationHealthServiceCandidates(
-      "restV2",
-      normalizedProgrammerId,
-      { restV2Apps: restV2Candidates, restV2: preferredApplication || null },
-      registeredApplications,
-      {
-        requestorId: normalizedRequestorId,
-        preferredApplication,
-        preferredGuid: preferredApplicationId
-      }
-    )[0] || null
-  );
-}
-
-function maybeAlignSelectedRegisteredApplicationToRequestor(
-  requestorId = "",
-  programmerId = state.selectedProgrammerId,
-  registeredApplications = null,
-  { force = false } = {}
-) {
-  const normalizedRequestorId = String(requestorId || "").trim();
-  const normalizedProgrammerId = String(programmerId || "").trim();
-  if (!normalizedRequestorId || !normalizedProgrammerId) {
-    return false;
-  }
-
-  const snapshotContext = buildProgrammerVaultSnapshotContext(state.session, normalizedProgrammerId, {
-    registeredApplications: Array.isArray(registeredApplications) ? registeredApplications : null
-  });
-  if (!snapshotContext?.selectedProgrammer) {
-    return false;
-  }
-
-  const currentSelectedApplication = resolveSelectedRegisteredApplication(
-    snapshotContext.registeredApplications,
-    state.selectedRegisteredApplicationId
-  );
-  const currentSelectedMatchesRequestor = registeredApplicationSupportsRequestor(
-    currentSelectedApplication,
-    normalizedRequestorId,
-    normalizedProgrammerId
-  );
-  const currentSelectedIsRestV2 = registeredApplicationMatchesRequiredScope(
-    currentSelectedApplication,
-    "api:client:v2"
-  );
-  if (!force && currentSelectedApplication && (!currentSelectedIsRestV2 || currentSelectedMatchesRequestor)) {
-    return false;
-  }
-
-  const mappedApplication = resolveMappedRestV2ApplicationForRequestor(
-    snapshotContext.registeredApplications,
-    normalizedRequestorId,
-    normalizedProgrammerId
-  );
-  const mappedApplicationId = firstNonEmptyString([mappedApplication?.key, mappedApplication?.id]);
-  if (!mappedApplicationId || mappedApplicationId === String(state.selectedRegisteredApplicationId || "").trim()) {
-    return false;
-  }
-
-  state.selectedRegisteredApplicationId = mappedApplicationId;
-  return true;
 }
 
 function buildPersistableRegisteredApplicationMetadata(application = null, { softwareStatement = "" } = {}) {
   const normalizedApplication = application && typeof application === "object" ? application : null;
   if (!normalizedApplication) {
     return {
-      serviceProviders: [],
-      requestor: ""
+      serviceProviders: []
     };
   }
 
@@ -7162,16 +7377,8 @@ function buildPersistableRegisteredApplicationMetadata(application = null, { sof
       .map((candidate) => extractEntityIdFromToken(candidate))
       .filter(Boolean)
   );
-  const requestor = firstNonEmptyString([
-    extractEntityIdFromToken(firstNonEmptyString([normalizedApplication?.requestor, normalizedApplication?.serviceProvider])),
-    extractEntityIdFromToken(
-      extractPassVaultPrimaryRequestorHintFromApplicationData(normalizedApplication?.raw || normalizedApplication, normalizedSoftwareStatement)
-    )
-  ]);
-
   return {
-    serviceProviders,
-    requestor
+    serviceProviders
   };
 }
 
@@ -7417,9 +7624,11 @@ function buildProgrammerServiceVaultEntries({
   cmTenants = [],
   existingVaultRecord = null,
   selectedRegisteredApplication = null,
-  serviceApplicationOverrides = null
+  serviceApplicationOverrides = null,
+  session = state.session
 } = {}) {
   const normalizedApplications = Array.isArray(registeredApplications) ? registeredApplications : [];
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
   const services = {};
 
   VAULT_DCR_SERVICE_DEFINITIONS.forEach((definition) => {
@@ -7432,13 +7641,19 @@ function buildProgrammerServiceVaultEntries({
       serviceApplicationOverride: serviceApplicationOverrides?.[definition.serviceKey] || null
     });
     const client =
-      compactRegisteredApplicationsMatch(registeredApplication, existingService?.registeredApplication) &&
+      getCachedProgrammerServiceClient({
+        programmerId,
+        serviceKey: definition.serviceKey,
+        registeredApplication,
+        session
+      }) ||
+      (compactRegisteredApplicationsMatch(registeredApplication, existingService?.registeredApplication) &&
       existingService?.client &&
       typeof existingService.client === "object"
         ? {
             ...existingService.client
           }
-        : null;
+        : null);
 
     services[definition.serviceKey] = {
       key: definition.serviceKey,
@@ -7677,16 +7892,48 @@ function normalizeHarpoDomainCandidate(value = null) {
 }
 
 function normalizeHarpoMvpdList(mvpds = []) {
-  return (Array.isArray(mvpds) ? mvpds : [])
-    .map((mvpd) => ({
-      id: firstNonEmptyString([mvpd?.id, mvpd?.mvpd, mvpd?.platformMappingId]),
-      displayName: firstNonEmptyString([mvpd?.displayName, mvpd?.name, mvpd?.id]),
-      platformMappingId: firstNonEmptyString([mvpd?.platformMappingId, mvpd?.platformMappingID, mvpd?.providerId]),
-      boardingStatus: firstNonEmptyString([mvpd?.boardingStatus]),
-      isTempPass: mvpd?.isTempPass === true,
-      isProxy: mvpd?.isProxy === false ? false : true
-    }))
-    .filter((mvpd) => mvpd.id || mvpd.displayName);
+  const normalizedList = [];
+  const seenIds = new Set();
+
+  (Array.isArray(mvpds) ? mvpds : []).forEach((mvpd) => {
+    const normalizedMvpd = mvpd && typeof mvpd === "object" ? mvpd : {};
+    const id = firstNonEmptyString([
+      normalizedMvpd?.id,
+      normalizedMvpd?.mvpd,
+      normalizedMvpd?.mvpdId,
+      normalizedMvpd?.providerId,
+      normalizedMvpd?.platformMappingId,
+      normalizedMvpd?.platformMappingID,
+      normalizedMvpd?.code,
+      normalizedMvpd?.identifier,
+      normalizedMvpd?.displayName,
+      normalizedMvpd?.name
+    ]);
+    if (!id || seenIds.has(id)) {
+      return;
+    }
+    seenIds.add(id);
+
+    normalizedList.push({
+      id,
+      displayName: firstNonEmptyString([
+        normalizedMvpd?.displayName,
+        normalizedMvpd?.name,
+        normalizedMvpd?.label,
+        id
+      ]),
+      platformMappingId: firstNonEmptyString([
+        normalizedMvpd?.platformMappingId,
+        normalizedMvpd?.platformMappingID,
+        normalizedMvpd?.providerId
+      ]),
+      boardingStatus: firstNonEmptyString([normalizedMvpd?.boardingStatus]),
+      isTempPass: normalizedMvpd?.isTempPass === true,
+      isProxy: normalizedMvpd?.isProxy === false ? false : true
+    });
+  });
+
+  return normalizedList;
 }
 
 function formatHarpoMvpdPickerLabel(mvpd = null) {
@@ -7699,23 +7946,61 @@ function formatHarpoMvpdPickerLabel(mvpd = null) {
   return `${displayName} (${mvpdId})`;
 }
 
+function getHarpoRequestorConfigurationCollection(payload = null, collectionKeys = []) {
+  const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  const normalizedKeys = (Array.isArray(collectionKeys) ? collectionKeys : [])
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!normalizedPayload || normalizedKeys.length === 0) {
+    return [];
+  }
+
+  const findCollection = (container = null) => {
+    if (!container || typeof container !== "object") {
+      return null;
+    }
+
+    for (const [key, value] of Object.entries(container)) {
+      const normalizedKey = String(key || "").trim().toLowerCase();
+      if (!normalizedKey || !normalizedKeys.includes(normalizedKey) || !Array.isArray(value)) {
+        continue;
+      }
+      return value;
+    }
+
+    return null;
+  };
+
+  const requestor =
+    Object.entries(normalizedPayload).find(
+      ([key, value]) => String(key || "").trim().toLowerCase() === "requestor" && value && typeof value === "object"
+    )?.[1] || null;
+  return findCollection(requestor) || findCollection(normalizedPayload) || [];
+}
+
 function normalizeHarpoRequestorConfigurationPayload(payload = null) {
   const responsePayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   const requestor =
     responsePayload?.requestor && typeof responsePayload.requestor === "object" ? responsePayload.requestor : {};
+  const domainCollection = getHarpoRequestorConfigurationCollection(responsePayload, ["domains", "domain"]);
   const domains = dedupeCandidateStrings(
-    (Array.isArray(requestor?.domains) ? requestor.domains : []).map(normalizeHarpoDomainCandidate)
+    (Array.isArray(domainCollection) ? domainCollection : []).map(normalizeHarpoDomainCandidate)
   ).filter(Boolean);
   const reproDomains = domains.filter((domain) => domain !== "adobe.com");
   const safeDomains = dedupeCandidateStrings(["adobe.com", ...domains]).filter(Boolean);
 
   return {
-    requestorId: firstNonEmptyString([requestor?.id]),
-    requestorName: firstNonEmptyString([requestor?.name, requestor?.displayName]),
+    requestorId: firstNonEmptyString([requestor?.id, responsePayload?.requestorId, responsePayload?.serviceProviderId]),
+    requestorName: firstNonEmptyString([
+      requestor?.name,
+      requestor?.displayName,
+      responsePayload?.requestorName,
+      responsePayload?.serviceProviderName
+    ]),
     domains,
     reproDomains,
     safeDomains,
-    mvpds: normalizeHarpoMvpdList(requestor?.mvpds || responsePayload?.mvpds || requestor?.mvpd),
+    mvpds: normalizeHarpoMvpdList(getHarpoRequestorConfigurationCollection(responsePayload, ["mvpds", "mvpd"])),
     raw: responsePayload
   };
 }
@@ -7733,12 +8018,17 @@ async function fetchHarpoRequestorConfigurationPayload(requestorId = "", accessT
   ).toString();
 
   let response;
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS)
+    : 0;
   try {
     response = await fetch(requestUrl, {
       method: "GET",
       mode: "cors",
       credentials: "omit",
       referrerPolicy: "no-referrer",
+      signal: controller?.signal,
       headers: {
         ...buildPrimetimeRequestHeaders(normalizedAccessToken),
         ...buildRestV2Headers(normalizedRequestorId, {
@@ -7747,7 +8037,18 @@ async function fetchHarpoRequestorConfigurationPayload(requestorId = "", accessT
       }
     });
   } catch (error) {
-    throw new Error(`HARPO could not reach the REST V2 configuration endpoint: ${serializeError(error)}`);
+    const timedOut = Boolean(
+      controller && (error?.name === "AbortError" || /abort/i.test(String(error?.message || "")))
+    );
+    throw new Error(
+      timedOut
+        ? `HARPO requestor configuration timed out after ${HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS}ms.`
+        : `HARPO could not reach the REST V2 configuration endpoint: ${serializeError(error)}`
+    );
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
   }
 
   const rawText = await response.text().catch(() => "");
@@ -7773,6 +8074,7 @@ async function ensureVaultServiceClientHydrated(serviceRecord = null, definition
 async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null, definition = null, hydrationContext = {}) {
   const normalizedDefinition = definition && typeof definition === "object" ? definition : null;
   const currentRecord = serviceRecord && typeof serviceRecord === "object" ? serviceRecord : {};
+  const normalizedProgrammerId = firstNonEmptyString([hydrationContext?.programmerId]);
   let registeredApplication =
     currentRecord.registeredApplication && typeof currentRecord.registeredApplication === "object"
       ? currentRecord.registeredApplication
@@ -7786,9 +8088,24 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
     };
   }
 
-  const nextClient = currentRecord.client && typeof currentRecord.client === "object"
+  const cacheServiceClient = (client = null) =>
+    setCachedProgrammerServiceClient({
+      programmerId: normalizedProgrammerId,
+      serviceKey: normalizedDefinition.serviceKey,
+      registeredApplication,
+      client,
+      session: hydrationContext?.session
+    });
+  const cachedClient = getCachedProgrammerServiceClient({
+    programmerId: normalizedProgrammerId,
+    serviceKey: normalizedDefinition.serviceKey,
+    registeredApplication,
+    session: hydrationContext?.session
+  });
+  const nextClient = cachedClient || (currentRecord.client && typeof currentRecord.client === "object")
     ? {
-        ...currentRecord.client
+        ...(currentRecord.client && typeof currentRecord.client === "object" ? currentRecord.client : {}),
+        ...(cachedClient && typeof cachedClient === "object" ? cachedClient : {})
       }
     : {};
 
@@ -7828,7 +8145,9 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
       nextClient.clientId = registeredClient.clientId;
       nextClient.clientSecret = registeredClient.clientSecret;
       nextClient.error = "";
+      cacheServiceClient(nextClient);
     } catch (error) {
+      cacheServiceClient(nextClient);
       return {
         ...currentRecord,
         status: "partial",
@@ -7854,7 +8173,9 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
         updatedAt: nowIso,
         error: ""
       });
+      cacheServiceClient(nextClient);
     } catch (error) {
+      cacheServiceClient(nextClient);
       return {
         ...currentRecord,
         status: "partial",
@@ -7870,6 +8191,7 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
     nextClient.updatedAt = firstNonEmptyString([nextClient.updatedAt, nowIso]);
     nextClient.error = "";
   }
+  cacheServiceClient(nextClient);
 
   return {
     ...currentRecord,
@@ -7878,6 +8200,77 @@ async function ensureVaultServiceClientHydratedWithContext(serviceRecord = null,
     registeredApplication,
     client: nextClient
   };
+}
+
+async function ensureServiceApplicationClientHydrated(
+  programmerId = "",
+  serviceKey = "",
+  registeredApplication = null,
+  {
+    session = state.session,
+    csrfToken = "NO-TOKEN",
+    pageContextTargetRef = null
+  } = {}
+) {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  const normalizedServiceKey = String(serviceKey || "").trim();
+  const normalizedRegisteredApplication = buildVaultCompactRegisteredApplication(registeredApplication);
+  const definition = resolveVaultDcrServiceDefinition(normalizedServiceKey);
+  if (!normalizedProgrammerId || !definition || !normalizedRegisteredApplication) {
+    throw new Error("Requested premium service client hydration is missing programmer or application context.");
+  }
+
+  const currentServices = getCurrentPremiumAppsSnapshot(normalizedProgrammerId);
+  const currentService = currentServices?.[normalizedServiceKey] && typeof currentServices[normalizedServiceKey] === "object"
+    ? currentServices[normalizedServiceKey]
+    : null;
+  const currentVaultService =
+    String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId &&
+    state.selectedProgrammerVaultRecord?.services?.[normalizedServiceKey] &&
+    typeof state.selectedProgrammerVaultRecord.services[normalizedServiceKey] === "object"
+      ? state.selectedProgrammerVaultRecord.services[normalizedServiceKey]
+      : null;
+  const cachedClient = getCachedProgrammerServiceClient({
+    programmerId: normalizedProgrammerId,
+    serviceKey: normalizedServiceKey,
+    registeredApplication: normalizedRegisteredApplication,
+    session
+  });
+  const seededClient =
+    cachedClient ||
+    (compactRegisteredApplicationsMatch(normalizedRegisteredApplication, currentService?.registeredApplication) &&
+    currentService?.client &&
+    typeof currentService.client === "object"
+      ? {
+          ...currentService.client
+        }
+      : null) ||
+    (compactRegisteredApplicationsMatch(normalizedRegisteredApplication, currentVaultService?.registeredApplication) &&
+    currentVaultService?.client &&
+    typeof currentVaultService.client === "object"
+      ? {
+          ...currentVaultService.client
+        }
+      : null);
+
+  return ensureVaultServiceClientHydratedWithContext(
+    {
+      key: definition.serviceKey,
+      label: definition.label,
+      available: true,
+      requiredScope: definition.requiredScope,
+      registeredApplication: normalizedRegisteredApplication,
+      client: seededClient,
+      status: seededClient?.clientId && seededClient?.clientSecret ? "ready" : "pending"
+    },
+    definition,
+    {
+      session,
+      programmerId: normalizedProgrammerId,
+      csrfToken,
+      pageContextTargetRef
+    }
+  );
 }
 
 async function hydrateProgrammerVaultServiceClients(services = {}, serviceKeys = null, hydrationContext = {}) {
@@ -7949,24 +8342,37 @@ function vaultServiceRecordReadyForDefinition(serviceRecord = null, definition =
   return true;
 }
 
-function normalizeConsoleProgrammers(payload) {
+function normalizeConsoleProgrammers(payload, channels = []) {
   const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
   const seen = new Set();
   const programmers = [];
 
   entities.forEach((entity, index) => {
-    const entityData = entity?.entityData && typeof entity.entityData === "object" ? entity.entityData : entity;
+    const entityData =
+      entity?.entityData && typeof entity.entityData === "object"
+        ? entity.entityData
+        : entity?.raw && typeof entity.raw === "object"
+          ? entity.raw
+          : entity;
     if (!entityData || typeof entityData !== "object") {
       return;
     }
 
-    const id = firstNonEmptyString([entityData.id, entity?.id, entity?.key]);
+    const id = firstNonEmptyString([
+      entityData.id,
+      entityData.programmerId,
+      entityData["programmer-id"],
+      entity?.id,
+      entity?.key,
+      `programmer-${index + 1}`
+    ]);
     const name = firstNonEmptyString([
       entityData.displayName,
+      entityData["display-name"],
       entityData.name,
       entityData.label,
       entityData.title,
-      id ? `Programmer ${id}` : `Programmer ${index + 1}`
+      id
     ]);
     const key = firstNonEmptyString([id, entity?.key, `programmer-${index + 1}`]);
     if (!key || seen.has(key)) {
@@ -7974,6 +8380,10 @@ function normalizeConsoleProgrammers(payload) {
     }
 
     seen.add(key);
+    const requestorOptions =
+      Array.isArray(entityData.requestorOptions) && entityData.requestorOptions.length > 0
+        ? entityData.requestorOptions
+        : deriveProgrammerRequestorOptionsFromChannels(entityData, channels);
     const programmerRequestorReferences = Array.isArray(entityData.serviceProviders)
       ? entityData.serviceProviders
       : Array.isArray(entityData.contentProviders)
@@ -7996,6 +8406,11 @@ function normalizeConsoleProgrammers(payload) {
           ? `${name} | ${id}`
           : name,
       owner: firstNonEmptyString([
+        entityData["media-company"],
+        entityData.media_company,
+        entityData.mediaCompany,
+        entityData.mediaCompanyName,
+        entityData.company,
         entityData.owner,
         entityData.organizationName,
         entityData.organizationId,
@@ -8003,8 +8418,19 @@ function normalizeConsoleProgrammers(payload) {
       ]),
       applications: programmerApplicationReferences.map((reference) => computeEntityReferenceId(reference)).filter(Boolean),
       applicationCount: programmerApplicationReferences.filter(Boolean).length,
-      requestorIds: programmerRequestorReferences.map((reference) => computeEntityReferenceId(reference)).filter(Boolean),
-      requestorCount: programmerRequestorReferences.filter(Boolean).length,
+      requestorOptions,
+      requestorIds:
+        requestorOptions.length > 0
+          ? dedupeCandidateStrings(
+              requestorOptions.map((item) => String(firstNonEmptyString([item?.id, item?.key]) || "").trim()).filter(Boolean)
+            )
+          : programmerRequestorReferences.length > 0
+            ? programmerRequestorReferences.map((reference) => computeEntityReferenceId(reference)).filter(Boolean)
+            : Array.isArray(entityData.contentProviders)
+              ? entityData.contentProviders.map((reference) => extractContentProviderId(reference)).filter(Boolean)
+              : [],
+      requestorCount:
+        requestorOptions.length > 0 ? requestorOptions.length : programmerRequestorReferences.filter(Boolean).length,
       raw: entityData
     });
   });
@@ -8019,7 +8445,7 @@ function normalizeConsoleProgrammers(payload) {
 }
 
 function normalizeConsoleRegisteredApplications(payload) {
-  const entities = Array.isArray(payload?.entities) ? payload.entities : Array.isArray(payload) ? payload : [];
+  const entities = normalizeRegisteredApplicationPayloadEntities(payload);
   const seen = new Set();
   const applications = [];
 
@@ -8318,7 +8744,7 @@ function render() {
   );
   const activeOrganization = authenticatedDataContext.activeOrganization;
   const nextThemeStop = getNextThemeStop(activeTheme.stop);
-  const isThemeProcessing = isThemeActivityActive();
+  const isThemeProcessing = isThemeActivityActive(authenticatedDataContext);
   const initials = deriveInitials(name, email);
   const flow = session?.flow && typeof session.flow === "object" ? session.flow : {};
   const avatarMenuAvailable = hasSession;
@@ -8435,6 +8861,7 @@ function render() {
   syncCmTenantPicker(authenticatedDataContext);
   syncProgrammerPicker(authenticatedDataContext);
   syncRequestorPicker(authenticatedDataContext);
+  syncHarpoRequestorConfigurationHydration(authenticatedDataContext);
   syncMvpdPicker(authenticatedDataContext);
   syncPremiumServicesSummary(authenticatedDataContext);
   syncAuthenticatedFieldGroups();
@@ -8481,10 +8908,6 @@ function buildAuthenticatedUserDataContext(session = state.session) {
   const adobePassWorkflowActive = programmerAccess.activeIsAdobePass === true;
   const roles = Array.isArray(consoleContext.roles) ? consoleContext.roles.filter(Boolean) : [];
   const channels = Array.isArray(consoleContext.channels) ? consoleContext.channels.filter(Boolean) : [];
-  const applicationsByProgrammer =
-    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
-      ? consoleContext.applicationsByProgrammer
-      : {};
   const cmuTokenHeaderName = programmerAccess.eligible
     ? firstNonEmptyString([cmContext.cmuTokenHeaderName, CMU_TOKEN_HEADER_NAME])
     : "";
@@ -8504,7 +8927,7 @@ function buildAuthenticatedUserDataContext(session = state.session) {
   const registeredApplications = programmerAccess.eligible
     ? Array.isArray(selectedProgrammerRuntimeContext?.registeredApplications)
       ? selectedProgrammerRuntimeContext.registeredApplications
-      : resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer)
+      : []
     : [];
   const selectedRegisteredApplication = programmerAccess.eligible
     ? resolveSelectedRegisteredApplication(registeredApplications, state.selectedRegisteredApplicationId)
@@ -8525,7 +8948,11 @@ function buildAuthenticatedUserDataContext(session = state.session) {
           normalizeOrganizationIdentifier(state.programmerApplicationsLoadingFor) === normalizeOrganizationIdentifier(selectedProgrammer?.id)
       }
     : { labels: [], loading: false, summary: "" };
-  if (premiumServices.registeredApplicationLoading === true) {
+  if (
+    premiumServices.registeredApplicationLoading === true &&
+    registeredApplications.length === 0 &&
+    (!Array.isArray(premiumServices?.items) || premiumServices.items.length === 0)
+  ) {
     premiumServices.loading = true;
     premiumServices.summary = "Loading premium services…";
   }
@@ -8846,19 +9273,6 @@ function resolveSelectedCmTenant(cmTenants = [], selectedCmTenantId = "") {
   return options.find((option) => option.key === selectedId || option.id === selectedId) || options[0] || null;
 }
 
-function resolveSelectedProgrammerApplications(applicationsByProgrammer = {}, selectedProgrammer = null) {
-  if (!selectedProgrammer || typeof selectedProgrammer !== "object") {
-    return [];
-  }
-
-  const normalizedProgrammerId = String(firstNonEmptyString([selectedProgrammer.id, selectedProgrammer.key]) || "").trim();
-  if (!normalizedProgrammerId || !applicationsByProgrammer || typeof applicationsByProgrammer !== "object") {
-    return [];
-  }
-
-  return Array.isArray(applicationsByProgrammer[normalizedProgrammerId]) ? applicationsByProgrammer[normalizedProgrammerId] : [];
-}
-
 function mergeRegisteredApplicationCatalogs(...collections) {
   const merged = [];
   const seen = new Set();
@@ -8888,13 +9302,20 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
     return [];
   }
 
-  const normalizedProgrammerId = normalizeOrganizationIdentifier(selectedProgrammer.id);
+  const resolvedProgrammerId = firstNonEmptyString([
+    selectedProgrammer.id,
+    selectedProgrammer.programmerId,
+    selectedProgrammer?.raw?.id,
+    selectedProgrammer?.raw?.programmerId,
+    selectedProgrammer?.raw?.["programmer-id"]
+  ]);
+  const normalizedProgrammerId = normalizeOrganizationIdentifier(resolvedProgrammerId);
   const channelOptions = Array.isArray(channels) ? channels : [];
   const programmerRequestorOptions = Array.isArray(selectedProgrammer?.requestorOptions)
     ? selectedProgrammer.requestorOptions
     : Array.isArray(selectedProgrammer?.raw?.requestorOptions)
       ? selectedProgrammer.raw.requestorOptions
-      : [];
+      : deriveProgrammerRequestorOptionsFromChannels(selectedProgrammer?.raw || selectedProgrammer, channelOptions);
   const rawServiceProviders = Array.isArray(selectedProgrammer?.raw?.serviceProviders)
     ? selectedProgrammer.raw.serviceProviders
     : Array.isArray(selectedProgrammer?.raw?.contentProviders)
@@ -8933,7 +9354,7 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
       id,
       name: firstNonEmptyString([option.name, option.label, id]) || id,
       label: firstNonEmptyString([option.label, option.name, id]) || id,
-      programmerId: firstNonEmptyString([option.programmerId, selectedProgrammer.id]),
+      programmerId: firstNonEmptyString([option.programmerId, resolvedProgrammerId]),
       raw: option.raw || option
     });
   };
@@ -8942,7 +9363,7 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
     if (option && typeof option === "object") {
       pushRequestor({
         ...option,
-        programmerId: firstNonEmptyString([option.programmerId, selectedProgrammer.id]),
+        programmerId: firstNonEmptyString([option.programmerId, resolvedProgrammerId]),
         raw: option.raw || option
       });
       return;
@@ -8958,7 +9379,7 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
       id: requestorId,
       name: requestorId,
       label: requestorId,
-      programmerId: selectedProgrammer.id,
+      programmerId: resolvedProgrammerId,
       raw: {
         id: requestorId
       }
@@ -8982,10 +9403,10 @@ function deriveProgrammerRequestorOptions(channels = [], selectedProgrammer = nu
       id: requestorId,
       name: requestorId,
       label: requestorId,
-      programmerId: selectedProgrammer.id,
+      programmerId: resolvedProgrammerId,
       raw: {
         id: requestorId,
-        programmer: selectedProgrammer.id
+        programmer: resolvedProgrammerId
       }
     });
   });
@@ -9037,7 +9458,7 @@ function buildProgrammerVaultLookupContext(session = null, programmerId = "") {
 
 function updateProgrammerRuntimeSnapshots(
   programmerId = "",
-  { session = null, registeredApplications = null, vaultRecord = null } = {}
+  { session = null, registeredApplications = null, registeredApplicationsSource = "", vaultRecord = null } = {}
 ) {
   const normalizedProgrammerId = String(programmerId || "").trim();
   const currentSession = session && typeof session === "object" ? session : state.session && typeof state.session === "object" ? state.session : null;
@@ -9053,32 +9474,34 @@ function updateProgrammerRuntimeSnapshots(
     return null;
   }
 
-  const applicationsByProgrammer =
-    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
-      ? consoleContext.applicationsByProgrammer
-      : {};
-  const liveRegisteredApplications = Array.isArray(registeredApplications)
-    ? registeredApplications
-    : getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) ||
-      resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
-  const effectiveVaultRecord =
-    vaultRecord ||
-    (String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
-      ? state.selectedProgrammerVaultRecord
-      : null);
-  const vaultApplications = hydrateProgrammerApplicationsFromVault(effectiveVaultRecord);
-  const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs(liveRegisteredApplications, vaultApplications);
-  setCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, effectiveRegisteredApplications);
+  const applicationsState = resolveProgrammerRegisteredApplicationsRuntimeState(normalizedProgrammerId, {
+    registeredApplications,
+    vaultRecord
+  });
+  const effectiveRegisteredApplications = applicationsState.registeredApplications;
+  const effectiveRegisteredApplicationsSource =
+    registeredApplicationsSource ||
+    applicationsState.source ||
+    "live";
+  if (applicationsState.hydrated) {
+    setCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, effectiveRegisteredApplications, {
+      source: effectiveRegisteredApplicationsSource,
+      environmentId: consoleContext.environmentId
+    });
+  }
 
   const runtimeServices = buildProgrammerPremiumRuntimeSnapshot({
     selectedProgrammer,
     registeredApplications: effectiveRegisteredApplications,
     cmTenants: Array.isArray(cmContext.tenants) ? cmContext.tenants : [],
     runtimeServices: getCurrentPremiumAppsSnapshot(normalizedProgrammerId),
-    vaultRecord: effectiveVaultRecord
+    vaultRecord: applicationsState.vaultRecord
   });
   if (runtimeServices) {
-    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, runtimeServices);
+    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, runtimeServices, {
+      source: effectiveRegisteredApplicationsSource,
+      environmentId: consoleContext.environmentId
+    });
   }
 
   return {
@@ -9116,7 +9539,6 @@ function maybeAutoSelectPrimaryRestV2ApplicationForProgrammer(
   const preferredApplication =
     buildRegisteredApplicationHealthServiceCandidates(
       "restV2",
-      normalizedProgrammerId,
       resolvedRuntimeServices,
       applications
     )[0] ||
@@ -9142,26 +9564,11 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     return null;
   }
 
-  const applicationsByProgrammer =
-    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
-      ? consoleContext.applicationsByProgrammer
-      : {};
-  const vaultCatalog =
-    String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
-      ? hydrateProgrammerApplicationsFromVault(state.selectedProgrammerVaultRecord)
-      : [];
-  const liveRegisteredApplications = Array.isArray(registeredApplications)
-    ? registeredApplications
-    : getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId) ||
-      resolveSelectedProgrammerApplications(applicationsByProgrammer, selectedProgrammer);
-  const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs(
-    liveRegisteredApplications,
-    vaultCatalog
-  );
-  const hasHydratedApplications =
-    Array.isArray(registeredApplications)
-      || Object.prototype.hasOwnProperty.call(applicationsByProgrammer, normalizedProgrammerId)
-      || vaultCatalog.length > 0;
+  const applicationsState = resolveProgrammerRegisteredApplicationsRuntimeState(normalizedProgrammerId, {
+    registeredApplications
+  });
+  const effectiveRegisteredApplications = applicationsState.registeredApplications;
+  const hasHydratedApplications = applicationsState.hydrated;
   const channels = Array.isArray(consoleContext.channels) ? consoleContext.channels : [];
   const requestors = deriveProgrammerRequestorOptions(channels, selectedProgrammer);
   const cmTenants = Array.isArray(cmContext.tenants) ? cmContext.tenants : [];
@@ -9175,10 +9582,7 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
       selectedProgrammer,
       registeredApplications: effectiveRegisteredApplications,
       cmTenants,
-      vaultRecord:
-        String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
-          ? state.selectedProgrammerVaultRecord
-          : null
+      vaultRecord: applicationsState.vaultRecord
     });
   const premiumServices = derivePremiumServicesSummary({
     selectedProgrammer,
@@ -9186,10 +9590,7 @@ function buildProgrammerVaultSnapshotContext(session = null, programmerId = "", 
     cmTenants,
     selectedRegisteredApplication,
     runtimeServices,
-    vaultRecord:
-      String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === normalizedProgrammerId
-        ? state.selectedProgrammerVaultRecord
-        : null
+    vaultRecord: applicationsState.vaultRecord
   });
 
   return {
@@ -9252,11 +9653,13 @@ async function buildProgrammerVaultSnapshotInput(
       cmTenants: Array.isArray(snapshotContext.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
       existingVaultRecord,
       selectedRegisteredApplication: snapshotContext.selectedRegisteredApplication,
-      serviceApplicationOverrides
+      serviceApplicationOverrides,
+      session: snapshotContext.currentSession
     }),
     serviceKeys,
     {
       session: snapshotContext.currentSession,
+      programmerId: firstNonEmptyString([snapshotContext.selectedProgrammer.id, snapshotContext.selectedProgrammer.key]),
       csrfToken: firstNonEmptyString([snapshotContext.consoleContext?.csrfToken, "NO-TOKEN"])
     }
   );
@@ -9472,6 +9875,7 @@ function hydrateSelectedProgrammerFromVaultRecord(vaultRecord = null, programmer
   const runtimeSnapshot = updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
     session: mergedSession,
     registeredApplications: hydratedApplications,
+    registeredApplicationsSource: "vault",
     vaultRecord
   });
 
@@ -9636,7 +10040,6 @@ function buildPersistableRegisteredApplications(applications = []) {
       scopeLabels: buildRegisteredApplicationScopeLabels(scopes),
       type: firstNonEmptyString([application?.type]),
       serviceProviders: persistedMetadata.serviceProviders,
-      requestor: persistedMetadata.requestor,
       softwareStatement: firstNonEmptyString([
         application?.softwareStatement,
         extractSoftwareStatementFromApplicationData(application?.raw || application)
@@ -10570,9 +10973,14 @@ function syncMvpdPicker(authenticatedDataContext = {}) {
   }
 
   const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  const requestorId = firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]);
   const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  const requestorConfigurationLoadPromise = getHarpoRequestorConfigurationLoadPromise(programmerId, requestorId);
   const configurationStatus =
-    selectedRequestor && (!requestorConfiguration.status || requestorConfiguration.status === "idle")
+    String(requestorConfiguration.status || "") === "loading" ||
+    (String(requestorConfiguration.status || "") === "idle" && Boolean(requestorConfigurationLoadPromise))
       ? "loading"
       : String(requestorConfiguration.status || "");
   const options = Array.isArray(authenticatedDataContext?.mvpdOptions) ? authenticatedDataContext.mvpdOptions : [];
@@ -10614,7 +11022,7 @@ function syncMvpdPicker(authenticatedDataContext = {}) {
       placeholderOption.textContent = "-- No MVPDs available --";
     } else {
       placeholderOption.value = MVPD_PICKER_PLACEHOLDER_VALUE;
-      placeholderOption.textContent = "Choose an MVPD";
+      placeholderOption.textContent = `Choose an MVPD (${options.length} loaded)`;
     }
     mvpdPicker.appendChild(placeholderOption);
 
@@ -10934,14 +11342,15 @@ function getNextThemeStop(currentStop) {
   return String(currentStop || "").toLowerCase() === "dark" ? "light" : "dark";
 }
 
-function isThemeActivityActive() {
+function isThemeActivityActive(authenticatedDataContext = buildAuthenticatedUserDataContext(state.session)) {
   return Boolean(
     state.busy ||
       state.postLoginHydrationInFlight ||
       state.silentAuthInFlight ||
       state.interactiveAuthInFlight ||
       state.avatarAsset.loading ||
-      state.programmerApplicationsLoadingFor
+      state.programmerApplicationsLoadingFor ||
+      isHarpoRequestorConfigurationLoading(authenticatedDataContext)
   );
 }
 
@@ -11752,6 +12161,8 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
   const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
   const selectedRegisteredApplication = authenticatedDataContext?.selectedRegisteredApplication || null;
   const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const harpoRequestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  const harpoRestV2CandidateSignature = buildHarpoRestV2CandidateSignature(authenticatedDataContext);
   const activeOrganization = organizationContext.activeOrganization;
   const name =
     firstNonEmptyString([
@@ -11925,6 +12336,14 @@ function composeDebugConsoleOutput({ ready, hasSession, flow, expired }) {
     `console_programmers_error=${firstNonEmptyString([consoleContext?.errors?.programmers, "n/a"])}`,
     `console_registered_applications_error=${firstNonEmptyString([consoleContext?.applicationErrorsByProgrammer?.[selectedProgrammer?.id], "n/a"])}`,
     `console_hydrated_at=${firstNonEmptyString([consoleContext?.hydratedAt, "n/a"])}`
+  ]);
+
+  pushDebugSection(lines, "harpo", [
+    `harpo_requestor_configuration_status=${firstNonEmptyString([harpoRequestorConfiguration?.status, "n/a"])}`,
+    `harpo_requestor_configuration_error=${firstNonEmptyString([harpoRequestorConfiguration?.error, "n/a"])}`,
+    `harpo_domain_count=${Array.isArray(harpoRequestorConfiguration?.domains) ? harpoRequestorConfiguration.domains.length : 0}`,
+    `harpo_mvpd_count=${Array.isArray(harpoRequestorConfiguration?.mvpds) ? harpoRequestorConfiguration.mvpds.length : 0}`,
+    `harpo_restv2_candidate_count=${harpoRestV2CandidateSignature ? harpoRestV2CandidateSignature.split("|").filter(Boolean).length : 0}`
   ]);
 
   pushDebugSection(lines, "cm", [
@@ -12324,20 +12743,30 @@ function syncResolvedAvatar({ session, profile, idClaims }) {
   const clientId = firstNonEmptyString([session?.flow?.clientId, state.runtimeConfig?.clientId, IMS_CLIENT_ID]);
   const accessToken = firstNonEmptyString([session?.accessToken]);
   const key = hasUsableAvatarContext({ accessToken, candidates }) ? `${accessToken.slice(0, 24)}|${candidates.join("|")}` : "";
+  const now = Date.now();
 
   if (!key) {
     resetAvatarAsset();
     return;
   }
 
-  if (state.avatarAsset.key === key || state.avatarAsset.loading) {
+  if (state.avatarAsset.loading) {
     return;
   }
 
-  const requestId = randomToken();
+  if (state.avatarAsset.key === key) {
+    if (state.avatarAsset.displayUrl) {
+      return;
+    }
+    if (Number(state.avatarAsset.nextRetryAt || 0) > now) {
+      return;
+    }
+  }
+
   if (state.avatarAsset.objectUrl) {
     URL.revokeObjectURL(state.avatarAsset.objectUrl);
   }
+  const requestId = randomToken();
   state.avatarAsset = {
     key,
     sourceUrl: candidates[0] || "",
@@ -12345,7 +12774,8 @@ function syncResolvedAvatar({ session, profile, idClaims }) {
     objectUrl: "",
     mode: "loading",
     loading: true,
-    requestId
+    requestId,
+    nextRetryAt: 0
   };
 
   void resolveAvatarAsset({
@@ -12354,6 +12784,49 @@ function syncResolvedAvatar({ session, profile, idClaims }) {
     clientId,
     candidates
   });
+}
+
+function isProtectedAdobeAvatarUrl(url = "") {
+  const normalized = normalizeAvatarCandidate(url);
+  if (!normalized || /^data:image\//i.test(normalized) || /^blob:/i.test(normalized)) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const hostname = String(parsed.hostname || "").toLowerCase();
+    if (/(^|\.)adobelogin\.com$/i.test(hostname) && /\/ims\/avatar\/download\//i.test(parsed.pathname)) {
+      return true;
+    }
+    if (/^pps\.services\.adobe\.com$/i.test(hostname) && /\/api\/profile\/[^/]+\/image(\/|$)/i.test(parsed.pathname)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+async function fetchAvatarDataUrlViaBackground({ url = "", accessToken = "", clientId = "" } = {}) {
+  const normalizedUrl = normalizeAvatarCandidate(url);
+  if (!normalizedUrl || /^data:image\//i.test(normalizedUrl) || /^blob:/i.test(normalizedUrl)) {
+    return "";
+  }
+
+  try {
+    const response = await sendRuntimeMessageSafe({
+      type: LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE,
+      url: normalizedUrl,
+      accessToken: String(accessToken || "").trim(),
+      clientId: String(clientId || "").trim()
+    });
+    return response?.ok === true && typeof response.dataUrl === "string" && response.dataUrl.startsWith("data:image/")
+      ? response.dataUrl
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 async function resolveAvatarAsset({ requestId, accessToken, clientId, candidates }) {
@@ -12377,7 +12850,8 @@ async function resolveAvatarAsset({ requestId, accessToken, clientId, candidates
     objectUrl: resolved.objectUrl,
     mode: resolved.mode,
     loading: false,
-    requestId
+    requestId,
+    nextRetryAt: resolved.displayUrl ? 0 : Date.now() + AVATAR_RESOLVE_RETRY_COOLDOWN_MS
   };
   if (resolved.displayUrl) {
     log(`Resolved Adobe avatar using ${resolved.mode} source.`);
@@ -12386,8 +12860,6 @@ async function resolveAvatarAsset({ requestId, accessToken, clientId, candidates
 }
 
 async function resolveAvatarDisplayUrl({ accessToken, clientId, candidates }) {
-  let directFallbackUrl = "";
-
   for (const candidate of candidates) {
     if (!candidate) {
       continue;
@@ -12399,6 +12871,20 @@ async function resolveAvatarDisplayUrl({ accessToken, clientId, candidates }) {
         displayUrl: candidate,
         objectUrl: "",
         mode: "direct"
+      };
+    }
+
+    const backgroundDataUrl = await fetchAvatarDataUrlViaBackground({
+      url: candidate,
+      accessToken,
+      clientId
+    });
+    if (backgroundDataUrl) {
+      return {
+        sourceUrl: candidate,
+        displayUrl: backgroundDataUrl,
+        objectUrl: "",
+        mode: "relay"
       };
     }
 
@@ -12415,19 +12901,14 @@ async function resolveAvatarDisplayUrl({ accessToken, clientId, candidates }) {
         mode: "blob"
       };
     }
-
-    if (!directFallbackUrl) {
-      directFallbackUrl = candidate;
+    if (!isProtectedAdobeAvatarUrl(candidate)) {
+      return {
+        sourceUrl: candidate,
+        displayUrl: candidate,
+        objectUrl: "",
+        mode: "direct"
+      };
     }
-  }
-
-  if (directFallbackUrl) {
-    return {
-      sourceUrl: directFallbackUrl,
-      displayUrl: directFallbackUrl,
-      objectUrl: "",
-      mode: "direct"
-    };
   }
 
   return {
@@ -12444,9 +12925,11 @@ async function fetchProtectedAvatarBlobUrl({ url, accessToken, clientId }) {
       method: "GET",
       mode: "cors",
       credentials: "omit",
+      cache: "no-store",
       headers: {
-        ...buildImsProfileHeaders(accessToken, clientId),
-        Accept: "image/*,*/*;q=0.8"
+        Accept: "image/*,*/*;q=0.8",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(clientId ? { "X-IMS-ClientId": clientId, "x-api-key": clientId } : {})
       }
     });
     if (!response.ok) {
@@ -12495,7 +12978,8 @@ function resetAvatarAsset() {
     objectUrl: "",
     mode: "fallback",
     loading: false,
-    requestId: ""
+    requestId: "",
+    nextRetryAt: 0
   };
 }
 
@@ -13613,12 +14097,7 @@ async function maybeRehydrateSelectedProgrammerFromImportedVault() {
     return;
   }
 
-  const consoleContext = currentSession?.console && typeof currentSession.console === "object" ? currentSession.console : {};
-  const applicationsByProgrammer =
-    consoleContext?.applicationsByProgrammer && typeof consoleContext.applicationsByProgrammer === "object"
-      ? consoleContext.applicationsByProgrammer
-      : {};
-  if (Array.isArray(applicationsByProgrammer?.[normalizedProgrammerId])) {
+  if (getCurrentProgrammerApplicationsSnapshot(normalizedProgrammerId, { allowVaultBacked: false })) {
     return;
   }
 
@@ -13671,10 +14150,86 @@ function deriveHarpoRestV2Available(authenticatedDataContext = {}) {
   );
 }
 
+function buildHarpoRestV2CandidateSignature(authenticatedDataContext = {}) {
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  if (!programmerId) {
+    return "";
+  }
+
+  const registeredApplications = Array.isArray(authenticatedDataContext?.registeredApplicationOptions)
+    ? authenticatedDataContext.registeredApplicationOptions.filter(Boolean)
+    : getCurrentProgrammerApplicationsSnapshot(programmerId) || [];
+  const matchingVaultRecord =
+    String(state.selectedProgrammerVaultRecord?.programmerId || "").trim() === programmerId
+      ? state.selectedProgrammerVaultRecord
+      : null;
+  const runtimeServices =
+    getCurrentPremiumAppsSnapshot(programmerId) ||
+    buildProgrammerPremiumRuntimeSnapshot({
+      selectedProgrammer,
+      registeredApplications,
+      cmTenants: Array.isArray(authenticatedDataContext?.cmTenantOptions)
+        ? authenticatedDataContext.cmTenantOptions
+        : [],
+      vaultRecord: matchingVaultRecord
+    });
+  const orderedCandidates = mergeRegisteredApplicationCatalogs(
+    buildRegisteredApplicationHealthServiceCandidates(
+      "restV2",
+      runtimeServices,
+      registeredApplications
+    ),
+    collectRestV2CandidateApplications(registeredApplications),
+    collectRestV2AppCandidatesFromPremiumApps(runtimeServices)
+  );
+
+  return orderedCandidates
+    .map((application) => buildCompactRegisteredApplicationIdentity(application))
+    .filter(Boolean)
+    .join("|");
+}
+
 function getHarpoRequestorConfiguration(authenticatedDataContext = {}) {
   return authenticatedDataContext?.harpoRequestorConfiguration && typeof authenticatedDataContext.harpoRequestorConfiguration === "object"
     ? authenticatedDataContext.harpoRequestorConfiguration
     : createEmptyHarpoRequestorConfiguration();
+}
+
+function isHarpoRequestorConfigurationLoading(authenticatedDataContext = buildAuthenticatedUserDataContext(state.session)) {
+  const selectedProgrammer = authenticatedDataContext?.selectedProgrammer || null;
+  const selectedRequestor = authenticatedDataContext?.selectedRequestor || null;
+  const programmerId = firstNonEmptyString([selectedProgrammer?.id, selectedProgrammer?.key]);
+  const requestorId = firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]);
+  if (!programmerId || !requestorId || !deriveHarpoRestV2Available(authenticatedDataContext)) {
+    return false;
+  }
+
+  const requestorConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
+  const requestorConfigurationLoadPromise = getHarpoRequestorConfigurationLoadPromise(programmerId, requestorId);
+  return (
+    String(requestorConfiguration?.status || "") === "loading" ||
+    (String(requestorConfiguration?.status || "") === "idle" && Boolean(requestorConfigurationLoadPromise))
+  );
+}
+
+async function ensureHarpoProgrammerApplicationsReady(programmerId = "") {
+  const normalizedProgrammerId = String(programmerId || "").trim();
+  if (!normalizedProgrammerId) {
+    return null;
+  }
+
+  let snapshotContext = buildProgrammerVaultSnapshotContext(state.session, normalizedProgrammerId);
+  if (snapshotContext?.selectedProgrammer && snapshotContext.registeredApplicationsHydrated) {
+    void ensureSelectedProgrammerApplicationsLoaded(normalizedProgrammerId).catch((error) => {
+      log(`HARPO programmer application warmup failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+    });
+    return snapshotContext;
+  }
+
+  await ensureSelectedProgrammerApplicationsLoaded(normalizedProgrammerId);
+  snapshotContext = buildProgrammerVaultSnapshotContext(state.session, normalizedProgrammerId);
+  return snapshotContext;
 }
 
 async function hydrateSelectedRequestorConfiguration({ forceRefresh = false } = {}) {
@@ -13696,7 +14251,7 @@ async function hydrateSelectedRequestorConfiguration({ forceRefresh = false } = 
     return createEmptyHarpoRequestorConfiguration();
   }
 
-  await ensureSelectedProgrammerApplicationsLoaded(programmerId);
+  await ensureHarpoProgrammerApplicationsReady(programmerId);
   authenticatedDataContext = buildAuthenticatedUserDataContext(state.session);
   if (
     firstNonEmptyString([authenticatedDataContext?.selectedProgrammer?.id, authenticatedDataContext?.selectedProgrammer?.key]) !== programmerId ||
@@ -13716,10 +14271,8 @@ async function resolveHarpoRequestorConfigurationPayload(programmerId = "", requ
     throw new Error("HARPO requestor configuration is missing the selected programmer or requestor.");
   }
 
-  await ensureSelectedProgrammerApplicationsLoaded(normalizedProgrammerId);
-
+  let snapshotContext = await ensureHarpoProgrammerApplicationsReady(normalizedProgrammerId);
   let currentSession = state.session && typeof state.session === "object" ? state.session : null;
-  let snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId);
   if (!snapshotContext?.selectedProgrammer || !snapshotContext.registeredApplicationsHydrated) {
     throw new Error("HARPO could not hydrate Registered Applications for the selected programmer.");
   }
@@ -13741,92 +14294,15 @@ async function resolveHarpoRequestorConfigurationPayload(programmerId = "", requ
     setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
   }
 
-  const catalogHydrationResult = await settle(() =>
-    hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, registeredApplications, {
-      csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"]),
-      requestorId: normalizedRequestorId
-    })
-  );
-  if (catalogHydrationResult.ok && Array.isArray(catalogHydrationResult.value?.applications) && catalogHydrationResult.value.applications.length > 0) {
-    registeredApplications = catalogHydrationResult.value.applications;
-    currentSession = catalogHydrationResult.value.session || currentSession;
-    state.session = currentSession;
-    if (catalogHydrationResult.value?.changed) {
-      void persistProgrammerVaultSnapshot(currentSession, normalizedProgrammerId, {
-        registeredApplications,
-        source: "harpo-requestor-config"
-      }).catch((error) => {
-        log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
-      });
-    }
-    updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
-      session: currentSession,
-      registeredApplications,
-      vaultRecord: state.selectedProgrammerVaultRecord
-    });
-    snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId, {
-      registeredApplications
-    });
-    premiumApps =
-      snapshotContext?.runtimeServices && typeof snapshotContext.runtimeServices === "object"
-        ? snapshotContext.runtimeServices
-        : getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
-          buildProgrammerPremiumRuntimeSnapshot({
-            selectedProgrammer: snapshotContext?.selectedProgrammer,
-            registeredApplications,
-            cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
-            vaultRecord: state.selectedProgrammerVaultRecord
-          });
-    if (premiumApps) {
-      setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
-    }
-  } else if (!catalogHydrationResult.ok) {
-    log(
-      `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
-        catalogHydrationResult.error
-      )}`
-    );
-  }
-
-  const premiumHydrationResult = await settle(() =>
-    ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
-      registeredApplications,
-      source: "harpo-requestor-config"
-    })
-  );
-  if (!premiumHydrationResult.ok) {
-    log(
-      `LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(
-        premiumHydrationResult.error
-      )}`
-    );
-  }
-  premiumApps =
-    getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
-    premiumApps ||
-    buildProgrammerPremiumRuntimeSnapshot({
-      selectedProgrammer: snapshotContext?.selectedProgrammer,
-      registeredApplications,
-      cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
-      vaultRecord: state.selectedProgrammerVaultRecord
-    });
-  if (premiumApps) {
-    setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
-  }
-
   const restV2HydrationCandidates = mergeRegisteredApplicationCatalogs(
     buildRegisteredApplicationHealthServiceCandidates(
       "restV2",
-      normalizedProgrammerId,
       premiumApps,
       registeredApplications
     ),
     collectRestV2CandidateApplications(registeredApplications),
     collectRestV2AppCandidatesFromPremiumApps(premiumApps)
   );
-  if (restV2HydrationCandidates.length === 0) {
-    throw new Error("The selected programmer does not have a REST API V2 scoped Registered Application.");
-  }
 
   const configurationKey = buildHarpoRequestorConfigurationKey(normalizedProgrammerId, normalizedRequestorId);
   const preferredApplicationId = String(harpoRestV2PreferredAppIdByRequestorKey.get(configurationKey) || "").trim();
@@ -13835,37 +14311,127 @@ async function resolveHarpoRequestorConfigurationPayload(programmerId = "", requ
         buildCompactRegisteredApplicationIdentity(application) === preferredApplicationId
       ) || null
     : null;
-  const orderedCandidates = (() => {
-    const requestorScopedCandidates = buildRegisteredApplicationHealthServiceCandidates(
+  let orderedCandidates = mergeRegisteredApplicationCatalogs(
+    preferredApplication ? [preferredApplication] : [],
+    buildRegisteredApplicationHealthServiceCandidates(
       "restV2",
-      normalizedProgrammerId,
       premiumApps,
       registeredApplications,
       {
-        requestorId: normalizedRequestorId,
         preferredApplication,
         preferredGuid: preferredApplicationId
       }
+    ),
+    restV2HydrationCandidates
+  );
+  let candidateSignature = orderedCandidates
+    .map((application) => buildCompactRegisteredApplicationIdentity(application))
+    .filter(Boolean)
+    .join("|");
+  if (orderedCandidates.length === 0) {
+    const catalogHydrationResult = await settle(() =>
+      hydrateProgrammerRegisteredApplicationsForRuntime(currentSession, normalizedProgrammerId, registeredApplications, {
+        csrfToken: firstNonEmptyString([currentSession?.console?.csrfToken, "NO-TOKEN"])
+      })
     );
-    if (requestorScopedCandidates.length > 0) {
-      return requestorScopedCandidates;
+    if (catalogHydrationResult.ok && Array.isArray(catalogHydrationResult.value?.applications) && catalogHydrationResult.value.applications.length > 0) {
+      registeredApplications = catalogHydrationResult.value.applications;
+      currentSession = catalogHydrationResult.value.session || currentSession;
+      state.session = currentSession;
+      if (catalogHydrationResult.value?.changed) {
+        void persistProgrammerVaultSnapshot(currentSession, normalizedProgrammerId, {
+          registeredApplications,
+          source: "harpo-requestor-config"
+        }).catch((error) => {
+          log(`LoginButton VAULT write failed for ${normalizedProgrammerId}: ${serializeError(error)}`);
+        });
+      }
+      updateProgrammerRuntimeSnapshots(normalizedProgrammerId, {
+        session: currentSession,
+        registeredApplications,
+        vaultRecord: state.selectedProgrammerVaultRecord
+      });
+      snapshotContext = buildProgrammerVaultSnapshotContext(currentSession, normalizedProgrammerId, {
+        registeredApplications
+      });
+      premiumApps =
+        snapshotContext?.runtimeServices && typeof snapshotContext.runtimeServices === "object"
+          ? snapshotContext.runtimeServices
+          : getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+            buildProgrammerPremiumRuntimeSnapshot({
+              selectedProgrammer: snapshotContext?.selectedProgrammer,
+              registeredApplications,
+              cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+              vaultRecord: state.selectedProgrammerVaultRecord
+            });
+      if (premiumApps) {
+        setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
+      }
+    } else if (!catalogHydrationResult.ok) {
+      log(
+        `LoginButton full Registered Application hydration failed for ${normalizedProgrammerId}: ${serializeError(
+          catalogHydrationResult.error
+        )}`
+      );
     }
-    const runtimeOrdered = buildOrderedRestV2CandidateApplicationsFromPremiumApps(
-      premiumApps,
-      normalizedRequestorId,
-      normalizedProgrammerId,
-      preferredApplication
+
+    const premiumHydrationResult = await settle(() =>
+      ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
+        registeredApplications,
+        source: "harpo-requestor-config",
+        serviceKeys: ["restV2"]
+      })
     );
-    if (runtimeOrdered.length > 0) {
-      return runtimeOrdered;
+    if (!premiumHydrationResult.ok) {
+      log(
+        `LoginButton premium service hydration failed for ${normalizedProgrammerId}: ${serializeError(
+          premiumHydrationResult.error
+        )}`
+      );
     }
-    return buildOrderedRestV2CandidateApplications(
-      registeredApplications,
-      normalizedRequestorId,
-      normalizedProgrammerId,
-      preferredApplication
+    premiumApps =
+      getCurrentPremiumAppsSnapshot(normalizedProgrammerId) ||
+      premiumApps ||
+      buildProgrammerPremiumRuntimeSnapshot({
+        selectedProgrammer: snapshotContext?.selectedProgrammer,
+        registeredApplications,
+        cmTenants: Array.isArray(snapshotContext?.cmContext?.tenants) ? snapshotContext.cmContext.tenants : [],
+        vaultRecord: state.selectedProgrammerVaultRecord
+      });
+    if (premiumApps) {
+      setCurrentPremiumAppsSnapshot(normalizedProgrammerId, premiumApps);
+    }
+
+    const refreshedRestV2HydrationCandidates = mergeRegisteredApplicationCatalogs(
+      buildRegisteredApplicationHealthServiceCandidates(
+        "restV2",
+        premiumApps,
+        registeredApplications
+      ),
+      collectRestV2CandidateApplications(registeredApplications),
+      collectRestV2AppCandidatesFromPremiumApps(premiumApps)
     );
-  })();
+    orderedCandidates = mergeRegisteredApplicationCatalogs(
+      preferredApplication ? [preferredApplication] : [],
+      buildRegisteredApplicationHealthServiceCandidates(
+        "restV2",
+        premiumApps,
+        registeredApplications,
+        {
+          preferredApplication,
+          preferredGuid: preferredApplicationId
+        }
+      ),
+      refreshedRestV2HydrationCandidates
+    );
+    candidateSignature = orderedCandidates
+      .map((application) => buildCompactRegisteredApplicationIdentity(application))
+      .filter(Boolean)
+      .join("|");
+  }
+  if (orderedCandidates.length === 0) {
+    throw new Error("The selected programmer does not have a REST API V2 scoped Registered Application.");
+  }
   if (orderedCandidates.length > 0) {
     log(
       `HARPO REST V2 candidates for ${normalizedRequestorId}: ${orderedCandidates
@@ -13876,45 +14442,63 @@ async function resolveHarpoRequestorConfigurationPayload(programmerId = "", requ
   }
 
   let lastError = null;
-  for (const candidate of orderedCandidates) {
-    try {
-      const vaultRecord = await ensureProgrammerPremiumServicesHydrated(normalizedProgrammerId, {
-        registeredApplications,
-        source: "harpo-requestor-config",
-        serviceKeys: ["restV2"],
-        serviceApplicationOverrides: {
-          restV2: candidate
+  const requestCsrfToken = firstNonEmptyString([currentSession?.console?.csrfToken, state.session?.console?.csrfToken, "NO-TOKEN"]);
+  for (let index = 0; index < orderedCandidates.length; index += HARPO_REST_V2_CANDIDATE_BATCH_SIZE) {
+    const candidateBatch = orderedCandidates.slice(index, index + HARPO_REST_V2_CANDIDATE_BATCH_SIZE);
+    const batchAttempts = candidateBatch.map((candidate) =>
+      (async () => {
+        const serviceRecord = await ensureServiceApplicationClientHydrated(
+          normalizedProgrammerId,
+          "restV2",
+          candidate,
+          {
+            session: state.session,
+            csrfToken: requestCsrfToken
+          }
+        );
+        const accessToken = firstNonEmptyString([serviceRecord?.client?.accessToken]);
+        if (!accessToken) {
+          throw new Error("HARPO could not hydrate a REST API V2 access token for the selected programmer.");
         }
-      });
-      const accessToken = firstNonEmptyString([vaultRecord?.services?.restV2?.client?.accessToken]);
-      if (!accessToken) {
-        throw new Error("HARPO could not hydrate a REST API V2 access token for the selected programmer.");
-      }
 
-      const configurationPayload = await fetchHarpoRequestorConfigurationPayload(
-        normalizedRequestorId,
-        accessToken,
-        state.session
-      );
+        const configurationPayload = await fetchHarpoRequestorConfigurationPayload(
+          normalizedRequestorId,
+          accessToken,
+          state.session
+        );
+        return {
+          candidateSignature,
+          vaultRecord: {
+            services: {
+              restV2: serviceRecord
+            }
+          },
+          configurationPayload,
+          registeredApplication: candidate
+        };
+      })().catch((error) => {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        log(
+          `HARPO requestor configuration candidate failed for ${normalizedRequestorId} using ${firstNonEmptyString([
+            candidate?.label,
+            candidate?.name,
+            candidate?.id,
+            "unknown app"
+          ])}: ${serializeError(lastError)}`
+        );
+        throw lastError;
+      })
+    );
+
+    try {
+      const resolvedConfiguration = await Promise.any(batchAttempts);
       harpoRestV2PreferredAppIdByRequestorKey.set(
         configurationKey,
-        buildCompactRegisteredApplicationIdentity(candidate)
+        buildCompactRegisteredApplicationIdentity(resolvedConfiguration?.registeredApplication)
       );
-      return {
-        vaultRecord,
-        configurationPayload,
-        registeredApplication: candidate
-      };
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      log(
-        `HARPO requestor configuration candidate failed for ${normalizedRequestorId} using ${firstNonEmptyString([
-          candidate?.label,
-          candidate?.name,
-          candidate?.id,
-          "unknown app"
-        ])}: ${serializeError(lastError)}`
-      );
+      return resolvedConfiguration;
+    } catch {
+      // Every candidate in this batch failed; continue to the next batch.
     }
   }
 
@@ -13932,18 +14516,30 @@ async function ensureHarpoRequestorConfigurationHydrated(
   const requestorId = firstNonEmptyString([selectedRequestor?.id, selectedRequestor?.key]);
   const requestorLabel = firstNonEmptyString([selectedRequestor?.label, selectedRequestor?.name, requestorId]);
   const configurationKey = buildHarpoRequestorConfigurationKey(programmerId, requestorId);
+  const restV2CandidateSignature = buildHarpoRestV2CandidateSignature(authenticatedDataContext);
   if (!hasRestV2 || !programmerId || !requestorId || !configurationKey) {
     return createEmptyHarpoRequestorConfiguration();
   }
 
   const existingLoadPromise = getHarpoRequestorConfigurationLoadPromise(programmerId, requestorId);
   const cachedConfiguration = forceRefresh ? null : getHarpoCachedRequestorConfiguration(programmerId, requestorId);
-  if (cachedConfiguration?.status === "ready") {
+  const cachedCandidateSignature = String(cachedConfiguration?.restV2CandidateSignature || "").trim();
+  const cachedErrorStillCurrent =
+    cachedConfiguration?.status === "error" &&
+    cachedCandidateSignature &&
+    cachedCandidateSignature === restV2CandidateSignature;
+  if (cachedConfiguration?.status === "ready" || cachedErrorStillCurrent) {
     if (String(state.harpoRequestorConfiguration?.key || "").trim() !== configurationKey) {
       state.harpoRequestorConfiguration = cachedConfiguration;
       render();
     }
     return cachedConfiguration;
+  }
+  if (cachedConfiguration?.status === "error") {
+    log(
+      `HARPO requestor configuration retrying for ${requestorLabel || requestorId} after the REST V2 candidate context changed.`
+    );
+    invalidateHarpoRequestorConfiguration(programmerId, requestorId);
   }
 
   const currentConfiguration = getHarpoRequestorConfiguration(authenticatedDataContext);
@@ -13964,6 +14560,7 @@ async function ensureHarpoRequestorConfigurationHydrated(
     programmerId,
     requestorId,
     requestorLabel,
+    restV2CandidateSignature,
     status: "loading"
   };
   const loadPromise = (async () => {
@@ -13973,6 +14570,10 @@ async function ensureHarpoRequestorConfigurationHydrated(
       const readyConfiguration = setHarpoCachedRequestorConfiguration(programmerId, requestorId, {
         ...createEmptyHarpoRequestorConfiguration(),
         requestorLabel: firstNonEmptyString([configurationPayload?.requestorName, requestorLabel]),
+        restV2CandidateSignature: firstNonEmptyString([
+          resolvedConfiguration?.candidateSignature,
+          restV2CandidateSignature
+        ]),
         status: "ready",
         domains: configurationPayload?.domains,
         reproDomains: configurationPayload?.reproDomains,
@@ -14000,15 +14601,16 @@ async function ensureHarpoRequestorConfigurationHydrated(
       );
       return readyConfiguration || loadingConfiguration;
     } catch (error) {
-      const errorConfiguration = {
+      const errorConfiguration = setHarpoCachedRequestorConfiguration(programmerId, requestorId, {
         ...createEmptyHarpoRequestorConfiguration(),
         key: configurationKey,
         programmerId,
         requestorId,
         requestorLabel,
+        restV2CandidateSignature,
         status: "error",
         error: serializeError(error)
-      };
+      });
       const refreshedContext = buildAuthenticatedUserDataContext(state.session);
       if (
         buildHarpoRequestorConfigurationKey(
@@ -14058,9 +14660,7 @@ function deriveHarpoSafeDomains(authenticatedDataContext = {}) {
 
 // ── HARPO: sync side panel section ────────────────────────────────────────────
 
-function syncHarpoSection(authenticatedDataContext = {}) {
-  if (!harpoContainer) return;
-
+function syncHarpoRequestorConfigurationHydration(authenticatedDataContext = {}) {
   if (
     deriveHarpoRestV2Available(authenticatedDataContext) &&
     authenticatedDataContext?.selectedProgrammer &&
@@ -14068,6 +14668,10 @@ function syncHarpoSection(authenticatedDataContext = {}) {
   ) {
     void ensureHarpoRequestorConfigurationHydrated(authenticatedDataContext);
   }
+}
+
+function syncHarpoSection(authenticatedDataContext = {}) {
+  if (!harpoContainer) return;
 
   const visible = deriveHarpoSectionVisible(authenticatedDataContext);
   harpoContainer.hidden = !visible;
@@ -14246,6 +14850,7 @@ async function openHarpoWorkspace(
     har,
     source,
     fileName,
+    theme: normalizeThemePreference(state.theme),
     programmerName: pName,
     requestorId,
     requestorName,

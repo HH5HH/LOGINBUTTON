@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HARPO Workspace</title>
+    <title>HAR Pass Observatory</title>
     <link rel="stylesheet" href="spectrum.css">
     <link rel="stylesheet" href="harpo.css">
   </head>
@@ -11,27 +11,40 @@
 
     <header class="harpo-topbar">
       <div class="harpo-topbar-identity">
-        <span class="harpo-wordmark">HARPO</span>
-        <span class="harpo-subtitle spectrum-Detail spectrum-Detail--sizeM">HAR &amp; Pass Observatory</span>
+        <div class="harpo-titleStack">
+          <span class="harpo-wordmark">HAR Pass Observatory</span>
+          <span class="harpo-subtitle spectrum-Detail spectrum-Detail--sizeM">Adobe Pass Proxyman</span>
+        </div>
       </div>
       <div id="harpoMeta" class="harpo-topbar-meta"></div>
-      <div class="harpo-topbar-actions">
-        <button id="harpoDownloadBtn" class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM" type="button" hidden>
-          <span class="spectrum-Button-label">⬇ DOWNLOAD HAR</span>
-        </button>
-      </div>
-      <div id="harpoFilterBar" class="harpo-filterBar" hidden>
-        <div class="harpo-filterField harpo-filterField--domain">
-          <label for="harpoDomainFilter" class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Domain</label>
-          <div class="harpo-filterPicker">
-            <select id="harpoDomainFilter" class="harpo-filterSelect" aria-label="Domain filter">
-              <option value="all">ALL</option>
-            </select>
+      <div id="harpoFilterBar" class="harpo-filterBar harpo-omnibox" hidden>
+        <div class="harpo-filterControls">
+          <div class="harpo-filterField harpo-filterField--domain">
+            <label for="harpoDomainFilter" class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Domain</label>
+            <div class="harpo-filterPicker">
+              <select id="harpoDomainFilter" class="harpo-filterSelect" aria-label="Domain filter">
+                <option value="all">ALL</option>
+              </select>
+            </div>
+          </div>
+          <div id="harpoStatusFilters" class="harpo-statusFilters" aria-label="Status filters">
+            <span class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Status</span>
+            <div id="harpoStatusFilterPills" class="harpo-statusFilterPills" role="group" aria-label="HTTP status filters"></div>
           </div>
         </div>
-        <div id="harpoStatusFilters" class="harpo-statusFilters" aria-label="Status filters">
-          <span class="harpo-filterLabel spectrum-FieldLabel spectrum-FieldLabel--sizeM">Status</span>
-          <div id="harpoStatusFilterPills" class="harpo-statusFilterPills" role="group" aria-label="HTTP status filters"></div>
+        <div class="harpo-filterActions">
+          <button id="harpoJuicerBtn" class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-actionBtn harpo-actionBtn--juicer" type="button" hidden title="Download Pass HAR">
+            <span class="harpo-downloadBtn-inner">
+              <span class="harpo-downloadBtn-icon harpo-downloadBtn-icon--juicer" aria-hidden="true">⬇</span>
+              <span class="spectrum-Button-label harpo-downloadBtn-label">Pass</span>
+            </span>
+          </button>
+          <button id="harpoDownloadBtn" class="spectrum-Button spectrum-Button--outline spectrum-Button--primary spectrum-Button--sizeM harpo-actionBtn harpo-actionBtn--download" type="button" hidden title="Download Full HAR">
+            <span class="harpo-downloadBtn-inner">
+              <span class="harpo-downloadBtn-icon" aria-hidden="true">⬇</span>
+              <span class="spectrum-Button-label harpo-downloadBtn-label">Full</span>
+            </span>
+          </button>
         </div>
       </div>
     </header>
@@ -39,6 +52,11 @@
     <div class="harpo-workspace">
 
       <aside class="harpo-sidebar">
+        <div class="harpo-sidebarHeader" aria-hidden="true">
+          <span class="harpo-sidebarHeaderMethod">Method</span>
+          <span class="harpo-sidebarHeaderEvent">Request</span>
+          <span class="harpo-sidebarHeaderStatus">Status</span>
+        </div>
         <div id="harpoCallList" class="harpo-callList" role="list" aria-label="Network calls">
           <div class="harpo-empty">
             <p class="spectrum-Heading spectrum-Heading--sizeM harpo-empty-title">Loading HAR…</p>
@@ -46,6 +64,14 @@
           </div>
         </div>
       </aside>
+
+      <div
+        id="harpoWorkspaceDivider"
+        class="harpo-workspaceDivider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize event list"
+        tabindex="0"></div>
 
       <main class="harpo-detail" id="harpoDetail">
         <div class="harpo-detail-empty">

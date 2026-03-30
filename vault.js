@@ -1,6 +1,6 @@
 export const LOGINBUTTON_VAULT_DB_NAME = "loginbutton-vault";
 export const LOGINBUTTON_VAULT_DB_VERSION = 2;
-export const LOGINBUTTON_VAULT_SCHEMA_VERSION = 9;
+export const LOGINBUTTON_VAULT_SCHEMA_VERSION = 10;
 export const LOGINBUTTON_VAULT_EXPORT_SCHEMA_VERSION = 3;
 export const LOGINBUTTON_VAULT_EXPORT_SCHEMA = "loginbutton-vault-json-v3";
 export const LOGINBUTTON_VAULT_PROGRAMMER_RECORD_TTL_MS = 12 * 60 * 60 * 1000;
@@ -810,10 +810,6 @@ function normalizeCompactApplication(application = null) {
     scopeLabels: uniqueStrings(application.scopeLabels),
     type: firstNonEmptyString([application.type]),
     serviceProviders,
-    requestor: firstNonEmptyString([
-      application.requestor,
-      application.serviceProvider
-    ]),
     softwareStatement: firstNonEmptyString([application.softwareStatement]),
     updatedAt: firstNonEmptyString([application.updatedAt])
   };

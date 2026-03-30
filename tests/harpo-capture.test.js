@@ -52,7 +52,153 @@ test("HARPO seeds MVPD auth domains from Adobe SAMLAssertionConsumer request and
   assert.deepEqual(session.mvpdDomains, ["dishnetwork.com"]);
 });
 
-test("HARPO capture window opens on SAMLAssertionConsumer and closes after return to programmer domain", async () => {
+test("HARPO seeds MVPD auth domains from Adobe Pass partner SSO redirects such as Comcast Xfinity", async () => {
+  const helpers = await loadHarpoCaptureHelpers();
+  let session = helpers.createHarpoCaptureSession({
+    safeDomains: ["adobe.com", "turner.com", "trutv.com"]
+  });
+
+  session = helpers.evaluateHarpoCaptureSession(session, "https://sp.auth.adobe.com/o/client/register", {
+    resourceType: "XHR"
+  }).nextSession;
+
+  session = helpers.updateHarpoCaptureSessionFromResponse(
+    session,
+    "https://api.auth.adobe.com/api/v2/turner/authorize",
+    {
+      status: 302,
+      headers: [
+        {
+          name: "location",
+          value: "https://oauth.xfinity.com/oauth/authorize?client_id=comcast&redirect_uri=https%3A%2F%2Fsp.auth.adobe.com%2Fsp%2Fsaml%2FSAMLAssertionConsumer"
+        }
+      ]
+    }
+  );
+
+  assert.equal(session.adobeEngaged, true);
+  assert.equal(session.externalTrafficWindowOpen, true);
+  assert.deepEqual(session.mvpdDomains, ["xfinity.com"]);
+
+  const decision = helpers.evaluateHarpoCaptureSession(
+    session,
+    "https://oauth.xfinity.com/oauth/authorize?client_id=comcast",
+    {
+      resourceType: "Document"
+    }
+  );
+
+  assert.equal(decision.externalAuthDomainHit, true);
+  assert.equal(decision.allowCapture, true);
+  assert.equal(decision.nextSession.externalTrafficObserved, true);
+});
+
+test("HARPO keeps linked Xfinity follow-on traffic after the programmer callback document closes the broad external window", async () => {
+  const helpers = await loadHarpoCaptureHelpers();
+  let session = helpers.createHarpoCaptureSession({
+    safeDomains: ["adobe.com", "turner.com", "trutv.com"]
+  });
+
+  session = helpers.evaluateHarpoCaptureSession(session, "https://sp.auth.adobe.com/o/client/register", {
+    resourceType: "XHR"
+  }).nextSession;
+
+  session = helpers.updateHarpoCaptureSessionFromResponse(
+    session,
+    "https://api.auth.adobe.com/api/v2/turner/authorize",
+    {
+      status: 302,
+      headers: [
+        {
+          name: "location",
+          value: "https://oauth.xfinity.com/oauth/authorize?client_id=comcast&redirect_uri=https%3A%2F%2Fsp.auth.adobe.com%2Fsp%2Fsaml%2FSAMLAssertionConsumer"
+        }
+      ]
+    }
+  );
+
+  session = helpers.evaluateHarpoCaptureSession(
+    session,
+    "https://oauth.xfinity.com/oauth/authorize?client_id=comcast",
+    {
+      resourceType: "Document"
+    }
+  ).nextSession;
+
+  const callbackDecision = helpers.evaluateHarpoCaptureSession(
+    session,
+    "https://www.trutv.com/tvprovider/callback",
+    {
+      resourceType: "Document"
+    }
+  );
+
+  assert.equal(callbackDecision.allowCapture, true);
+  assert.equal(callbackDecision.returnedToProgrammerDomain, true);
+  assert.equal(callbackDecision.nextSession.externalTrafficWindowOpen, false);
+  session = callbackDecision.nextSession;
+
+  const linkedDecision = helpers.evaluateHarpoCaptureSession(
+    session,
+    "https://api.idm.comcast.net/authorization/state",
+    {
+      resourceType: "Fetch",
+      documentUrl: "https://oauth.xfinity.com/oauth/authorize?client_id=comcast"
+    }
+  );
+
+  assert.equal(linkedDecision.externalAuthDomainHit, true);
+  assert.equal(linkedDecision.allowCapture, true);
+  assert.equal(linkedDecision.nextSession.externalTrafficWindowOpen, false);
+});
+
+test("HARPO persists same-chain external auth requests even when the host is not the seeded MVPD bucket", async () => {
+  const helpers = await loadHarpoCaptureHelpers();
+  const session = helpers.createHarpoCaptureSession({
+    safeDomains: ["adobe.com", "turner.com", "trutv.com"]
+  });
+
+  session.mvpdDomains = ["xfinity.com"];
+
+  assert.equal(
+    helpers.shouldPersistHarpoCapturedEntry(
+      {
+        req: {
+          url: "https://api.idm.comcast.net/authorization/state",
+          resourceType: "Fetch",
+          documentUrl: "https://oauth.xfinity.com/oauth/authorize?client_id=comcast",
+          headers: []
+        },
+        resp: {
+          headers: [],
+          mimeType: "application/json"
+        }
+      },
+      session
+    ),
+    true
+  );
+
+  assert.equal(
+    helpers.shouldPersistHarpoCapturedEntry(
+      {
+        req: {
+          url: "https://metrics.thirdparty.example/pixel",
+          resourceType: "Fetch",
+          headers: []
+        },
+        resp: {
+          headers: [],
+          mimeType: "application/json"
+        }
+      },
+      session
+    ),
+    false
+  );
+});
+
+test("HARPO capture window opens on SAMLAssertionConsumer, closes the broad external window on return, and still keeps same-chain partner calls", async () => {
   const helpers = await loadHarpoCaptureHelpers();
   let session = helpers.createHarpoCaptureSession({
     safeDomains: ["adobe.com", "turner.com", "trutv.com"]
@@ -107,7 +253,8 @@ test("HARPO capture window opens on SAMLAssertionConsumer and closes after retur
   decision = helpers.evaluateHarpoCaptureSession(session, "https://cdn.mvpd.example/login.css", {
     resourceType: "Stylesheet"
   });
-  assert.equal(decision.allowCapture, true);
+  assert.equal(decision.physicalAssetTraffic, true);
+  assert.equal(decision.allowCapture, false);
   assert.equal(decision.nextSession.externalTrafficWindowOpen, true);
   session = decision.nextSession;
 
@@ -130,10 +277,12 @@ test("HARPO capture window opens on SAMLAssertionConsumer and closes after retur
   decision = helpers.evaluateHarpoCaptureSession(session, "https://cdn.mvpd.example/script.js", {
     resourceType: "Script"
   });
-  assert.equal(decision.allowCapture, false);
+  assert.equal(decision.externalAuthDomainHit, true);
+  assert.equal(decision.allowCapture, true);
+  assert.equal(decision.nextSession.externalTrafficWindowOpen, false);
 });
 
-test("HARPO only keeps external auth-flow traffic after Adobe engages", async () => {
+test("HARPO only keeps external auth-flow traffic after Adobe engages while still allowing same-chain post-return partner calls", async () => {
   const helpers = await loadHarpoCaptureHelpers();
   let session = helpers.createHarpoCaptureSession({
     safeDomains: ["adobe.com", "cbs.com", "cbssports.com"]
@@ -188,7 +337,9 @@ test("HARPO only keeps external auth-flow traffic after Adobe engages", async ()
   decision = helpers.evaluateHarpoCaptureSession(session, "https://login.mvpd.example/api/post-return", {
     resourceType: "Fetch"
   });
-  assert.equal(decision.allowCapture, false);
+  assert.equal(decision.externalAuthDomainHit, true);
+  assert.equal(decision.allowCapture, true);
+  assert.equal(decision.nextSession.externalTrafficWindowOpen, false);
 });
 
 test("HARPO captures the first MVPD auth hop when Adobe SAML consumer seeds the provider domain", async () => {
@@ -292,7 +443,8 @@ test("HARPO keeps same-chain MVPD assets when their document context is already 
     }
   );
 
-  assert.equal(decision.allowCapture, true);
+  assert.equal(decision.physicalAssetTraffic, true);
+  assert.equal(decision.allowCapture, false);
   assert.equal(decision.nextSession.externalTrafficObserved, true);
   assert.deepEqual(decision.nextSession.mvpdDomains, [
     "directv.com"

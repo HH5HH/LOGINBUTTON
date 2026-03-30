@@ -95,6 +95,42 @@
     return remainder === 0 ? normalized : `${normalized}${"=".repeat(4 - remainder)}`;
   }
 
+  function looksLikeBase64Value(text = "") {
+    const normalized = String(text || "")
+      .trim()
+      .replace(/[\r\n]/g, "")
+      .replace(/\s+/g, "");
+    if (!normalized || normalized.length < 8) {
+      return false;
+    }
+    return /^[A-Za-z0-9+/_-]+={0,2}$/.test(normalized);
+  }
+
+  function extractDirectBase64CarrierFromText(rawText = "") {
+    const normalized = String(rawText || "").trim();
+    if (!normalized) {
+      return "";
+    }
+    const directCandidates = uniqueStringArray([
+      normalized,
+      tryDecodeURIComponentValue(normalized)
+    ]).filter((candidate) => looksLikeBase64Value(candidate) && !isProbablyJwt(candidate));
+    if (directCandidates.length > 0) {
+      return directCandidates[0];
+    }
+    const parsed = tryParseJson(normalized, null);
+    if (typeof parsed === "string") {
+      const parsedCandidates = uniqueStringArray([
+        parsed,
+        tryDecodeURIComponentValue(parsed)
+      ]).filter((candidate) => looksLikeBase64Value(candidate) && !isProbablyJwt(candidate));
+      if (parsedCandidates.length > 0) {
+        return parsedCandidates[0];
+      }
+    }
+    return "";
+  }
+
   function decodeBase64Binary(value = "") {
     const normalized = sanitizeBase64Value(value);
     if (!normalized || typeof root.atob !== "function") {
@@ -190,10 +226,6 @@
         if (bearerMatch?.[1] && isProbablyJwt(bearerMatch[1])) {
           return bearerMatch[1];
         }
-        const rawMatch = candidate.match(/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/);
-        if (rawMatch?.[1] && isProbablyJwt(rawMatch[1])) {
-          return rawMatch[1];
-        }
       }
       return "";
     }
@@ -233,6 +265,37 @@
     }
     const parsed = tryParseJson(normalized, null);
     return parsed && typeof parsed === "object" ? extractJwtCandidateFromValue(parsed) : "";
+  }
+
+  function extractDirectJwtCarrierFromText(rawText = "") {
+    const normalized = String(rawText || "").trim();
+    if (!normalized) {
+      return "";
+    }
+    const directCandidates = uniqueStringArray([
+      normalized,
+      tryDecodeURIComponentValue(normalized)
+    ]);
+    for (const candidate of directCandidates) {
+      const directToken = extractJwtCandidateFromValue(candidate);
+      if (directToken) {
+        return directToken;
+      }
+    }
+    const parsed = tryParseJson(normalized, null);
+    if (typeof parsed === "string") {
+      const parsedCandidates = uniqueStringArray([
+        parsed,
+        tryDecodeURIComponentValue(parsed)
+      ]);
+      for (const candidate of parsedCandidates) {
+        const directToken = extractJwtCandidateFromValue(candidate);
+        if (directToken) {
+          return directToken;
+        }
+      }
+    }
+    return "";
   }
 
   function decodeJwtSection(token = "", index = 0) {
@@ -349,16 +412,6 @@
           return candidate;
         }
       }
-      const embeddedMatches = normalized.match(/[A-Za-z0-9+/_=-]{8,}/g) || [];
-      for (const match of embeddedMatches) {
-        if (isProbablyJwt(match)) {
-          continue;
-        }
-        const decoded = decodeBase64Utf8Text(match);
-        if (isDecodedTextUsable(decoded, match)) {
-          return match;
-        }
-      }
       return "";
     }
     if (!value || typeof value !== "object") {
@@ -404,8 +457,11 @@
     if (!normalizedInput) {
       return null;
     }
-    const candidate = extractBase64CandidateFromText(normalizedInput) || normalizedInput;
-    const candidateOptions = uniqueStringArray([candidate, tryDecodeURIComponentValue(candidate)]);
+    const candidate = extractBase64CandidateFromText(normalizedInput) || (looksLikeBase64Value(normalizedInput) ? normalizedInput : "");
+    if (!candidate) {
+      return null;
+    }
+    const candidateOptions = uniqueStringArray([candidate, tryDecodeURIComponentValue(candidate)]).filter(looksLikeBase64Value);
     for (const option of candidateOptions) {
       if (isProbablyJwt(option)) {
         continue;
@@ -692,10 +748,11 @@
       originName: pair.name,
       originValue: String(pair.value || "")
     }));
-    if (rawText) {
+    const rawTextSource = extractDirectJwtCarrierFromText(rawText);
+    if (rawTextSource) {
       sources.push({
         originName: rawFieldName,
-        originValue: String(rawText || "")
+        originValue: rawTextSource
       });
     }
 
@@ -724,10 +781,11 @@
       originName: pair.name,
       originValue: String(pair.value || "")
     }));
-    if (rawText) {
+    const rawTextSource = extractDirectBase64CarrierFromText(rawText);
+    if (rawTextSource) {
       sources.push({
         originName: rawFieldName,
-        originValue: String(rawText || "")
+        originValue: rawTextSource
       });
     }
 
@@ -771,6 +829,8 @@
     prettyPrintXml,
     decodeHtmlEntities,
     sanitizeBase64Value,
+    looksLikeBase64Value,
+    extractDirectBase64CarrierFromText,
     decodeBase64Binary,
     decodeBinaryUtf8,
     decodeBase64Utf8Text,
@@ -781,6 +841,7 @@
     isProbablyJwt,
     extractJwtCandidateFromValue,
     extractJwtCandidateFromText,
+    extractDirectJwtCarrierFromText,
     decodeJwtToken,
     isDecodedTextUsable,
     extractBase64CandidateFromValue,

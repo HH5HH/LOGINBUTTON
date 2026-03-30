@@ -4,6 +4,7 @@ import {
   isHarpoAdobeTraffic,
   isHarpoLogoutTraffic,
   isHarpoPhysicalAssetTraffic,
+  isHarpoPassTraffic,
   isHarpoPassSessionTrigger,
   isHarpoPassSamlAssertionConsumer
 } from "./harpo-traffic.js";
@@ -110,6 +111,16 @@ function extractHarpoResponseRedirectDomains(headers = []) {
   return extractHarpoHeaderBuckets(headers, ["location"]);
 }
 
+function extractHarpoPassResponseMvpdDomains(headers = [], session = createHarpoCaptureSession()) {
+  return filterHarpoMvpdDomains(
+    [
+      ...extractHarpoResponseMvpdDomains(headers),
+      ...extractHarpoResponseRedirectDomains(headers)
+    ],
+    session
+  );
+}
+
 function extractHarpoLocationUrls(headers = []) {
   const normalizedHeaders = normalizeHarpoHeaderRecords(headers);
   return normalizedHeaders
@@ -126,7 +137,7 @@ function extractHarpoNestedUrlDomains(value = "", domains = new Set()) {
   }
 
   const hostname = getHarpoTrafficHostname(candidate);
-  if (hostname) {
+  if (hostname && hostname.includes(".")) {
     domains.add(hostname);
     try {
       const parsed = new URL(candidate);
@@ -168,6 +179,39 @@ function isHarpoLinkedToMvpdChain(
   return (
     matchesHarpoDomainList(url, currentSession.mvpdDomains || []) ||
     linkedDomains.some((domain) => matchesHarpoDomainList(domain, currentSession.mvpdDomains || []))
+  );
+}
+
+export function shouldPersistHarpoCapturedEntry(
+  entry = null,
+  session = createHarpoCaptureSession()
+) {
+  const currentSession =
+    session && typeof session === "object" ? session : createHarpoCaptureSession();
+  const request = entry?.request || entry?.req || {};
+  const response = entry?.response || entry?.resp || {};
+  const url = request?.url || "";
+  const resourceType = entry?._resourceType || request?.resourceType || "";
+  const mimeType = response?.content?.mimeType || response?.mimeType || "";
+
+  if (isHarpoPhysicalAssetTraffic({
+    url,
+    resourceType,
+    mimeType,
+    headers: response?.headers || []
+  })) {
+    return false;
+  }
+
+  return (
+    matchesHarpoDomainList(url, currentSession.safeDomains || []) ||
+    isHarpoAdobeTraffic(url) ||
+    isHarpoLinkedToMvpdChain(currentSession, {
+      url,
+      initiatorUrl: request?.initiator?.url || "",
+      documentUrl: request?.documentUrl || "",
+      headers: request?.headers || []
+    })
   );
 }
 
@@ -220,27 +264,25 @@ export function updateHarpoCaptureSessionFromResponse(
     returnDomains: dedupeDomains(currentSession.returnDomains || [])
   };
   const normalizedStatus = Number(status || 0);
-  const responseMvpdDomains = filterHarpoMvpdDomains(
-    extractHarpoResponseMvpdDomains(headers),
-    nextSession
-  );
+  const responseMvpdDomains = extractHarpoPassResponseMvpdDomains(headers, nextSession);
   const returnDomains = dedupeDomains([
     ...extractHarpoResponseReturnDomains(headers),
     ...extractHarpoResponseRedirectDomains(headers)
-  ]).filter((domain) => !isHarpoAdobeTraffic(domain));
+  ])
+    .filter((domain) => !isHarpoAdobeTraffic(domain))
+    .filter((domain) => !matchesHarpoDomainList(domain, responseMvpdDomains));
+  const passTraffic = isHarpoPassTraffic(url);
   const samlAssertionConsumer = isHarpoPassSamlAssertionConsumer(url);
 
-  if (samlAssertionConsumer) {
+  if (passTraffic && responseMvpdDomains.length > 0) {
     nextSession.adobeEngaged = true;
     nextSession.externalTrafficWindowOpen = true;
     nextSession.returnedToProgrammerDomain = false;
     nextSession.logoutDetected = false;
-    if (responseMvpdDomains.length > 0) {
-      nextSession.mvpdDomains = dedupeDomainBuckets([
-        ...(nextSession.mvpdDomains || []),
-        ...responseMvpdDomains
-      ]);
-    }
+    nextSession.mvpdDomains = dedupeDomainBuckets([
+      ...(nextSession.mvpdDomains || []),
+      ...responseMvpdDomains
+    ]);
     if (returnDomains.length > 0) {
       nextSession.returnDomains = dedupeDomains([
         ...(nextSession.returnDomains || []),
@@ -295,9 +337,14 @@ export function evaluateHarpoCaptureSession(
     headers
   });
   const externalAuthTraffic = captureAllTraffic && !safeDomainHit && !adobeTraffic;
+  const linkedExternalAuthTraffic =
+    knownExternalAuthDomainHit &&
+    !safeDomainHit &&
+    !adobeTraffic &&
+    !physicalAssetTraffic;
   const allowedExternalAuthTraffic = externalAuthTraffic && !physicalAssetTraffic;
 
-  if (allowedExternalAuthTraffic) {
+  if (allowedExternalAuthTraffic || linkedExternalAuthTraffic) {
     nextSession.externalTrafficObserved = true;
   }
 
@@ -318,7 +365,13 @@ export function evaluateHarpoCaptureSession(
 
   const allowCapture =
     !physicalAssetTraffic &&
-    (safeDomainHit || adobeTraffic || passSessionTrigger || captureAllTraffic);
+    (
+      safeDomainHit ||
+      adobeTraffic ||
+      passSessionTrigger ||
+      captureAllTraffic ||
+      linkedExternalAuthTraffic
+    );
 
   return {
     nextSession,

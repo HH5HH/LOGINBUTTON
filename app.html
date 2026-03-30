@@ -219,11 +219,7 @@
                   aria-controls="programmerFieldGroupBody"
                 >
                   <span class="field-clusterHeaderCopy">
-                    <span class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">Global Context</span>
-                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Programmer, Requestor, and MVPD</span>
-                    <span class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
-                      Programmer hydration drives the Requestor and MVPD selectors here.
-                    </span>
+                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Adobe Pass</span>
                   </span>
                   <span class="field-clusterIcon" aria-hidden="true">▼</span>
                 </button>
@@ -343,15 +339,13 @@
 
                         <!-- REPRO domain picker (shown when REPRO clicked) -->
                         <div id="harpoReproSection" class="harpo-reproSection" hidden>
-                          <label
-                            for="harpoDomainPicker"
-                            class="spectrum-FieldLabel spectrum-FieldLabel--sizeS harpo-domainLabel"
-                          >
-                            Domains
-                          </label>
                           <div class="harpo-reproToolbar">
                             <div class="org-pickerControl harpo-domainControl">
-                              <select id="harpoDomainPicker" class="org-pickerSelect" aria-label="Select a programmer domain">
+                              <select
+                                id="harpoDomainPicker"
+                                class="org-pickerSelect"
+                                aria-label="Select a requestor domain"
+                              >
                                 <option value="">Choose a domain…</option>
                               </select>
                               <span class="org-pickerChevron" aria-hidden="true">▼</span>
@@ -407,21 +401,17 @@
                   id="cmFieldGroupToggle"
                   type="button"
                   class="field-clusterToggle"
-                  aria-expanded="true"
+                  aria-expanded="false"
                   aria-controls="cmFieldGroupBody"
                 >
                   <span class="field-clusterHeaderCopy">
-                    <span class="spectrum-Detail spectrum-Detail--sizeM field-clusterEyebrow">CM</span>
-                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">CM Access</span>
-                    <span class="spectrum-Body spectrum-Body--sizeS field-clusterMeta">
-                      CMU token and tenant fields live here only.
-                    </span>
+                    <span class="spectrum-Heading spectrum-Heading--sizeS field-clusterTitle">Concurrency Monitoring</span>
                   </span>
                   <span class="field-clusterIcon" aria-hidden="true">▼</span>
                 </button>
               </div>
 
-              <div id="cmFieldGroupBody" class="field-clusterBody">
+              <div id="cmFieldGroupBody" class="field-clusterBody" hidden>
                 <div id="cmuTokenContainer" class="org-pickerCompact" hidden>
                   <p class="spectrum-FieldLabel spectrum-FieldLabel--sizeM org-pickerLabel">CMU API Token</p>
 

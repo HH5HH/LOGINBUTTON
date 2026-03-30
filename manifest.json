@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Login Button",
-  "version": "1.4.65",
+  "version": "1.5.33",
   "description": "Login Button is an MV3 Chrome extension for Adobe IMS authorization-code PKCE sign-in, profile inspection, session diagnostics, and HARPO HAR analysis.",
   "minimum_chrome_version": "114",
   "permissions": [
@@ -38,7 +38,7 @@
     "48": "icons/icon_48.png",
     "128": "icons/icon_128.png"
   },
-  "version_name": "1.4.65",
+  "version_name": "1.5.33",
   "web_accessible_resources": [
     {
       "resources": [

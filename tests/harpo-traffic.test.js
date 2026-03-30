@@ -39,6 +39,45 @@ test("HARPO classifies api.auth.adobe.com REST V2 traffic as PASS", async () => 
   assert.match(classification.pass.docs[0].url, /(developer|experienceleague)\.adobe\.com/);
 });
 
+test("HARPO recognizes official REST V2 partner SSO endpoints from the Adobe Pass spec", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const sessionPartnerClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "POST",
+      url: "https://api.auth.adobe.com/api/v2/turner/sessions/sso/Apple"
+    },
+    _resourceType: "Fetch"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+
+  assert.equal(sessionPartnerClassification.phase, "AuthN");
+  assert.equal(sessionPartnerClassification.label, "Retrieve Partner Authentication Request");
+  assert.equal(sessionPartnerClassification.pass.endpointId, "rest-v2-sessions-partner");
+  assert.equal(sessionPartnerClassification.pass.params.serviceProvider, "turner");
+  assert.equal(sessionPartnerClassification.pass.params.partner, "Apple");
+  assert.match(sessionPartnerClassification.pass.docs.map((doc) => doc.url).join("\n"), /single-sign-on-partner-flows|apple-sso-cookbook-rest-api-v2/);
+
+  const profilePartnerClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "POST",
+      url: "https://api.auth.adobe.com/api/v2/turner/profiles/sso/Apple"
+    },
+    _resourceType: "Fetch"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+
+  assert.equal(profilePartnerClassification.phase, "Profiles");
+  assert.equal(profilePartnerClassification.label, "Retrieve Profile Using Partner Response");
+  assert.equal(profilePartnerClassification.pass.endpointId, "rest-v2-profiles-partner");
+  assert.equal(profilePartnerClassification.pass.params.serviceProvider, "turner");
+  assert.equal(profilePartnerClassification.pass.params.partner, "Apple");
+});
+
 test("HARPO treats Adobe Pass console and management APIs as PASS domain traffic", async () => {
   const helpers = await loadHarpoTrafficHelpers();
 
@@ -109,6 +148,8 @@ test("HARPO flags legacy Adobe Pass endpoints and exposes REST V2 migration guid
   assert.equal(classification.pass.support.status, "legacy");
   assert.equal(classification.pass.migration.title, "REST V2 migration");
   assert.equal(classification.pass.migration.replacementCalls[0].path, "/api/v2/{serviceProvider}/profiles/code/ABC123");
+  assert.match(classification.pass.docs.map((doc) => doc.url).join("\n"), /rest-api-v2-faqs#authentication-phase-v1-to-v2-faq1/);
+  assert.match(String(classification.pass.migration.observations?.[0] || ""), /authentication code/i);
 });
 
 test("HARPO treats AccessEnabler JavaScript as legacy migration-required traffic", async () => {
@@ -220,6 +261,24 @@ test("HARPO drops physical asset entries even when they sit on programmer or MVP
     mvpdDomains: ["directv.com"]
   });
   assert.equal(mvpdAssetClassification, null);
+
+  const stylesheetClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://identity.directv.com/auth/app.css"
+    },
+    response: {
+      headers: [{ name: "content-type", value: "text/css" }],
+      content: { mimeType: "text/css" }
+    },
+    _resourceType: "Stylesheet"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true,
+    mvpdGateOpen: true,
+    mvpdDomains: ["directv.com"]
+  });
+  assert.equal(stylesheetClassification, null);
 });
 
 test("HARPO treats sp.auth host bootstrap endpoints as legacy rather than modern DCR or REST V2", async () => {
@@ -287,7 +346,9 @@ test("HARPO maps legacy sp.auth regcode and indiv device calls to legacy migrati
   });
   assert.equal(regcodeClassification.pass.family, "legacy-v1");
   assert.equal(regcodeClassification.pass.endpointId, "legacy-sp-regcode");
-  assert.match(regcodeClassification.pass.migration.replacementCalls[0].doc.url, /getSessionStatusUsingGET_1/);
+  assert.equal(regcodeClassification.pass.migration.replacementCalls[0].path, "/api/v2/{serviceProvider}/sessions");
+  assert.equal(regcodeClassification.pass.migration.replacementCalls[1].path, "/api/v2/{serviceProvider}/sessions/{code}");
+  assert.match(regcodeClassification.pass.docs.map((doc) => doc.url).join("\n"), /rest-api-v2-faqs#authentication-phase-v1-to-v2-faq1/);
 
   const indivClassification = helpers.classifyHarpoEntry({
     request: {
@@ -304,7 +365,78 @@ test("HARPO maps legacy sp.auth regcode and indiv device calls to legacy migrati
   assert.match(indivClassification.pass.migration.replacementCalls[0].doc.url, /sso-service/);
 });
 
-test("HARPO treats sp.auth SAMLAssertionConsumer as legacy background Adobe Pass plumbing", async () => {
+test("HARPO treats sp.auth adobe-services session as legacy session plumbing with REST V2 session correlation", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const classification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://sp.auth.adobe.com/adobe-services/session"
+    },
+    _resourceType: "XHR"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+
+  assert.equal(classification.pass.family, "legacy-v1");
+  assert.equal(classification.pass.endpointId, "legacy-sp-session");
+  assert.equal(classification.pass.support.status, "legacy");
+  assert.equal(classification.pass.migration.replacementCalls[0].path, "/api/v2/{serviceProvider}/sessions/{code}");
+  assert.equal(classification.pass.migration.replacementCalls[1].path, "/api/v2/{serviceProvider}/sessions/{code}");
+  assert.match(classification.pass.docs.map((doc) => doc.url).join("\n"), /rest-api-v2-faqs#authentication-phase-v1-to-v2-faq1/);
+});
+
+test("HARPO does not mark unmatched Adobe Pass endpoints as supported 2026 REST V2 calls", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const classification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://sp.auth.adobe.com/adobe-services/session-status-helper"
+    },
+    _resourceType: "XHR"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+
+  assert.equal(classification.pass.endpointId, "pass-generic");
+  assert.equal(classification.pass.support.status, "adjacent");
+  assert.match(String(classification.pass.support.note || ""), /does not match a supported 2026 DCR or REST API V2 endpoint/i);
+});
+
+test("HARPO legacy configuration and authorization mappings use Adobe's published V1 to V2 FAQ links", async () => {
+  const helpers = await loadHarpoTrafficHelpers();
+
+  const configClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://api.auth.adobe.com/api/v1/config/CBS_SPORTS"
+    },
+    _resourceType: "XHR"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+  assert.match(configClassification.pass.docs.map((doc) => doc.url).join("\n"), /rest-api-v2-faqs#configuration-phase-v1-to-v2-faq1/);
+  assert.match(String(configClassification.pass.migration.observations?.[0] || ""), /service-provider scoped/i);
+
+  const authzClassification = helpers.classifyHarpoEntry({
+    request: {
+      method: "GET",
+      url: "https://api.auth.adobe.com/api/v1/tokens/authz"
+    },
+    _resourceType: "XHR"
+  }, {
+    adobeGateOpen: true,
+    passGateOpen: true
+  });
+  assert.match(authzClassification.pass.docs.map((doc) => doc.url).join("\n"), /rest-api-v2-faqs#authorization-phase-v1-to-v2-faq1/);
+  assert.match(String(authzClassification.pass.migration.observations?.[0] || ""), /authorize decision/i);
+});
+
+test("HARPO treats sp.auth SAMLAssertionConsumer as an Adobe Pass system call", async () => {
   const helpers = await loadHarpoTrafficHelpers();
 
   const classification = helpers.classifyHarpoEntry({
@@ -320,11 +452,11 @@ test("HARPO treats sp.auth SAMLAssertionConsumer as legacy background Adobe Pass
   });
 
   assert.equal(classification.phase, "SSO");
-  assert.equal(classification.pass.family, "legacy-v1");
-  assert.equal(classification.pass.endpointId, "legacy-sp-saml-assertion-consumer");
-  assert.equal(classification.pass.support.status, "legacy");
-  assert.equal(classification.pass.migration.title, "Modern correlation");
-  assert.match(String(classification.pass.notes[0] || ""), /do not treat this as an active REST API V2 learning endpoint/i);
+  assert.equal(classification.pass.family, "pass-system");
+  assert.equal(classification.pass.endpointId, "system-sp-saml-assertion-consumer");
+  assert.equal(classification.pass.support.status, "system");
+  assert.equal(classification.pass.migration, null);
+  assert.match(String(classification.pass.notes[2] || ""), /does not have a direct one-call REST API V2 replacement/i);
 });
 
 test("HARPO drops known Adobe analytics noise before generic Adobe classification", async () => {
@@ -353,6 +485,18 @@ test("HARPO consumers use the shared traffic helper module", () => {
   assert.match(harpoSource, /const domainBucket = getHarpoTrafficDomainBucket\(hostname\);/);
   assert.match(
     backgroundSource,
-    /import\s*\{\s*createHarpoCaptureSession,\s*deriveHarpoProgrammerDomains,\s*evaluateHarpoCaptureSession,\s*updateHarpoCaptureSessionFromRequest,\s*updateHarpoCaptureSessionFromResponse\s*\}\s*from "\.\/harpo-capture\.js"/
+    /import\s*\{\s*createHarpoCaptureSession,\s*deriveHarpoProgrammerDomains,\s*evaluateHarpoCaptureSession,\s*shouldPersistHarpoCapturedEntry,\s*updateHarpoCaptureSessionFromRequest,\s*updateHarpoCaptureSessionFromResponse\s*\}\s*from "\.\/harpo-capture\.js"/
   );
+  assert.match(harpoSource, /reqHeaders\["x-device-info"\]/);
+  assert.match(harpoSource, /reqHeaders\["user-agent"\]/);
+  assert.match(harpoSource, /reqHeaders\["ad-service-token"\]/);
+  assert.match(harpoSource, /reqHeaders\["adobe-subject-token"\]/);
+  assert.match(harpoSource, /reqHeaders\["ap-partner-framework-status"\]/);
+  assert.match(harpoSource, /reqHeaders\["x-roku-reserved-roku-connect-token"\]/);
+  assert.match(harpoSource, /responseJson\.actionType/);
+  assert.match(harpoSource, /responseJson\.missingParameters/);
+  assert.match(harpoSource, /responseJson\.authenticationRequest/);
+  assert.match(harpoSource, /responseJson\.isTempPass/);
+  assert.match(harpoSource, /responseJson\.profiles/);
+  assert.match(harpoSource, /responseJson\.logouts/);
 });

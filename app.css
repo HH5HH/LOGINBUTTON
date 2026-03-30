@@ -871,7 +871,7 @@ body[data-theme-stop="dark"] {
 .harpo-reproSection {
   margin-top: var(--spectrum-spacing-200);
   display: grid;
-  gap: var(--spectrum-spacing-75);
+  gap: var(--spectrum-spacing-150);
 }
 
 .harpo-reproToolbar {
@@ -895,15 +895,6 @@ body[data-theme-stop="dark"] {
   flex: 1 1 auto;
   min-inline-size: 12rem;
   max-inline-size: 20rem;
-}
-
-.harpo-domainControl .org-pickerSelect {
-  min-inline-size: 100%;
-  padding-inline-start: var(--spectrum-spacing-175);
-  padding-inline-end: calc(var(--spectrum-spacing-600) + 0.75rem);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .harpo-recordToggle {

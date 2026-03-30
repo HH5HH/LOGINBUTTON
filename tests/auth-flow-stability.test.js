@@ -140,6 +140,32 @@ test("authenticated sessions keep the hero avatar menu visible for recovery and 
   assert.match(appSource, /showHero: true,/);
 });
 
+test("Adobe avatar resolution uses an authenticated background relay for protected avatar URLs", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const backgroundSource = fs.readFileSync(path.join(ROOT, "background.js"), "utf8");
+
+  assert.match(appSource, /const LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE = "loginbutton:fetchAvatarDataUrl";/);
+  assert.match(appSource, /const AVATAR_RESOLVE_RETRY_COOLDOWN_MS = 60 \* 1000;/);
+  assert.match(appSource, /nextRetryAt: 0/);
+  assert.match(appSource, /function isProtectedAdobeAvatarUrl\(url = ""\)/);
+  assert.match(appSource, /async function fetchAvatarDataUrlViaBackground\(\{ url = "", accessToken = "", clientId = "" \} = \{\}\)/);
+  assert.match(appSource, /type: LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE,/);
+  assert.match(appSource, /if \(state\.avatarAsset\.key === key\) \{\s*if \(state\.avatarAsset\.displayUrl\) \{\s*return;\s*\}\s*if \(Number\(state\.avatarAsset\.nextRetryAt \|\| 0\) > now\) \{\s*return;\s*\}/s);
+  assert.match(appSource, /nextRetryAt: resolved\.displayUrl \? 0 : Date\.now\(\) \+ AVATAR_RESOLVE_RETRY_COOLDOWN_MS/);
+  assert.match(appSource, /const backgroundDataUrl = await fetchAvatarDataUrlViaBackground\(\{\s*url: candidate,\s*accessToken,\s*clientId\s*\}\);/);
+  assert.match(appSource, /mode: "relay"/);
+  assert.match(appSource, /if \(!isProtectedAdobeAvatarUrl\(candidate\)\) \{\s*return \{\s*sourceUrl: candidate,\s*displayUrl: candidate,/s);
+  assert.doesNotMatch(appSource, /if \(directFallbackUrl\) \{/);
+
+  assert.match(backgroundSource, /const LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE = "loginbutton:fetchAvatarDataUrl"/);
+  assert.match(backgroundSource, /const LOGINBUTTON_AVATAR_MAX_DATAURL_BYTES = 6 \* 1024 \* 1024/);
+  assert.match(backgroundSource, /function normalizeLoginButtonAvatarCandidate\(value = ""\)/);
+  assert.match(backgroundSource, /function buildLoginButtonAvatarFetchAttempts\(accessToken = "", clientId = "", url = ""\)/);
+  assert.match(backgroundSource, /async function fetchLoginButtonAvatarAsDataUrl\(url = "", accessToken = "", clientId = ""\)/);
+  assert.match(backgroundSource, /Avatar relay only supports Adobe avatar hosts\./);
+  assert.match(backgroundSource, /if \(message\?\.type === LOGINBUTTON_FETCH_AVATAR_REQUEST_TYPE\) \{/);
+});
+
 test("authenticated CM and Programmer controls live in separate field containers", () => {
   const appMarkup = fs.readFileSync(path.join(ROOT, "app.html"), "utf8");
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
@@ -192,6 +218,8 @@ test("HARPO waits for selected requestor REST V2 configuration and scopes live t
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
 
   assert.match(appSource, /function deriveHarpoRestV2Available\(authenticatedDataContext = \{\}\)/);
+  assert.match(appSource, /function buildHarpoRestV2CandidateSignature\(authenticatedDataContext = \{\}\)/);
+  assert.match(appSource, /function isHarpoRequestorConfigurationLoading\(authenticatedDataContext = buildAuthenticatedUserDataContext\(state\.session\)\)/);
   assert.match(
     appSource,
     /async function ensureHarpoRequestorConfigurationHydrated\(\s*authenticatedDataContext = buildAuthenticatedUserDataContext\(state\.session\),\s*\{\s*forceRefresh = false\s*\} = \{\}\s*\)/
@@ -204,48 +232,80 @@ test("HARPO waits for selected requestor REST V2 configuration and scopes live t
   assert.match(appSource, /function setHarpoCachedRequestorConfiguration\(programmerId = "", requestorId = "", configuration = null\)/);
   assert.match(appSource, /function getHarpoRequestorConfigurationLoadPromise\(programmerId = "", requestorId = ""\)/);
   assert.match(appSource, /function setHarpoRequestorConfigurationLoadPromise\(programmerId = "", requestorId = "", promise = null\)/);
+  assert.match(appSource, /async function ensureHarpoProgrammerApplicationsReady\(programmerId = ""\)/);
   assert.match(appSource, /async function hydrateSelectedRequestorConfiguration\(\{ forceRefresh = false \} = \{\}\)/);
   assert.match(appSource, /function programmerRegisteredApplicationsNeedHydration\(/);
   assert.match(appSource, /async function hydrateProgrammerRegisteredApplicationsForRuntime\(/);
   assert.match(appSource, /async function hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(/);
   assert.match(appSource, /function getMissingProgrammerRegisteredApplicationReferenceIds\(/);
   assert.match(appSource, /`\/api\/v2\/\$\{encodeURIComponent\(normalizedRequestorId\)\}\/configuration`/);
+  assert.match(appSource, /const HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS = 15000;/);
   assert.match(appSource, /resolveAdobePassServiceBaseUrl\("sp", session\)/);
   assert.doesNotMatch(appSource, /resolveAdobePassServiceBaseUrl\("api", session\)\.replace\(\/\\\/\+\$\/, ""\)\}\/`\s*\)\.toString\(\)/);
   assert.match(appSource, /function buildRestV2Headers\(requestorId, extraHeaders = \{\}\)/);
   assert.match(appSource, /"AP-Device-Identifier": buildDeviceIdentifierPayload\(\)/);
   assert.match(appSource, /"X-Device-Info": encodeDevicePayload\(buildLegacyDeviceInfoPayload\(requestorId\)\)/);
+  assert.match(appSource, /window\.setTimeout\(\(\) => controller\.abort\(\), HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS\)/);
+  assert.match(appSource, /HARPO requestor configuration timed out after \$\{HARPO_REQUESTOR_CONFIGURATION_TIMEOUT_MS\}ms\./);
+  assert.match(appSource, /function getHarpoRequestorConfigurationCollection\(payload = null, collectionKeys = \[\]\)/);
+  assert.match(appSource, /const seenIds = new Set\(\);/);
+  assert.match(appSource, /normalizedMvpd\?\.mvpdId/);
+  assert.match(appSource, /normalizedMvpd\?\.providerId/);
+  assert.match(appSource, /normalizedMvpd\?\.identifier/);
   assert.match(appSource, /const reproDomains = domains\.filter\(\(domain\) => domain !== "adobe\.com"\);/);
   assert.match(appSource, /const safeDomains = dedupeCandidateStrings\(\["adobe\.com", \.\.\.domains\]\)\.filter\(Boolean\);/);
-  assert.match(appSource, /mvpds:\s*normalizeHarpoMvpdList\(requestor\?\.mvpds \|\| responsePayload\?\.mvpds \|\| requestor\?\.mvpd\)/);
+  assert.match(appSource, /const domainCollection = getHarpoRequestorConfigurationCollection\(responsePayload,\s*\["domains", "domain"\]\);/);
+  assert.match(appSource, /mvpds:\s*normalizeHarpoMvpdList\(getHarpoRequestorConfigurationCollection\(responsePayload,\s*\["mvpds", "mvpd"\]\)\)/);
   assert.match(appSource, /collectRestV2AppCandidatesFromPremiumApps\(premiumApps\)/);
   assert.match(appSource, /if \(!registeredApplicationMatchesRequiredScope\(application, "api:client:v2"\)\) \{\s*return;\s*\}/);
   assert.match(appSource, /collectRestV2CandidateApplications\(registeredApplications\)/);
-  assert.match(appSource, /buildOrderedRestV2CandidateApplicationsFromPremiumApps\(/);
   assert.match(appSource, /buildRegisteredApplicationHealthServiceCandidates\(\s*"restV2",/);
   assert.match(appSource, /collectPremiumServiceCandidateApplications\([\s\S]*?\)\.filter\(\(application\) => registeredApplicationMatchesRequiredScope\(application, serviceDefinition\.requiredScope\)\)/);
   assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(currentSession,\s*normalizedProgrammerId,\s*registeredApplications,\s*\{/);
-  assert.match(appSource, /requestorId:\s*normalizedRequestorId/);
   assert.match(appSource, /hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(\s*currentSession,\s*normalizedProgrammerId,\s*baseApplications,/);
   assert.match(appSource, /const bulkHydrationResult = await settle\(\(\) =>\s*fetchRegisteredApplicationsByIds\(/);
   assert.match(appSource, /if \(programmerRefHydrationResult\?\.error\) \{/);
   assert.match(appSource, /function isRetryableAdobePageContextScriptingError\(error = null\)/);
   assert.match(appSource, /if \(isRetryableAdobePageContextScriptingError\(error\) && Date\.now\(\) < deadline\) \{/);
-  assert.match(appSource, /const orderedCandidates = \(\(\) => \{/);
+  assert.match(appSource, /const orderedCandidates = mergeRegisteredApplicationCatalogs\(/);
   assert.match(appSource, /const preferredApplicationId = String\(harpoRestV2PreferredAppIdByRequestorKey\.get\(configurationKey\) \|\| ""\)\.trim\(\);/);
   assert.match(appSource, /harpoRestV2PreferredAppIdByRequestorKey\.set\(\s*configurationKey,/);
-  assert.match(appSource, /serviceApplicationOverrides:\s*\{\s*restV2:\s*candidate\s*\}/);
+  assert.match(appSource, /const HARPO_REST_V2_CANDIDATE_BATCH_SIZE = 2;/);
+  assert.match(appSource, /const programmerServiceClientCacheByKey = new Map\(\);/);
+  assert.match(appSource, /function buildProgrammerServiceClientCacheKey\(/);
+  assert.match(appSource, /function getCachedProgrammerServiceClient\(/);
+  assert.match(appSource, /function setCachedProgrammerServiceClient\(/);
+  assert.match(appSource, /async function ensureServiceApplicationClientHydrated\(/);
+  assert.match(appSource, /ensureServiceApplicationClientHydrated\(\s*normalizedProgrammerId,\s*"restV2",\s*candidate,/);
+  assert.match(appSource, /const candidateBatch = orderedCandidates\.slice\(index,\s*index \+ HARPO_REST_V2_CANDIDATE_BATCH_SIZE\);/);
+  assert.match(appSource, /const resolvedConfiguration = await Promise\.any\(batchAttempts\);/);
   assert.match(appSource, /buildRestV2Headers\(normalizedRequestorId,\s*\{\s*Accept:\s*"application\/json;charset=utf-8"/);
-  assert.match(appSource, /void hydrateSelectedRequestorConfiguration\(\{\s*forceRefresh: true\s*\}\);/);
+  assert.doesNotMatch(appSource, /buildOrderedRestV2CandidateApplicationsFromPremiumApps\(/);
+  assert.doesNotMatch(appSource, /requestorId:\s*normalizedRequestorId/);
+  assert.match(appSource, /void hydrateSelectedRequestorConfiguration\(\);/);
+  assert.match(appSource, /const isThemeProcessing = isThemeActivityActive\(authenticatedDataContext\);/);
+  assert.match(appSource, /function isThemeActivityActive\(authenticatedDataContext = buildAuthenticatedUserDataContext\(state\.session\)\)/);
+  assert.match(appSource, /isHarpoRequestorConfigurationLoading\(authenticatedDataContext\)/);
+  assert.match(appSource, /void ensureSelectedProgrammerApplicationsLoaded\(normalizedProgrammerId\)\.catch\(\(error\) => \{/);
+  assert.match(appSource, /await ensureHarpoProgrammerApplicationsReady\(programmerId\);/);
+  assert.match(appSource, /let snapshotContext = await ensureHarpoProgrammerApplicationsReady\(normalizedProgrammerId\);/);
   assert.match(appSource, /fetchHarpoRequestorConfigurationPayload\(\s*normalizedRequestorId,\s*accessToken,\s*state\.session\s*\)/);
+  assert.match(appSource, /const restV2CandidateSignature = buildHarpoRestV2CandidateSignature\(authenticatedDataContext\);/);
   assert.match(appSource, /if \(currentConfiguration\.key === configurationKey && String\(currentConfiguration\.status \|\| ""\) === "loading"\) \{/);
+  assert.match(appSource, /const cachedErrorStillCurrent =[\s\S]*cachedCandidateSignature === restV2CandidateSignature;/);
+  assert.match(appSource, /if \(cachedConfiguration\?\.status === "ready" \|\| cachedErrorStillCurrent\) \{/);
+  assert.match(appSource, /if \(cachedConfiguration\?\.status === "error"\) \{/);
+  assert.match(appSource, /HARPO requestor configuration retrying for \$\{requestorLabel \|\| requestorId\} after the REST V2 candidate context changed\./);
   assert.match(appSource, /if \(existingLoadPromise\) \{\s*return existingLoadPromise;\s*\}/);
   assert.match(appSource, /HARPO requestor configuration load restarted for \$\{requestorLabel \|\| requestorId\}/);
+  assert.match(appSource, /serviceKeys:\s*\["restV2"\]/);
   assert.match(
     appSource,
     /state\.harpoRequestorConfiguration = loadingConfiguration;\s*setHarpoRequestorConfigurationLoadPromise\(programmerId,\s*requestorId,\s*loadPromise\);\s*render\(\);/
   );
   assert.match(appSource, /promoteHarpoResolvedRestV2Application\(programmerId,\s*resolvedConfiguration\?\.registeredApplication\)/);
+  assert.match(appSource, /const errorConfiguration = setHarpoCachedRequestorConfiguration\(programmerId,\s*requestorId,\s*\{/);
+  assert.match(appSource, /restV2CandidateSignature:\s*firstNonEmptyString\(\[\s*resolvedConfiguration\?\.candidateSignature,\s*restV2CandidateSignature\s*\]\)/);
   assert.match(
     appSource,
     /buildHarpoRequestorConfigurationKey\(\s*firstNonEmptyString\(\[refreshedContext\?\.selectedProgrammer\?\.id,\s*refreshedContext\?\.selectedProgrammer\?\.key\]\),\s*firstNonEmptyString\(\[refreshedContext\?\.selectedRequestor\?\.id,\s*refreshedContext\?\.selectedRequestor\?\.key\]\)\s*\)/
@@ -258,7 +318,19 @@ test("HARPO waits for selected requestor REST V2 configuration and scopes live t
   assert.match(appSource, /requestorName:\s*firstNonEmptyString\(\[selectedRequestor\?\.label, selectedRequestor\?\.name\]\),/);
   assert.match(appSource, /safeDomains/);
   assert.match(appSource, /mvpdOptions/);
+  assert.match(appSource, /syncHarpoRequestorConfigurationHydration\(authenticatedDataContext\);\s*syncMvpdPicker\(authenticatedDataContext\);/);
+  assert.match(appSource, /const requestorConfigurationLoadPromise = getHarpoRequestorConfigurationLoadPromise\(programmerId, requestorId\);/);
+  assert.match(appSource, /String\(requestorConfiguration\.status \|\| ""\) === "loading" \|\|\s*\(String\(requestorConfiguration\.status \|\| ""\) === "idle" && Boolean\(requestorConfigurationLoadPromise\)\)/);
+  assert.match(appSource, /function syncHarpoRequestorConfigurationHydration\(authenticatedDataContext = \{\}\) \{/);
+  assert.doesNotMatch(
+    appSource.match(/function syncHarpoSection\([\s\S]*?\n}\n\nfunction /)?.[0] || "",
+    /void ensureHarpoRequestorConfigurationHydrated\(authenticatedDataContext\);/
+  );
   assert.match(appSource, /Loading MVPDs from REST V2 configuration…/);
+  assert.match(appSource, /Choose an MVPD \(\$\{options\.length\} loaded\)/);
+  assert.match(appSource, /pushDebugSection\(lines, "harpo", \[/);
+  assert.match(appSource, /harpo_requestor_configuration_status=/);
+  assert.match(appSource, /harpo_restv2_candidate_count=/);
 });
 
 test("HARPO keeps a persistent VCR-style record toolbar beside the domain picker", () => {
@@ -332,6 +404,66 @@ test("Programmer hydration retains programmer-owned registered application refs 
   assert.match(fetchProgrammerAppsMatch[0], /const baseApplications = normalizeConsoleRegisteredApplications\(result\?\.data\);/);
   assert.match(fetchProgrammerAppsMatch[0], /hydrateProgrammerRegisteredApplicationsFromProgrammerRefs\(/);
   assert.match(fetchProgrammerAppsMatch[0], /applications:\s*Array\.isArray\(programmerRefHydrationResult\?\.applications\)/);
+
+  const buildConsoleContextMatch = appSource.match(
+    /async function buildConsoleContext\([\s\S]*?\n}\n\nasync function buildCmContext/
+  );
+  assert.ok(buildConsoleContextMatch, "buildConsoleContext should exist");
+  assert.match(buildConsoleContextMatch[0], /applicationsByProgrammer:\s*\{\}/);
+  assert.match(buildConsoleContextMatch[0], /applicationErrorsByProgrammer:\s*\{\}/);
+
+  assert.match(appSource, /const programmerApplicationsLoadPromiseById = new Map\(\);/);
+  assert.match(appSource, /function stampProgrammerRuntimeValue\(/);
+  assert.match(appSource, /function getProgrammerRuntimeValueSource\(/);
+  assert.match(appSource, /function isVaultBackedProgrammerRuntimeValue\(/);
+  assert.match(appSource, /function resolveProgrammerRegisteredApplicationsRuntimeState\(/);
+  assert.match(appSource, /function getCurrentProgrammerApplicationsSnapshot\(programmerId = "", \{ allowVaultBacked = true \} = \{\}\)/);
+  assert.match(appSource, /const liveApplications = getCurrentProgrammerApplicationsSnapshot\(normalizedProgrammerId,\s*\{\s*allowVaultBacked:\s*false\s*\}\);/);
+  assert.match(appSource, /const existingLoadPromise = programmerApplicationsLoadPromiseById\.get\(normalizedProgrammerId\);/);
+  assert.match(appSource, /programmerApplicationsLoadPromiseById\.set\(normalizedProgrammerId,\s*workPromise\);/);
+  assert.match(appSource, /registeredApplicationsSource:\s*"vault"/);
+  assert.match(appSource, /registeredApplicationsSource:\s*"live"/);
+});
+
+test("console programmer normalization mirrors UnderPAR identifier and requestor derivation rules", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /function deriveProgrammerRequestorOptionsFromChannels\(programmerData = null, channels = \[\]\)/);
+  assert.match(
+    appSource,
+    /const normalizedProgrammerId = normalizeOrganizationIdentifier\(\s*firstNonEmptyString\(\[programmerData\.id, programmerData\.programmerId, programmerData\["programmer-id"\]\]\)\s*\)/s
+  );
+  assert.match(
+    appSource,
+    /const channels = channelsResult\.ok \? normalizeConsoleChannels\(channelsResult\.value\?\.data\) : \[\];\s*const programmers = programmersResult\.ok \? normalizeConsoleProgrammers\(programmersResult\.value\?\.data, channels\) : \[\];/s
+  );
+  assert.match(
+    appSource,
+    /const id = firstNonEmptyString\(\[\s*entityData\.id,\s*entityData\.programmerId,\s*entityData\["programmer-id"\],/s
+  );
+  assert.match(appSource, /entityData\["display-name"\]/);
+  assert.match(
+    appSource,
+    /const requestorOptions =\s*Array\.isArray\(entityData\.requestorOptions\) && entityData\.requestorOptions\.length > 0\s*\?\s*entityData\.requestorOptions\s*:\s*deriveProgrammerRequestorOptionsFromChannels\(entityData, channels\);/s
+  );
+  assert.match(appSource, /requestorOptions,/);
+  assert.match(appSource, /requestorIds:\s*requestorOptions\.length > 0/);
+  assert.match(
+    appSource,
+    /const id = firstNonEmptyString\(\[entityData\.id, entityData\.channelId, entityData\["channel-id"\], entity\?\.id, entity\?\.key\]\)/
+  );
+  assert.match(
+    appSource,
+    /programmerId: firstNonEmptyString\(\[\s*computeEntityReferenceId\(entityData\.programmer\),\s*entityData\.programmerId,\s*entityData\["programmer-id"\]\s*\]\)/s
+  );
+  assert.match(
+    appSource,
+    /const resolvedProgrammerId = firstNonEmptyString\(\[\s*selectedProgrammer\.id,\s*selectedProgrammer\.programmerId,/s
+  );
+  assert.match(
+    appSource,
+    /: deriveProgrammerRequestorOptionsFromChannels\(selectedProgrammer\?\.raw \|\| selectedProgrammer, channelOptions\);/
+  );
 });
 
 test("LoginButton keeps Content Provider selection user-driven across reloads", () => {
@@ -350,6 +482,9 @@ test("LoginButton keeps Content Provider selection user-driven across reloads", 
   );
   assert.ok(requestorChangeSectionMatch, "requestor change handler should exist");
   assert.doesNotMatch(requestorChangeSectionMatch[0], /persistSelectedProgrammerVaultSelections/);
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /invalidateHarpoRequestorConfiguration\(programmerId,\s*nextValue\)/);
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /forceRefresh:\s*true/);
+  assert.match(requestorChangeSectionMatch[0], /void hydrateSelectedRequestorConfiguration\(\);/);
 
   const mvpdChangeSectionMatch = appSource.match(
     /if \(mvpdPicker\) \{[\s\S]*?\n}\n\nif \(cmTenantPicker\)/
@@ -386,12 +521,16 @@ test("programmer selection pre-hydrates available premium service clients before
   assert.match(appSource, /function updateProgrammerRuntimeSnapshots\(/);
   assert.match(appSource, /function buildProgrammerPremiumRuntimeSnapshot\(/);
   assert.match(appSource, /async function ensureProgrammerPremiumServicesHydrated\(/);
-  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(currentSession,\s*normalizedProgrammerId,\s*existingApplications,\s*\{/);
+  assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(currentSession,\s*normalizedProgrammerId,\s*liveApplications,\s*\{/);
   assert.match(appSource, /hydrateProgrammerRegisteredApplicationsForRuntime\(mergedSession,\s*normalizedProgrammerId,\s*hydratedApplications,\s*\{/);
   assert.match(appSource, /collectAvailableVaultServiceKeys\(snapshotContext\.registeredApplications\)/);
   assert.match(appSource, /vaultServiceRecordReadyForDefinition\(/);
-  assert.match(appSource, /const vaultHydrationResult = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /const (?:premiumHydrationResult|hydrationResult) = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
   assert.match(appSource, /registeredApplications:\s*readyApplications/);
+  assert.match(appSource, /const provisionalRuntimeSnapshot = updateProgrammerRuntimeSnapshots\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /registeredApplications:\s*hydratedApplications,/);
+  assert.match(appSource, /maybeAutoSelectPrimaryRestV2ApplicationForProgrammer\(normalizedProgrammerId,\s*\{\s*registeredApplications:\s*provisionalRuntimeSnapshot\?\.registeredApplications,/);
+  assert.match(appSource, /state\.programmerApplicationsLoadingFor = "";\s*render\(\);\s*\n\s*const catalogHydrationResult = await settle/s);
   assert.match(appSource, /const hydrationKey = buildProgrammerPremiumHydrationKey\(normalizedProgrammerId,\s*\{/);
   assert.match(appSource, /const hydrationResult = await settle\(\(\) =>\s*ensureProgrammerPremiumServicesHydrated\(normalizedProgrammerId,\s*\{/);
   assert.match(appSource, /source:\s*"programmer-selection"/);
@@ -404,7 +543,7 @@ test("programmer selection pre-hydrates available premium service clients before
   assert.match(appSource, /source:\s*"programmer-selection"/);
 });
 
-test("requestor-scoped REST V2 mapping survives vault hydration without repicking the selected app on requestor change", () => {
+test("requestor changes keep REST V2 app ownership programmer-scoped across vault hydration", () => {
   const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
   const vaultSource = fs.readFileSync(path.join(ROOT, "vault.js"), "utf8");
 
@@ -413,13 +552,13 @@ test("requestor-scoped REST V2 mapping survives vault hydration without repickin
   );
   assert.ok(requestorChangeSectionMatch, "requestor change handler should exist");
   assert.doesNotMatch(requestorChangeSectionMatch[0], /maybeAlignSelectedRegisteredApplicationToRequestor\(nextValue\);/);
-  assert.match(requestorChangeSectionMatch[0], /const programmerId = firstNonEmptyString\(\[state\.selectedProgrammerId\]\);/);
-  assert.match(requestorChangeSectionMatch[0], /invalidateHarpoRequestorConfiguration\(programmerId,\s*nextValue\);/);
-  assert.match(
-    requestorChangeSectionMatch[0],
-    /void hydrateSelectedRequestorConfiguration\(\{\s*forceRefresh:\s*true\s*\}\);/
-  );
-  assert.match(appSource, /function resolveMappedRestV2ApplicationForRequestor\(/);
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /const programmerId = firstNonEmptyString\(\[state\.selectedProgrammerId\]\);/);
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /invalidateHarpoRequestorConfiguration\(programmerId,\s*nextValue\);/);
+  assert.doesNotMatch(requestorChangeSectionMatch[0], /forceRefresh:\s*true/);
+  assert.match(requestorChangeSectionMatch[0], /void hydrateSelectedRequestorConfiguration\(\);/);
+  assert.doesNotMatch(appSource, /function registeredApplicationSupportsServiceProviderId\(/);
+  assert.doesNotMatch(appSource, /function resolveMappedRestV2ApplicationForRequestor\(/);
+  assert.doesNotMatch(appSource, /function registeredApplicationSupportsRequestor\(/);
   assert.match(appSource, /function extractApplicationGuid\(/);
   assert.match(appSource, /function resolveApplicationGuidFromEntityData\(/);
   assert.match(appSource, /function normalizeRegisteredApplicationRuntimeRecord\(/);
@@ -435,12 +574,16 @@ test("requestor-scoped REST V2 mapping survives vault hydration without repickin
   assert.match(appSource, /guid:\s*firstNonEmptyString\(\[applicationGuid, application\?\.guid, application\?\.id, application\?\.key\]\),/);
   assert.match(appSource, /serviceProviders:\s*persistedMetadata\.serviceProviders,/);
   assert.match(appSource, /serviceProviders:\s*persistedMetadata\.serviceProviders,/);
-  assert.match(appSource, /requestor:\s*persistedMetadata\.requestor,/);
+  assert.doesNotMatch(appSource, /requestor:\s*persistedMetadata\.requestor,/);
+  assert.match(appSource, /function normalizeRegisteredApplicationPayloadEntities\(/);
+  assert.match(appSource, /if \(payload && typeof payload === "object"\) \{/);
+  assert.match(appSource, /const singleEntity = normalizeEntity\(payload\);/);
   assert.match(appSource, /function buildVaultProgrammerRegisteredApplicationCatalog\(/);
   assert.match(appSource, /const selectedApplications = buildVaultProgrammerRegisteredApplicationCatalog\(/);
   assert.match(appSource, /function mergeRegisteredApplicationCatalogs\(/);
-  assert.match(appSource, /const vaultCatalog =/);
-  assert.match(appSource, /const effectiveRegisteredApplications = mergeRegisteredApplicationCatalogs\(/);
+  assert.match(appSource, /const applicationsState = resolveProgrammerRegisteredApplicationsRuntimeState\(normalizedProgrammerId,\s*\{/);
+  assert.match(appSource, /const effectiveRegisteredApplications = applicationsState\.registeredApplications;/);
+  assert.doesNotMatch(appSource, /const vaultCatalog =/);
   assert.match(appSource, /const selectedProgrammerId = firstNonEmptyString\(\[selectedProgrammer\?\.id, selectedProgrammer\?\.key\]\);/);
   assert.match(appSource, /const selectedRequestorId = firstNonEmptyString\(\[selectedRequestor\?\.id, selectedRequestor\?\.key\]\);/);
   assert.match(appSource, /const selectedHarpoConfigurationKey = buildHarpoRequestorConfigurationKey\(selectedProgrammerId, selectedRequestorId\);/);
@@ -448,18 +591,23 @@ test("requestor-scoped REST V2 mapping survives vault hydration without repickin
   assert.match(appSource, /const cachedHarpoRequestorConfiguration = selectedHarpoConfigurationKey/);
   assert.match(appSource, /const existingLoadPromise = getHarpoRequestorConfigurationLoadPromise\(programmerId, requestorId\);/);
   assert.match(appSource, /const loadPromise = \(async \(\) => \{/);
+  assert.match(appSource, /const catalogApplicationIds = new Set\(/);
+  assert.match(appSource, /const leftCatalog = Number\(Boolean\(leftId && catalogApplicationIds\.has\(leftId\)\)\);/);
+  assert.match(appSource, /const rightCatalog = Number\(Boolean\(rightId && catalogApplicationIds\.has\(rightId\)\)\);/);
+  assert.doesNotMatch(appSource, /pushValue\(programmerId\);/);
+  assert.match(appSource, /const orderedCandidates = mergeRegisteredApplicationCatalogs\(/);
   assert.match(appSource, /promoteHarpoResolvedRestV2Application\(programmerId,\s*resolvedConfiguration\?\.registeredApplication\);/);
   assert.match(appSource, /collectRestV2CandidateApplications\(registeredApplications\)/);
   assert.doesNotMatch(appSource, /state\.selectedRegisteredApplicationId = resolvedRegisteredApplicationId;/);
   assert.doesNotMatch(appSource, /serviceProviders\[0\]/);
 
-  assert.match(vaultSource, /LOGINBUTTON_VAULT_SCHEMA_VERSION = 9;/);
+  assert.match(vaultSource, /LOGINBUTTON_VAULT_SCHEMA_VERSION = 10;/);
   assert.match(vaultSource, /function extractApplicationGuid\(/);
   assert.match(vaultSource, /guid: guid \|\| id \|\| key,/);
   assert.match(vaultSource, /reason: "schema-version-changed"/);
   assert.match(vaultSource, /const serviceProviders = uniqueStrings\(/);
   assert.match(vaultSource, /serviceProviders,/);
-  assert.match(vaultSource, /requestor: firstNonEmptyString\(\[/);
+  assert.doesNotMatch(vaultSource, /requestor: firstNonEmptyString\(\[/);
   assert.doesNotMatch(vaultSource, /serviceProviders\[0\]/);
 });
 
@@ -558,6 +706,20 @@ test("authenticated programmer context uses the VAULT-backed runtime snapshot wh
   assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.registeredApplications/);
   assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.premiumServices/);
   assert.match(authenticatedContextSectionMatch[0], /selectedProgrammerRuntimeContext\?\.requestors/);
+  assert.match(authenticatedContextSectionMatch[0], /premiumServices\.registeredApplicationLoading === true &&\s*registeredApplications\.length === 0/);
+});
+
+test("programmer runtime snapshots prefer explicit or live application catalogs before VAULT seeding", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /function resolveProgrammerRegisteredApplicationsRuntimeState\(/);
+  assert.match(appSource, /const explicitRegisteredApplications = Array\.isArray\(registeredApplications\)/);
+  assert.match(appSource, /const liveRuntimeApplications = getCurrentProgrammerApplicationsSnapshot\(normalizedProgrammerId,\s*\{\s*allowVaultBacked:\s*false\s*\}\s*\);/);
+  assert.match(appSource, /if \(explicitRegisteredApplications\) \{/);
+  assert.match(appSource, /if \(Array\.isArray\(liveRuntimeApplications\)\) \{/);
+  assert.match(appSource, /if \(Array\.isArray\(runtimeApplications\)\) \{/);
+  assert.match(appSource, /if \(vaultApplications\.length > 0\) \{/);
+  assert.match(appSource, /if \(applicationsState\.hydrated\) \{\s*setCurrentProgrammerApplicationsSnapshot/s);
 });
 
 test("popup-monitor auth captures redirects from webNavigation before Chrome swaps in an error page", () => {
@@ -636,6 +798,9 @@ test("selected registered application drives service hydration for scope-matched
   assert.match(appSource, /path: "\/entity\/bulkRetrieve"/);
   assert.match(appSource, /method: "POST"/);
   assert.match(appSource, /"Content-Type": "application\/json"/);
+  assert.match(appSource, /preferPageContext:\s*true/);
+  assert.match(appSource, /allowTemporaryPageContext = false/);
+  assert.match(appSource, /allowTemporaryPageContext\s*\n?\s*\}/);
   assert.match(appSource, /fetchRegisteredApplicationBulkRetrieve\(session, normalizedApplicationId/);
   assert.match(appSource, /const normalizedApplicationId = extractApplicationGuid\(applicationId\);/);
   assert.match(appSource, /async function enrichRegisteredApplicationForHydration\(/);
@@ -652,6 +817,29 @@ test("selected registered application drives service hydration for scope-matched
   assert.match(selectionPersistSectionMatch[0], /const selectedServiceKeys = VAULT_DCR_SERVICE_DEFINITIONS\.filter/);
   assert.match(selectionPersistSectionMatch[0], /registeredApplicationMatchesRequiredScope\(selectedRegisteredApplication, definition\.requiredScope\)/);
   assert.match(selectionPersistSectionMatch[0], /serviceKeys: selectedServiceKeys/);
+});
+
+test("programmer hydration never opens a temporary Adobe page-context tab", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /async function hydrateProgrammerRegisteredApplicationsForRuntime\([\s\S]*allowTemporaryPageContext = false/s);
+  assert.match(appSource, /fetchRegisteredApplicationsByIds\(currentSession, missingApplicationIds, \{[\s\S]*allowTemporaryPageContext/s);
+  assert.match(appSource, /fetchRegisteredApplicationDetails\(session, normalizedApplicationId, \{[\s\S]*allowTemporaryPageContext/s);
+  assert.match(appSource, /fetchRegisteredApplicationSoftwareStatement\(session, normalizedApplicationId, \{[\s\S]*allowTemporaryPageContext/s);
+  assert.doesNotMatch(appSource, /fetchRegisteredApplicationBulkRetrieve\([\s\S]*allowTemporaryPageContext:\s*true/s);
+  assert.doesNotMatch(appSource, /fetchRegisteredApplicationsByIds\([\s\S]*allowTemporaryPageContext:\s*true/s);
+});
+
+test("console fetch fallback can prefer Adobe page context before direct extension fetch", () => {
+  const appSource = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+
+  assert.match(appSource, /async function fetchConsoleJsonWithFallback\(\{/);
+  assert.match(appSource, /preferPageContext = false/);
+  assert.match(appSource, /allowTemporaryPageContext = false/);
+  assert.match(appSource, /if \(preferPageContext === true\) \{/);
+  assert.match(appSource, /const pageContextResult = await settle\(\(\) => tryPageContext\(\)\);/);
+  assert.match(appSource, /allowTemporaryTab: allowTemporaryPageContext === true/);
+  assert.match(appSource, /throw buildConsoleFallbackError\(directResult\.error, pageContextResult\.error\);/);
 });
 
 test("premium service cheat sheet button reports real DCR or CM readiness instead of placeholder copy", () => {

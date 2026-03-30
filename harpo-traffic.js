@@ -37,6 +37,30 @@ const PASS_DOCS = Object.freeze({
     label: "REST API V2 flows overview",
     url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-flows/rest-api-v2-flows-overview"
   },
+  restV2Faqs: {
+    label: "REST API V2 FAQs",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs"
+  },
+  restV2FaqsConfigMigration: {
+    label: "REST API V2 FAQs: V1 to V2 configuration migration",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs#configuration-phase-v1-to-v2-faq1"
+  },
+  restV2FaqsAuthnMigration: {
+    label: "REST API V2 FAQs: V1 to V2 authentication migration",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs#authentication-phase-v1-to-v2-faq1"
+  },
+  restV2FaqsPreauthMigration: {
+    label: "REST API V2 FAQs: V1 to V2 preauthorization migration",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs#preauthorization-phase-v1-to-v2-faq1"
+  },
+  restV2FaqsAuthzMigration: {
+    label: "REST API V2 FAQs: V1 to V2 authorization migration",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs#authorization-phase-v1-to-v2-faq1"
+  },
+  restV2FaqsLogoutMigration: {
+    label: "REST API V2 FAQs: V1 to V2 logout migration",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-faqs#logout-phase-v1-to-v2-faq1"
+  },
   dcrOverview: {
     label: "DCR overview",
     url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-dcr/dynamic-client-registration-overview"
@@ -48,6 +72,34 @@ const PASS_DOCS = Object.freeze({
   dcrToken: {
     label: "Retrieve access token",
     url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-dcr/rest-api-dcr-apis/dynamic-client-registration-apis-retrieve-access-token"
+  },
+  authorizationHeader: {
+    label: "Authorization header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-authorization"
+  },
+  apDeviceIdentifierHeader: {
+    label: "AP-Device-Identifier header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-ap-device-identifier"
+  },
+  adobeSubjectTokenHeader: {
+    label: "Adobe-Subject-Token header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-adobe-subject-token"
+  },
+  adServiceTokenHeader: {
+    label: "AD-Service-Token header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-ad-service-token"
+  },
+  apPartnerFrameworkStatusHeader: {
+    label: "AP-Partner-Framework-Status header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-ap-partner-framework-status"
+  },
+  apVisitorIdentifierHeader: {
+    label: "AP-Visitor-Identifier header",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-ap-visitor-identifier"
+  },
+  xRokuReservedRokuConnectTokenHeader: {
+    label: "X-Roku-Reserved-Roku-Connect-Token header",
+    url: "https://experienceleague.adobe.com/zh-hant/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-x-roku-reserved-roku-connect-token"
   },
   config: {
     label: "Retrieve configuration",
@@ -100,6 +152,14 @@ const PASS_DOCS = Object.freeze({
   tempPassIdentity: {
     label: "AP-TempPass-Identity header",
     url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-appendix/rest-api-v2-appendix-headers/rest-api-v2-appendix-headers-ap-temppass-identity"
+  },
+  partnerFlows: {
+    label: "Single sign-on using partner flows",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/rest-apis/rest-api-v2/rest-api-v2-flows/rest-api-v2-single-sign-on-access-flows/rest-api-v2-single-sign-on-partner-flows"
+  },
+  appleSsoCookbook: {
+    label: "Apple SSO Cookbook (REST API V2)",
+    url: "https://experienceleague.adobe.com/en/docs/pass/authentication/integration-guide-programmers/standard-features/sso-access/partner-sso/apple-sso/apple-sso-cookbook-rest-api-v2"
   },
   ssoService: {
     label: "Adobe Pass SSO service",
@@ -220,13 +280,15 @@ const HARPO_PHYSICAL_ASSET_RESOURCE_TYPES = new Set([
   "font",
   "image",
   "manifest",
-  "media"
+  "media",
+  "stylesheet"
 ]);
 
 const HARPO_PHYSICAL_ASSET_EXTENSIONS = new Set([
   "apng",
   "avif",
   "bmp",
+  "css",
   "cur",
   "eot",
   "gif",
@@ -265,6 +327,7 @@ const HARPO_PHYSICAL_ASSET_MIME_TYPES = new Set([
   "application/font-sfnt",
   "application/font-woff",
   "application/font-woff2",
+  "text/css",
   "application/vnd.ms-fontobject",
   "application/x-font-opentype",
   "application/x-font-ttf",
@@ -393,14 +456,18 @@ const PASS_RULES = [
     pathTemplate: "/adobe-services/config/{requestorId}",
     summary: "Uses the old adobe-services config endpoint instead of REST API V2 configuration.",
     purpose: "Load configuration and MVPD data through the legacy sp.auth config surface.",
-    docs: [PASS_DOCS.restV2ConfigInteractive, PASS_DOCS.legacyOverview],
+    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.restV2ConfigInteractive, PASS_DOCS.restV2FaqsConfigMigration],
     notes: [
-      "This is legacy configuration traffic and should be translated to REST API V2 configuration.",
-      "HARPO will no longer mark adobe-services config as supported."
+      "Adobe's V1 to V2 FAQ maps legacy configuration retrieval to the REST API V2 service-provider configuration API.",
+      "The V2 configuration is service-provider scoped and platform specific, not a user-specific artifact."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Replace adobe-services config with the REST API V2 configuration operation.",
+      summary: "Replace adobe-services config with GET /api/v2/{serviceProvider}/configuration, which Adobe documents as the direct V1 to V2 configuration migration.",
+      observations: [
+        "REST API V2 configuration remains the MVPD picker source, but it is retrieved for a service provider instead of a requestor-scoped legacy host surface.",
+        "Adobe recommends brief memory caching of configuration rather than persistent client storage."
+      ],
       replacementCalls: [
         {
           method: "GET",
@@ -456,20 +523,30 @@ const PASS_RULES = [
     pathTemplate: "/reggie/v1/{requestorId}/regcode",
     summary: "Legacy regcode generation on the sp.auth host.",
     purpose: "Create or inspect the old second-screen registration-code flow on the legacy Adobe Pass host.",
-    docs: [PASS_DOCS.restV2SessionStatusInteractive, PASS_DOCS.legacyRegcode, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyRegcode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration, PASS_DOCS.sessionsCreate, PASS_DOCS.sessionsRetrieve],
     notes: [
       "HARPO treats regcode traffic on sp.auth as legacy V1 clientless flow.",
-      "Use the REST API V2 session-status model to translate this into the supported authentication-session contract."
+      "Adobe's V1 to V2 FAQ splits regcode behavior into authentication session creation and authentication session retrieval by code."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Translate regcode handling to the REST API V2 session-status model.",
+      summary: "Translate regcode handling to REST API V2 authentication sessions: create the session to mint the authentication code, then retrieve session information by that code when needed.",
+      observations: [
+        "The legacy registration code concept becomes the REST API V2 authentication code.",
+        "Code creation and code inspection are no longer hidden behind one regcode endpoint."
+      ],
       replacementCalls: [
+        {
+          method: "POST",
+          pathTemplate: "/api/v2/{serviceProvider}/sessions",
+          label: "Create authentication session",
+          doc: PASS_DOCS.sessionsCreate
+        },
         {
           method: "GET",
           pathTemplate: "/api/v2/{serviceProvider}/sessions/{code}",
-          label: "Get session status",
-          doc: PASS_DOCS.restV2SessionStatusInteractive
+          label: "Retrieve authentication session",
+          doc: PASS_DOCS.sessionsRetrieve
         }
       ]
     },
@@ -479,38 +556,66 @@ const PASS_RULES = [
     }
   },
   {
-    id: "legacy-sp-saml-assertion-consumer",
+    id: "legacy-sp-session",
     methods: ["GET", "POST"],
-    phase: "SSO",
-    label: "Legacy SAML Assertion Consumer",
+    phase: "AuthN",
+    label: "Legacy Session Helper",
     family: "legacy-v1",
     familyLabel: "Legacy Host / V1",
-    pathTemplate: "/sp/saml/SAMLAssertionConsumer",
-    summary: "Background SAML assertion consumer on the legacy sp.auth host.",
-    purpose: "Accept MVPD SAML responses for older Adobe Pass browser and passive-authentication flows running behind the scenes.",
-    docs: [PASS_DOCS.legacyMonitoring, PASS_DOCS.legacyPassiveAuthn, PASS_DOCS.legacyOverview],
+    pathTemplate: "/adobe-services/session",
+    summary: "Uses the old adobe-services session helper on the sp.auth host instead of a supported REST API V2 session endpoint.",
+    purpose: "Participate in older Adobe Pass authentication-session plumbing such as polling session state or supplying missing inputs before redirecting the browser flow.",
+    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration, PASS_DOCS.sessionsResume, PASS_DOCS.sessionsRetrieve],
     notes: [
-      "Do not treat this as an active REST API V2 learning endpoint in HARPO.",
-      "Adobe documents that this endpoint should not be monitored because it requires a real MVPD SAML response and otherwise returns 503.",
-      "This is legacy Adobe Pass SAML plumbing, not a customer-facing DCR or REST API V2 operation."
+      "This endpoint is not present in the attached 2026 DCR or REST API V2 specifications.",
+      "HARPO treats it as legacy Adobe Pass session plumbing and correlates it to the REST API V2 sessions family instead of marking it as a supported modern call."
     ],
     migration: {
-      title: "Modern correlation",
-      summary: "Correlate this legacy callback to the supported REST API V2 authentication flow, but do not model the ACS callback itself as a learnable REST V2 call.",
+      title: "REST V2 correlation",
+      summary: "Map this legacy session helper to the REST API V2 sessions family. The nearest supported equivalents are session retrieval for polling and session resume when missing parameters are being supplied.",
+      observations: [
+        "The exact V2 equivalent depends on whether the legacy call is reading session state or resubmitting inputs such as MVPD, domain, or redirect URL.",
+        "Neither the old sp.auth host nor /adobe-services/session itself is part of the supported 2026 REST API V2 surface."
+      ],
       replacementCalls: [
         {
-          method: "GUIDE",
-          pathTemplate: "REST API V2 create authentication session",
-          label: "Create authentication session",
-          doc: PASS_DOCS.sessionsCreate
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/sessions/{code}",
+          label: "Retrieve authentication session",
+          doc: PASS_DOCS.sessionsRetrieve
         },
         {
-          method: "GUIDE",
-          pathTemplate: "REST API V2 perform authentication in user agent",
-          label: "Perform authentication in user agent",
-          doc: PASS_DOCS.authenticateUserAgent
+          method: "POST",
+          pathTemplate: "/api/v2/{serviceProvider}/sessions/{code}",
+          label: "Resume authentication session",
+          doc: PASS_DOCS.sessionsResume
         }
       ]
+    },
+    match({ hostname, pathname }) {
+      return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) && pathname === "/adobe-services/session";
+    }
+  },
+  {
+    id: "system-sp-saml-assertion-consumer",
+    methods: ["GET", "POST"],
+    phase: "SSO",
+    label: "Adobe Pass SAML Assertion Consumer",
+    family: "pass-system",
+    familyLabel: "Adobe Pass System",
+    pathTemplate: "/sp/saml/SAMLAssertionConsumer",
+    summary: "Adobe Pass browser-SAML system endpoint on the sp.auth host.",
+    purpose: "Broker the browser between Adobe Pass and the selected TV Provider (MVPD), then consume the returning SAML assertion during browser-based sign-in and passive-authentication flows.",
+    docs: [PASS_DOCS.legacyPassiveAuthn, PASS_DOCS.legacyAuthenticate, PASS_DOCS.legacyMonitoring, PASS_DOCS.legacyOverview],
+    notes: [
+      "This endpoint is the Adobe Pass system traffic cop for browser SAML handoff: it can redirect the browser to the selected MVPD or receive the returning SAML assertion from that MVPD.",
+      "Use the live Location, Referer, Origin, Cookie, and SAML form fields to determine which leg of the handoff the customer is currently on.",
+      "This system endpoint does not have a direct one-call REST API V2 replacement. Correlate it to the surrounding modern session and user-agent authentication flow instead of treating the ACS callback itself as a migrate-away endpoint."
+    ],
+    support: {
+      status: "system",
+      label: "Adobe Pass system call",
+      note: "HARPO treats this as Adobe Pass browser-SAML system plumbing. It must be fully decoded and correlated, but it is not a direct migrate-away endpoint in the way legacy V1 API calls are."
     },
     match({ hostname, pathname }) {
       return /^sp\.auth(?:-staging)?\.adobe\.com$/i.test(hostname) && pathname === "/sp/saml/SAMLAssertionConsumer";
@@ -650,6 +755,55 @@ const PASS_RULES = [
     }
   },
   {
+    id: "rest-v2-sessions-partner",
+    methods: ["POST"],
+    phase: "AuthN",
+    label: "Retrieve Partner Authentication Request",
+    family: "rest-v2",
+    familyLabel: "REST V2",
+    pathTemplate: "/api/v2/{serviceProvider}/sessions/sso/{partner}",
+    summary: "Requests the next partner SSO action by sending partner framework status to Adobe Pass.",
+    purpose: "Convert device-level partner framework state into the next Adobe Pass-directed action, such as authorize, resume, authenticate, or partner_profile.",
+    docs: [
+      PASS_DOCS.partnerFlows,
+      PASS_DOCS.appleSsoCookbook,
+      PASS_DOCS.authorizationHeader,
+      PASS_DOCS.apDeviceIdentifierHeader,
+      PASS_DOCS.apPartnerFrameworkStatusHeader
+    ],
+    notes: [
+      "This official REST API V2 endpoint drives partner SSO flows and requires partner-specific framework state to be sent in AP-Partner-Framework-Status.",
+      "The response can stay on the fast path with actionName=authorize, fall into partner_profile, or fall back to authenticate or resume when partner SSO is not usable."
+    ],
+    match({ pathname }) {
+      return matchPath(pathname, /^\/api\/v2\/([^/]+)\/sessions\/sso\/([^/]+)\/?$/);
+    }
+  },
+  {
+    id: "rest-v2-profiles-partner",
+    methods: ["POST"],
+    phase: "Profiles",
+    label: "Retrieve Profile Using Partner Response",
+    family: "rest-v2",
+    familyLabel: "REST V2",
+    pathTemplate: "/api/v2/{serviceProvider}/profiles/sso/{partner}",
+    summary: "Submits the partner authentication response and returns the resulting Adobe Pass profile map.",
+    purpose: "Create or retrieve an Adobe Pass profile from the partner framework response without dropping into a legacy SAML consumer model.",
+    docs: [
+      PASS_DOCS.partnerFlows,
+      PASS_DOCS.appleSsoCookbook,
+      PASS_DOCS.authorizationHeader,
+      PASS_DOCS.apPartnerFrameworkStatusHeader
+    ],
+    notes: [
+      "The request body carries the partner authentication response, currently documented as a SAMLResponse form field.",
+      "This is the partner-SSO profile creation path documented by Adobe Pass, not an undocumented infrastructure callback."
+    ],
+    match({ pathname }) {
+      return matchPath(pathname, /^\/api\/v2\/([^/]+)\/profiles\/sso\/([^/]+)\/?$/);
+    }
+  },
+  {
     id: "rest-v2-profiles",
     methods: ["GET"],
     phase: "Profiles",
@@ -773,14 +927,18 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/config/{requestorId}",
     summary: "Legacy requestor configuration and MVPD list retrieval.",
     purpose: "Return the configured MVPD list for a legacy clientless integration.",
-    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyConfig, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyConfig, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsConfigMigration, PASS_DOCS.config],
     notes: [
       "Adobe’s current public overview says older SDK and REST integrations were supported through the end of 2025.",
-      "Modern integrations should move to REST API V2 configuration under DCR protection."
+      "Adobe's V1 to V2 FAQ maps GET /api/v1/config/{requestorId} to GET /api/v2/{serviceProvider}/configuration."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Replace the requestor-scoped legacy config call with the DCR-protected service-provider configuration API.",
+      summary: "Replace the requestor-scoped legacy config call with the DCR-protected service-provider configuration API that Adobe documents in the V1 to V2 configuration FAQ.",
+      observations: [
+        "The modern configuration response is service-provider scoped and platform specific.",
+        "Adobe recommends brief memory caching of configuration, not long-lived client persistence."
+      ],
       replacementCalls: [
         {
           method: "GET",
@@ -804,20 +962,30 @@ const PASS_RULES = [
     pathTemplate: "/reggie/v1/{requestorId}/regcode",
     summary: "Legacy second-screen registration code creation.",
     purpose: "Create the short code and login URL used by clientless device authentication.",
-    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyRegcode, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyRegcode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration, PASS_DOCS.sessionsCreate, PASS_DOCS.sessionsRetrieve],
     notes: [
-      "REST V2 replaces regcode creation with authentication session creation and a first-class authentication code.",
-      "The migration is not one-for-one because REST V2 separates session creation from user-agent authentication."
+      "Adobe's V1 to V2 FAQ maps registration-code creation to session creation and registration-code lookup to session retrieval by code.",
+      "REST V2 turns the old registration code into an authentication code and separates it from the browser authentication step."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Create a REST V2 authentication session instead of creating a legacy regcode record.",
+      summary: "Create a REST V2 authentication session to mint the authentication code, and retrieve the session by code when translating old regcode lookups.",
+      observations: [
+        "The legacy regcode endpoint mixed creation and lookup responsibilities.",
+        "REST API V2 models those as separate session APIs."
+      ],
       replacementCalls: [
         {
           method: "POST",
           pathTemplate: "/api/v2/{serviceProvider}/sessions",
           label: "Create authentication session",
           doc: PASS_DOCS.sessionsCreate
+        },
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/sessions/{code}",
+          label: "Retrieve authentication session",
+          doc: PASS_DOCS.sessionsRetrieve
         }
       ]
     },
@@ -835,14 +1003,18 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/authenticate",
     summary: "Legacy authentication bootstrap tied to regcode and MVPD selection.",
     purpose: "Inform Adobe Pass about MVPD selection and continue the legacy second-screen login flow.",
-    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyAuthenticate, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyOverview, PASS_DOCS.legacyAuthenticate, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration, PASS_DOCS.sessionsCreate, PASS_DOCS.sessionsResume, PASS_DOCS.authenticateUserAgent],
     notes: [
-      "REST V2 splits this work into session creation or resume plus the explicit user-agent authentication redirect endpoint.",
-      "In practice, modern migration usually means replacing a single legacy authenticate call with a small REST V2 sequence."
+      "Adobe's V1 to V2 FAQ maps initiate authentication to an explicit session sequence plus a browser authentication endpoint.",
+      "In modern flows, the authentication code and the user-agent redirect are separate first-class steps."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Use REST V2 session APIs plus the explicit browser authentication endpoint instead of legacy /api/v1/authenticate.",
+      observations: [
+        "A single V1 authenticate call often becomes create or resume session, then perform authentication in user agent.",
+        "This is where REST API V2 makes the browser redirect step explicit."
+      ],
       replacementCalls: [
         {
           method: "POST",
@@ -886,6 +1058,10 @@ const PASS_RULES = [
     migration: {
       title: "REST V2 migration",
       summary: "Model TempPass with REST V2 session, profile, and authorization flows rather than calling legacy freepreview.",
+      observations: [
+        "This legacy endpoint does not have a single one-call REST API V2 replacement.",
+        "The supported modern model is to stay inside normal REST API V2 profile and decision flows."
+      ],
       replacementCalls: [
         {
           method: "POST",
@@ -921,14 +1097,18 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/checkauthn/{code}",
     summary: "Legacy second-screen completion check keyed by registration code.",
     purpose: "Confirm that a browser-side authentication flow has produced a usable authenticated session for the device.",
-    docs: [PASS_DOCS.legacyCheckAuthnCode, PASS_DOCS.profileCode, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyCheckAuthnCode, PASS_DOCS.profileCode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration],
     notes: [
-      "This is the legacy polling shape that REST V2 replaces with a code-based profile lookup.",
+      "Adobe's V1 to V2 FAQ maps this legacy polling shape directly to the code-based profile lookup.",
       "If you still depend on registration codes, the integration is still on the legacy clientless model."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Use the code-based REST V2 profile lookup instead of the legacy second-screen checkauthn endpoint.",
+      observations: [
+        "The authentication code becomes the polling key in REST API V2.",
+        "The response now returns a full profile surface rather than a token-presence check."
+      ],
       replacementCalls: [
         {
           method: "GET",
@@ -952,20 +1132,36 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/checkauthn",
     summary: "Legacy token-presence check for whether the device is authenticated.",
     purpose: "Determine whether an unexpired AuthN token exists for the device context.",
-    docs: [PASS_DOCS.legacyCheckAuthn, PASS_DOCS.profiles, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyCheckAuthn, PASS_DOCS.profiles, PASS_DOCS.profileMvpd, PASS_DOCS.profileCode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration],
     notes: [
-      "REST V2 replaces token-presence checks with profile retrieval.",
+      "Adobe's V1 to V2 FAQ groups check authentication, profile retrieval, and user metadata under the REST API V2 profiles family.",
       "The modern response surface is richer because it exposes MVPD, expiry, type, and attributes."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Check active profiles instead of polling a legacy AuthN token check.",
+      summary: "Use REST API V2 profile endpoints instead of polling a legacy AuthN token check.",
+      observations: [
+        "One V2 profiles family now covers authentication status, profile retrieval, and user metadata access.",
+        "The specific endpoint choice depends on whether the app knows the selected MVPD or only the authentication code."
+      ],
       replacementCalls: [
         {
           method: "GET",
           pathTemplate: "/api/v2/{serviceProvider}/profiles",
           label: "Retrieve profiles",
           doc: PASS_DOCS.profiles
+        },
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/profiles/{mvpd}",
+          label: "Retrieve profile for specific mvpd",
+          doc: PASS_DOCS.profileMvpd
+        },
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/profiles/code/{code}",
+          label: "Retrieve profile for specific code",
+          doc: PASS_DOCS.profileCode
         }
       ]
     },
@@ -983,14 +1179,18 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/tokens/authn",
     summary: "Legacy readback of the stored authentication token.",
     purpose: "Return the active AuthN token metadata for the current device context.",
-    docs: [PASS_DOCS.legacyAuthnToken, PASS_DOCS.profileMvpd, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyAuthnToken, PASS_DOCS.profiles, PASS_DOCS.profileMvpd, PASS_DOCS.profileCode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration],
     notes: [
-      "REST V2 does not expose raw AuthN token retrieval as a first-class integration step.",
+      "Adobe's V1 to V2 FAQ folds raw AuthN token readback into the modern profiles family.",
       "Modern debugging should inspect profile state instead of raw legacy token storage."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Inspect a REST V2 profile rather than retrieving the legacy AuthN token directly.",
+      summary: "Inspect REST API V2 profiles rather than retrieving the legacy AuthN token directly.",
+      observations: [
+        "Profiles replace the legacy raw-token mental model.",
+        "The V2 profile response also includes user metadata, not just authentication state."
+      ],
       replacementCalls: [
         {
           method: "GET",
@@ -1003,6 +1203,12 @@ const PASS_RULES = [
           pathTemplate: "/api/v2/{serviceProvider}/profiles/{mvpd}",
           label: "Retrieve profile for specific mvpd",
           doc: PASS_DOCS.profileMvpd
+        },
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/profiles/code/{code}",
+          label: "Retrieve profile for specific code",
+          doc: PASS_DOCS.profileCode
         }
       ]
     },
@@ -1020,14 +1226,17 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/tokens/authz",
     summary: "Legacy readback of the stored authorization token.",
     purpose: "Return the current authorization token metadata for the device and resource context.",
-    docs: [PASS_DOCS.legacyAuthzToken, PASS_DOCS.authorize, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyAuthzToken, PASS_DOCS.authorize, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthzMigration],
     notes: [
-      "REST V2 collapses token retrieval into the authorize decision response instead of separate token endpoints.",
+      "Adobe's V1 to V2 FAQ maps authorization token retrieval into the decisions authorize response.",
       "If you still read /tokens/authz directly, the flow is still anchored in legacy clientless semantics."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Use the REST V2 authorize decisions response rather than retrieving a stored legacy AuthZ token.",
+      observations: [
+        "One authorize decision response now covers authorization initiation, decision retrieval, and media token return."
+      ],
       replacementCalls: [
         {
           method: "POST",
@@ -1051,14 +1260,17 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/mediatoken",
     summary: "Legacy media token retrieval endpoint.",
     purpose: "Fetch the short-lived media token used to authorize playback under the legacy flow.",
-    docs: [PASS_DOCS.legacyMediaToken, PASS_DOCS.authorize, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyMediaToken, PASS_DOCS.authorize, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthzMigration],
     notes: [
-      "REST V2 returns media token material as part of the authorization decisions response.",
+      "Adobe's V1 to V2 FAQ maps short media token retrieval into the same decisions authorize response.",
       "There is no need for a separate modern mediatoken endpoint."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Use the REST V2 authorization decision response as the playback token source.",
+      observations: [
+        "The media token is part of the authorize response, not a standalone follow-up call."
+      ],
       replacementCalls: [
         {
           method: "POST",
@@ -1082,14 +1294,17 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/authorize",
     summary: "Legacy full authorization request for a resource or resource fragment.",
     purpose: "Obtain the authorization response required before playback under the legacy clientless flow.",
-    docs: [PASS_DOCS.legacyAuthorize, PASS_DOCS.authorize, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyAuthorize, PASS_DOCS.authorize, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthzMigration],
     notes: [
-      "This is the clearest signal that the integration is still on the legacy authorize contract instead of normalized decisions.",
-      "The modern replacement is the REST V2 decisions authorize endpoint."
+      "Adobe's V1 to V2 FAQ maps initiate authorization to the REST API V2 decisions authorize endpoint.",
+      "The modern endpoint returns the decision and media token in one response."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Replace legacy authorize with REST V2 decisions authorize for the selected MVPD.",
+      observations: [
+        "One V2 call now covers three legacy purposes: initiate authorization, retrieve the authorization decision, and retrieve the media token."
+      ],
       replacementCalls: [
         {
           method: "POST",
@@ -1113,26 +1328,23 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/preauthorize",
     summary: "Legacy entitlement preflight for a list of resources.",
     purpose: "Determine which resources can likely be shown as available before running a full authorize call.",
-    docs: [PASS_DOCS.legacyPreauthorize, PASS_DOCS.preauthorize, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyPreauthorize, PASS_DOCS.preauthorize, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsPreauthMigration],
     notes: [
-      "REST V2 keeps the feature but renames it into the normalized decisions API family.",
-      "A code-scoped legacy preauthorize call also indicates a second-screen legacy flow."
+      "Adobe's V1 to V2 FAQ maps first-screen and second-screen preauthorize calls to the REST API V2 preauthorization decisions endpoint.",
+      "REST V2 keeps the feature but moves it into the normalized decisions family."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Move preauthorization checks to the REST V2 decisions API family.",
+      summary: "Move preauthorization checks to the REST API V2 decisions preauthorize endpoint.",
+      observations: [
+        "This migration is one of the most direct: V1 preauthorize becomes V2 decisions/preauthorize."
+      ],
       replacementCalls: [
         {
           method: "POST",
           pathTemplate: "/api/v2/{serviceProvider}/decisions/preauthorize/{mvpd}",
           label: "Retrieve preauthorization decisions",
           doc: PASS_DOCS.preauthorize
-        },
-        {
-          method: "GET",
-          pathTemplate: "/api/v2/{serviceProvider}/profiles/code/{code}",
-          label: "Retrieve profile for specific code",
-          doc: PASS_DOCS.profileCode
         }
       ]
     },
@@ -1150,14 +1362,17 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/logout",
     summary: "Legacy device logout that clears stored AuthN and AuthZ tokens.",
     purpose: "Remove the Adobe-side device tokens from legacy storage.",
-    docs: [PASS_DOCS.legacyLogout, PASS_DOCS.logout, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyLogout, PASS_DOCS.logout, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsLogoutMigration],
     notes: [
       "Adobe documents a key legacy limitation: this endpoint clears Adobe-side storage but does not call the MVPD logout endpoint.",
-      "REST V2 models the follow-up MVPD browser action explicitly."
+      "The V1 to V2 FAQ maps logout to the REST API V2 logout family, which explicitly models the browser follow-up."
     ],
     migration: {
       title: "REST V2 migration",
       summary: "Use the REST V2 logout endpoint so the response can direct any required MVPD-side logout action.",
+      observations: [
+        "REST API V2 makes the next-action browser step explicit instead of silently stopping at Adobe-side token cleanup."
+      ],
       replacementCalls: [
         {
           method: "GET",
@@ -1181,20 +1396,36 @@ const PASS_RULES = [
     pathTemplate: "/api/v1/tokens/usermetadata",
     summary: "Legacy metadata retrieval for the authenticated user.",
     purpose: "Return MVPD-provided user attributes such as zip, ratings, household ID, or user ID.",
-    docs: [PASS_DOCS.legacyUserMetadata, PASS_DOCS.profileMvpd, PASS_DOCS.legacyReference],
+    docs: [PASS_DOCS.legacyUserMetadata, PASS_DOCS.profiles, PASS_DOCS.profileMvpd, PASS_DOCS.profileCode, PASS_DOCS.legacyReference, PASS_DOCS.restV2FaqsAuthnMigration],
     notes: [
-      "REST V2 surfaces normalized user attributes in profile responses rather than a standalone metadata endpoint.",
-      "The modern path is to inspect the profile attributes payload after authentication."
+      "Adobe's V1 to V2 FAQ removes the dedicated user metadata endpoint and moves those attributes into profiles.",
+      "The client should read normalized profile attributes after authentication or requery profiles if metadata is refreshed during authorization."
     ],
     migration: {
       title: "REST V2 migration",
-      summary: "Retrieve the profile and read its normalized attributes instead of calling legacy /tokens/usermetadata.",
+      summary: "Retrieve profiles and read normalized attributes instead of calling legacy /tokens/usermetadata.",
+      observations: [
+        "Profiles are now the source of truth for authentication status, profile identity, and user metadata.",
+        "Some metadata can change during authorization, so profile re-reads may still be needed."
+      ],
       replacementCalls: [
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/profiles",
+          label: "Retrieve profiles",
+          doc: PASS_DOCS.profiles
+        },
         {
           method: "GET",
           pathTemplate: "/api/v2/{serviceProvider}/profiles/{mvpd}",
           label: "Retrieve profile for specific mvpd",
           doc: PASS_DOCS.profileMvpd
+        },
+        {
+          method: "GET",
+          pathTemplate: "/api/v2/{serviceProvider}/profiles/code/{code}",
+          label: "Retrieve profile for specific code",
+          doc: PASS_DOCS.profileCode
         }
       ]
     },
@@ -1334,6 +1565,34 @@ function buildPassClassification(rule, context) {
         }))
       }
     : null;
+  const support = rule.support && typeof rule.support === "object"
+    ? {
+        ...rule.support
+      }
+    : rule.family === "legacy-v1"
+      ? {
+          status: "legacy",
+          label: "Legacy / migration required",
+          windowEndedOn: LEGACY_SUPPORT_WINDOW_END,
+          note: "HARPO treats this as legacy migration-required Adobe Pass traffic. Supported implementation targets are DCR, REST API V2, and the current SSO service documentation."
+        }
+      : rule.family === "dcr-v2"
+        ? {
+            status: "current",
+            model: "dcr-v2",
+            label: rule.familyLabel
+          }
+        : rule.family === "rest-v2"
+          ? {
+              status: "current",
+              model: "rest-v2",
+              label: rule.familyLabel
+            }
+          : {
+              status: "adjacent",
+              label: rule.familyLabel,
+              note: "HARPO recognizes this as Adobe Pass infrastructure traffic, but it is not one of the supported 2026 DCR or REST API V2 endpoints present in the attached specifications."
+            };
 
   return {
     phase: rule.phase,
@@ -1350,17 +1609,7 @@ function buildPassClassification(rule, context) {
       notes: [...(rule.notes || [])],
       docs,
       migration,
-      support: rule.family === "legacy-v1"
-        ? {
-            status: "legacy",
-            label: "Legacy / migration required",
-            windowEndedOn: LEGACY_SUPPORT_WINDOW_END,
-            note: "HARPO treats this as legacy migration-required Adobe Pass traffic. Supported implementation targets are DCR, REST API V2, and the current SSO service documentation."
-          }
-        : {
-            status: "current",
-            label: rule.familyLabel
-          },
+      support,
       params
     }
   };
@@ -1373,6 +1622,9 @@ function extractPathParams(rule, context) {
   }
   if (rule.id === "rest-v2-sessions-create") {
     return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/sessions\/?$/);
+  }
+  if (rule.id === "rest-v2-sessions-partner") {
+    return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/sessions\/sso\/(?<partner>[^/]+)\/?$/);
   }
   if (rule.id === "rest-v2-sessions-resume" || rule.id === "rest-v2-sessions-retrieve") {
     return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/sessions\/(?<code>[^/]+)\/?$/);
@@ -1388,6 +1640,9 @@ function extractPathParams(rule, context) {
   }
   if (rule.id === "rest-v2-profile-mvpd") {
     return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/profiles\/(?<mvpd>[^/]+)\/?$/);
+  }
+  if (rule.id === "rest-v2-profiles-partner") {
+    return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/profiles\/sso\/(?<partner>[^/]+)\/?$/);
   }
   if (rule.id === "rest-v2-decisions-preauthorize" || rule.id === "rest-v2-decisions-authorize") {
     return capture(pathname, /^\/api\/v2\/(?<serviceProvider>[^/]+)\/decisions\/(?:preauthorize|authorize)\/(?<mvpd>[^/]+)\/?$/);
@@ -1611,20 +1866,21 @@ export function classifyHarpoEntry(entry, options = {}) {
       pass: {
         endpointId: "pass-generic",
         family: "pass-control-plane",
-        familyLabel: "Adobe Pass",
+        familyLabel: "Adobe Pass Infrastructure",
         pathTemplate: pathname || "/",
         endpointPath: pathname || "/",
-        summary: "Adobe Pass control-plane traffic that did not match a more specific HARPO rule.",
-        purpose: "This request is still part of Adobe Pass infrastructure, but HARPO does not yet have a narrower endpoint contract for it.",
+        summary: "Adobe Pass infrastructure traffic that did not match a spec-backed DCR, REST API V2, or known legacy HARPO rule.",
+        purpose: "This request is part of Adobe Pass infrastructure, but HARPO does not have a source-grounded endpoint contract for it yet.",
         notes: [
-          "Treat this as Pass traffic because the host belongs to the Adobe Pass control plane.",
-          "If this is a stable endpoint family, HARPO should learn a first-class rule for it."
+          "Do not treat this as a supported 2026 DCR or REST API V2 call unless it matches the attached specifications.",
+          "If this endpoint family is stable, HARPO should learn a first-class rule and map it to a specific modern equivalent when one exists."
         ],
         docs: withDocs(PASS_DOCS.developerOverview, PASS_DOCS.restV2Overview, PASS_DOCS.restV2Interactive),
         migration: null,
         support: {
-          status: "current",
-          label: "Adobe Pass"
+          status: "adjacent",
+          label: "Adobe Pass Infrastructure",
+          note: "This Adobe Pass call does not match a supported 2026 DCR or REST API V2 endpoint from the attached specifications."
         },
         params: {}
       }
